@@ -1,0 +1,9 @@
+{
+  "name": "tex-diagnostics",
+  "version": "1.0.0",
+  "entry": "skill.py",
+  "class": "TexDiagnosticsSkill",
+  "enabled": true,
+  "license": "MIT",
+  "description": "把真实 XeLaTeX 日志转成「文件:行号 + 错误类别 + 中文修复建议」的编译诊断技能，供 Pi-Agent 自愈回路使用。"
+}

@@ -1,0 +1,19 @@
+# 乌托邦高中物理题库助手 · 暖陶 (Warm Terracotta) 全局原生主题
+# 让 Streamlit 原生组件（对话框 / 上传控件 / 聊天输入 / 下拉菜单 / 提示）也遵循暖陶浅色规范，
+# 彻底消除系统深色模式下出现的"雷霆大黑框"。
+
+[theme]
+base = "light"
+primaryColor = "#CC785C"
+backgroundColor = "#F7F4EC"
+secondaryBackgroundColor = "#FFFDF9"
+textColor = "#26231E"
+font = "serif"
+
+[client]
+toolbarMode = "minimal"
+
+[server]
+# 改动代码/样式后自动热更新（轮询监听 + 自动重跑）；否则服务进程会缓存旧脚本，浏览器刷新也看不到新界面
+fileWatcherType = "poll"
+runOnSave = true

@@ -1,0 +1,129 @@
+# API 密钥和环境变量 (绝对不能上传)
+.env
+.env.*
+!.env.example
+
+# Agent Mail 授权过程中的本地临时日志
+.agently-auth/
+
+# Streamlit 本地密钥
+.streamlit/secrets.toml
+
+# TikZ 绘图的临时图片和 PDF 缓存 (会占用大量空间，不需要上传)
+.tikz_cache/
+*.pdf
+
+
+# Python 缓存文件
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# 操作系统生成的无用文件
+.DS_Store
+Thumbs.db
+log.csv
+
+# 本机运行日志、提示词备份和可重建索引
+更新信息.txt
+ocr的备份.txt
+debug.log
+log.csv
+utils/题库索引表.csv
+utils/semantic_index.sqlite3
+utils/local_stats.sqlite3
+utils/local_stats.sqlite3-*
+utils/operation_log.sqlite3
+utils/operation_log.sqlite3-*
+
+# 本机工作区和临时同步目录
+.sync-work-*/
+.codex/
+
+# 外部大型参考项目 (避免索引崩溃与上传超时)
+SolaireEPDA-master/
+
+# LaTeX 编译输出
+*.synctex.gz
+*.log
+*.aux
+*.out
+*.toc
+*.bbl
+*.blg
+*.fls
+*.fdb_latexmk
+*.xdv
+
+# 历史备份文件（非正式代码）
+question_bank_app000.py
+old_app.py
+
+# 与项目无关的文档
+高中物理建模15课时课程设计.md
+
+# 虚拟环境
+.venv/
+
+# Python 编译缓存
+*.pyc
+.runtime/
+deliverables/performance/chrome-*/
+deliverables/performance/save-browser-*/
+
+UtopiaPhyCyclus_demo.html
+MathCyclus_demo.html
+cloze_exports/
+Test Paper Group/
+Test Paper Group/导出文件/
+AutoTikz.md
+
+# 题库试题源文件默认不上传 GitHub，避免版权与仓库体积风险
+*-G-*.tex
+*-M-*.tex
+*-W-*.tex
+*-XK-*.tex
+*-XS-*.tex
+*-QJ-*.tex
+*-JS-*.tex
+*-WK-*.tex
+
+# 管理备份问题：本地自动备份，不上传到 GitHub
+.backups/
+.upgrade_candidate/
+
+# 独立的前端实验工作区，不属于当前 Streamlit 应用
+tiku/
+
+# Local UI verification artifacts
+.edge-test-profile/
+.ui-check.png
+.dom-check.html
+.streamlit-test.log
+
+# One-off local maintenance scripts
+fix_codex_config.py
+
+# Public releases are built from tools/release.py's explicit allowlist.
+# Ignore the entire private bank, including nonstandard filenames and images.
+/chapters/
+/dist/
+/build/
+/.release-work/
+/deliverables/
+/.api_models_cache.json
+/.agents/
+*.sqlite3
+*.sqlite3-*
+*.db
+*.lnk
+*.egg-info/
+# Only empty, reviewed paper templates may be published.
+!/Test Paper Group/
+/Test Paper Group/*
+!/Test Paper Group/主题模板/

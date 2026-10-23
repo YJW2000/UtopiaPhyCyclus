@@ -1,0 +1,708 @@
+[
+  {
+    "name": "altair",
+    "version": "5.5.0",
+    "source_archives": [
+      {
+        "url": "https://files.pythonhosted.org/packages/16/b1/f2969c7bdb8ad8bbdda031687defdce2c19afba2aa2c8e1d2a17f78376d8/altair-5.5.0.tar.gz",
+        "sha256": "d960ebe6178c56de3855a68c47b516be38640b73fb3b5111c2a9ca90546dd73d"
+      }
+    ],
+    "project_urls": {
+      "Documentation": "https://altair-viz.github.io",
+      "Source": "https://github.com/vega/altair"
+    }
+  },
+  {
+    "name": "attrs",
+    "version": "26.1.0",
+    "source_archives": [
+      {
+        "url": "https://files.pythonhosted.org/packages/9a/8e/82a0fe20a541c03148528be8cac2408564a6c9a0cc7e9171802bc1d26985/attrs-26.1.0.tar.gz",
+        "sha256": "d03ceb89cb322a8fd706d4fb91940737b6642aa36998fe130a9bc96c985eff32"
+      }
+    ],
+    "project_urls": {
+      "Changelog": "https://www.attrs.org/en/stable/changelog.html",
+      "Documentation": "https://www.attrs.org/",
+      "Funding": "https://github.com/sponsors/hynek",
+      "GitHub": "https://github.com/python-attrs/attrs",
+      "Tidelift": "https://tidelift.com/subscription/pkg/pypi-attrs?utm_source=pypi-attrs&utm_medium=pypi"
+    }
+  },
+  {
+    "name": "blinker",
+    "version": "1.9.0",
+    "source_archives": [
+      {
+        "url": "https://files.pythonhosted.org/packages/21/28/9b3f50ce0e048515135495f198351908d99540d69bfdc8c1d15b73dc55ce/blinker-1.9.0.tar.gz",
+        "sha256": "b4ce2265a7abece45e7cc896e98dbebe6cead56bcf805a3d23136d145f5445bf"
+      }
+    ],
+    "project_urls": {
+      "Chat": "https://discord.gg/pallets",
+      "Documentation": "https://blinker.readthedocs.io",
+      "Source": "https://github.com/pallets-eco/blinker/"
+    }
+  },
+  {
+    "name": "cachetools",
+    "version": "5.5.2",
+    "source_archives": [
+      {
+        "url": "https://files.pythonhosted.org/packages/6c/81/3747dad6b14fa2cf53fcf10548cf5aea6913e96fab41a3c198676f8948a5/cachetools-5.5.2.tar.gz",
+        "sha256": "1a661caa9175d26759571b2e19580f9d6393969e5dfca11fdb1f947a23e640d4"
+      }
+    ],
+    "project_urls": {
+      "Homepage": "https://github.com/tkem/cachetools/"
+    }
+  },
+  {
+    "name": "certifi",
+    "version": "2026.6.17",
+    "source_archives": [
+      {
+        "url": "https://files.pythonhosted.org/packages/c9/c7/424b75da314c1045981bd9777432fad05a9e0c69daa4ed7e308bbaffe405/certifi-2026.6.17.tar.gz",
+        "sha256": "024c88eeec92ca068db80f02b8b07c9cef7b9fe261d1d535abfd5abd6f6af432"
+      }
+    ],
+    "project_urls": {
+      "Homepage": "https://github.com/certifi/python-certifi",
+      "Source": "https://github.com/certifi/python-certifi"
+    }
+  },
+  {
+    "name": "charset-normalizer",
+    "version": "3.4.9",
+    "source_archives": [
+      {
+        "url": "https://files.pythonhosted.org/packages/bd/2a/23f34ec9d04624958e137efdc394888716353190e75f25dd22c7a2c7a8aa/charset_normalizer-3.4.9.tar.gz",
+        "sha256": "673611bbd43f0810bec0b0f028ddeaaa501190339cac411f347ac76917c3ae7b"
+      }
+    ],
+    "project_urls": {
+      "Changelog": "https://github.com/jawah/charset_normalizer/blob/master/CHANGELOG.md",
+      "Code": "https://github.com/jawah/charset_normalizer",
+      "Documentation": "https://charset-normalizer.readthedocs.io/",
+      "Issue tracker": "https://github.com/jawah/charset_normalizer/issues"
+    }
+  },
+  {
+    "name": "click",
+    "version": "8.4.2",
+    "source_archives": [
+      {
+        "url": "https://files.pythonhosted.org/packages/76/d4/81420972a676e8ffea40450d8c8c92943e7218a78fe9b64359836cc9876b/click-8.4.2.tar.gz",
+        "sha256": "9a6cea6e60b17ebe0a44c5cc636d94f09bd66142c1cd7d8b4cd731c4917a15f6"
+      }
+    ],
+    "project_urls": {
+      "Changes": "https://click.palletsprojects.com/page/changes/",
+      "Chat": "https://discord.gg/pallets",
+      "Documentation": "https://click.palletsprojects.com/",
+      "Donate": "https://palletsprojects.com/donate",
+      "Source": "https://github.com/pallets/click/"
+    }
+  },
+  {
+    "name": "colorama",
+    "version": "0.4.6",
+    "source_archives": [
+      {
+        "url": "https://files.pythonhosted.org/packages/d8/53/6f443c9a4a8358a93a6792e2acffb9d9d5cb0a5cfd8802644b7b1c9a02e4/colorama-0.4.6.tar.gz",
+        "sha256": "08695f5cb7ed6e0531a20572697297273c47b8cae5a63ffc6d6ed5c201be6e44"
+      }
+    ],
+    "project_urls": {
+      "Homepage": "https://github.com/tartley/colorama"
+    }
+  },
+  {
+    "name": "gitdb",
+    "version": "4.0.12",
+    "source_archives": [
+      {
+        "url": "https://files.pythonhosted.org/packages/72/94/63b0fc47eb32792c7ba1fe1b694daec9a63620db1e313033d18140c2320a/gitdb-4.0.12.tar.gz",
+        "sha256": "5ef71f855d191a3326fcfbc0d5da835f26b13fbcba60c32c21091c349ffdb571"
+      }
+    ],
+    "project_urls": {
+      "Homepage": "https://github.com/gitpython-developers/gitdb"
+    }
+  },
+  {
+    "name": "GitPython",
+    "version": "3.1.50",
+    "source_archives": [
+      {
+        "url": "https://files.pythonhosted.org/packages/33/f6/354ae6491228b5eb40e10d89c4d13c651fe1cf7556e35ebdded50cff57ce/gitpython-3.1.50.tar.gz",
+        "sha256": "80da2d12504d52e1f998772dc5baf6e553f8d2fcfe1fcc226c9d9a2ee3372dcc"
+      }
+    ],
+    "project_urls": {
+      "Homepage": "https://github.com/gitpython-developers/GitPython"
+    }
+  },
+  {
+    "name": "idna",
+    "version": "3.18",
+    "source_archives": [
+      {
+        "url": "https://files.pythonhosted.org/packages/cd/63/9496c57188a2ee585e0f1db071d75089a11e98aa86eb99d9d7618fc1edce/idna-3.18.tar.gz",
+        "sha256": "ffb385a7e039654cef1ab9ef32c6fafe283c0c0467bba1d9029738ce4a14a848"
+      }
+    ],
+    "project_urls": {
+      "Changelog": "https://github.com/kjd/idna/blob/master/HISTORY.md",
+      "Issue tracker": "https://github.com/kjd/idna/issues",
+      "Source": "https://github.com/kjd/idna"
+    }
+  },
+  {
+    "name": "Jinja2",
+    "version": "3.1.6",
+    "source_archives": [
+      {
+        "url": "https://files.pythonhosted.org/packages/df/bf/f7da0350254c0ed7c72f3e33cef02e048281fec7ecec5f032d4aac52226b/jinja2-3.1.6.tar.gz",
+        "sha256": "0137fb05990d35f1275a587e9aee6d56da821fc83491a0fb838183be43f66d6d"
+      }
+    ],
+    "project_urls": {
+      "Changes": "https://jinja.palletsprojects.com/changes/",
+      "Chat": "https://discord.gg/pallets",
+      "Documentation": "https://jinja.palletsprojects.com/",
+      "Donate": "https://palletsprojects.com/donate",
+      "Source": "https://github.com/pallets/jinja/"
+    }
+  },
+  {
+    "name": "jsonschema",
+    "version": "4.26.0",
+    "source_archives": [
+      {
+        "url": "https://files.pythonhosted.org/packages/b3/fc/e067678238fa451312d4c62bf6e6cf5ec56375422aee02f9cb5f909b3047/jsonschema-4.26.0.tar.gz",
+        "sha256": "0c26707e2efad8aa1bfc5b7ce170f3fccc2e4918ff85989ba9ffa9facb2be326"
+      }
+    ],
+    "project_urls": {
+      "Changelog": "https://github.com/python-jsonschema/jsonschema/blob/main/CHANGELOG.rst",
+      "Documentation": "https://python-jsonschema.readthedocs.io/",
+      "Funding": "https://github.com/sponsors/Julian",
+      "Homepage": "https://github.com/python-jsonschema/jsonschema",
+      "Issues": "https://github.com/python-jsonschema/jsonschema/issues/",
+      "Source": "https://github.com/python-jsonschema/jsonschema",
+      "Tidelift": "https://tidelift.com/subscription/pkg/pypi-jsonschema?utm_source=pypi-jsonschema&utm_medium=referral&utm_campaign=pypi-link"
+    }
+  },
+  {
+    "name": "jsonschema-specifications",
+    "version": "2025.9.1",
+    "source_archives": [
+      {
+        "url": "https://files.pythonhosted.org/packages/19/74/a633ee74eb36c44aa6d1095e7cc5569bebf04342ee146178e2d36600708b/jsonschema_specifications-2025.9.1.tar.gz",
+        "sha256": "b540987f239e745613c7a9176f3edb72b832a4ac465cf02712288397832b5e8d"
+      }
+    ],
+    "project_urls": {
+      "Documentation": "https://jsonschema-specifications.readthedocs.io/",
+      "Funding": "https://github.com/sponsors/Julian",
+      "Homepage": "https://github.com/python-jsonschema/jsonschema-specifications",
+      "Issues": "https://github.com/python-jsonschema/jsonschema-specifications/issues/",
+      "Source": "https://github.com/python-jsonschema/jsonschema-specifications",
+      "Tidelift": "https://tidelift.com/subscription/pkg/pypi-jsonschema-specifications?utm_source=pypi-jsonschema-specifications&utm_medium=referral&utm_campaign=pypi-link"
+    }
+  },
+  {
+    "name": "markdown-it-py",
+    "version": "4.2.0",
+    "source_archives": [
+      {
+        "url": "https://files.pythonhosted.org/packages/06/ff/7841249c247aa650a76b9ee4bbaeae59370dc8bfd2f6c01f3630c35eb134/markdown_it_py-4.2.0.tar.gz",
+        "sha256": "04a21681d6fbb623de53f6f364d352309d4094dd4194040a10fd51833e418d49"
+      }
+    ],
+    "project_urls": {
+      "Documentation": "https://markdown-it-py.readthedocs.io",
+      "Homepage": "https://github.com/executablebooks/markdown-it-py"
+    }
+  },
+  {
+    "name": "MarkupSafe",
+    "version": "3.0.3",
+    "source_archives": [
+      {
+        "url": "https://files.pythonhosted.org/packages/7e/99/7690b6d4034fffd95959cbe0c02de8deb3098cc577c67bb6a24fe5d7caa7/markupsafe-3.0.3.tar.gz",
+        "sha256": "722695808f4b6457b320fdc131280796bdceb04ab50fe1795cd540799ebe1698"
+      }
+    ],
+    "project_urls": {
+      "Changes": "https://markupsafe.palletsprojects.com/page/changes/",
+      "Chat": "https://discord.gg/pallets",
+      "Documentation": "https://markupsafe.palletsprojects.com/",
+      "Donate": "https://palletsprojects.com/donate",
+      "Source": "https://github.com/pallets/markupsafe/"
+    }
+  },
+  {
+    "name": "mdurl",
+    "version": "0.1.2",
+    "source_archives": [
+      {
+        "url": "https://files.pythonhosted.org/packages/d6/54/cfe61301667036ec958cb99bd3efefba235e65cdeb9c84d24a8293ba1d90/mdurl-0.1.2.tar.gz",
+        "sha256": "bb413d29f5eea38f31dd4754dd7377d4465116fb207585f97bf925588687c1ba"
+      }
+    ],
+    "project_urls": {
+      "Homepage": "https://github.com/executablebooks/mdurl"
+    }
+  },
+  {
+    "name": "narwhals",
+    "version": "2.23.0",
+    "source_archives": [
+      {
+        "url": "https://files.pythonhosted.org/packages/e8/ac/66ed1fc6e38a0c0f330627ec5c5d597990d6159b6712b82af0ad2c65f06c/narwhals-2.23.0.tar.gz",
+        "sha256": "13e7ff5b4bb4a2f77b907c2e4d8a76e273dfc1323a3c997440a2f9fd26aed408"
+      }
+    ],
+    "project_urls": {
+      "Bug Tracker": "https://github.com/narwhals-dev/narwhals/issues",
+      "Documentation": "https://narwhals-dev.github.io/narwhals/",
+      "Homepage": "https://github.com/narwhals-dev/narwhals",
+      "Repository": "https://github.com/narwhals-dev/narwhals"
+    }
+  },
+  {
+    "name": "numpy",
+    "version": "2.5.1",
+    "source_archives": [
+      {
+        "url": "https://files.pythonhosted.org/packages/22/fd/89965aa4ac08c74998539fcbf24fa3540f3e15237fbeb6bcf9c908f4aade/numpy-2.5.1.tar.gz",
+        "sha256": "a48a113e6afea91f5608793bafa7ef2ad481fefbda87ec5069f483de61cb9fa3"
+      }
+    ],
+    "project_urls": {
+      "documentation": "https://numpy.org/doc/",
+      "download": "https://pypi.org/project/numpy/#files",
+      "homepage": "https://numpy.org",
+      "release notes": "https://numpy.org/doc/stable/release",
+      "source": "https://github.com/numpy/numpy",
+      "tracker": "https://github.com/numpy/numpy/issues"
+    }
+  },
+  {
+    "name": "packaging",
+    "version": "24.2",
+    "source_archives": [
+      {
+        "url": "https://files.pythonhosted.org/packages/d0/63/68dbb6eb2de9cb10ee4c9c14a0148804425e13c4fb20d61cce69f53106da/packaging-24.2.tar.gz",
+        "sha256": "c228a6dc5e932d346bc5739379109d49e8853dd8223571c7c5b55260edc0b97f"
+      }
+    ],
+    "project_urls": {
+      "Documentation": "https://packaging.pypa.io/",
+      "Source": "https://github.com/pypa/packaging"
+    }
+  },
+  {
+    "name": "pandas",
+    "version": "2.3.3",
+    "source_archives": [
+      {
+        "url": "https://files.pythonhosted.org/packages/33/01/d40b85317f86cf08d853a4f495195c73815fdf205eef3993821720274518/pandas-2.3.3.tar.gz",
+        "sha256": "e05e1af93b977f7eafa636d043f9f94c7ee3ac81af99c13508215942e64c993b"
+      }
+    ],
+    "project_urls": {
+      "documentation": "https://pandas.pydata.org/docs/",
+      "homepage": "https://pandas.pydata.org",
+      "repository": "https://github.com/pandas-dev/pandas"
+    }
+  },
+  {
+    "name": "pillow",
+    "version": "10.4.0",
+    "source_archives": [
+      {
+        "url": "https://files.pythonhosted.org/packages/cd/74/ad3d526f3bf7b6d3f408b73fde271ec69dfac8b81341a318ce825f2b3812/pillow-10.4.0.tar.gz",
+        "sha256": "166c1cd4d24309b30d61f79f4a9114b7b2313d7450912277855ff5dfd7cd4a06"
+      }
+    ],
+    "project_urls": {
+      "Changelog": "https://github.com/python-pillow/Pillow/blob/main/CHANGES.rst",
+      "Documentation": "https://pillow.readthedocs.io",
+      "Funding": "https://tidelift.com/subscription/pkg/pypi-pillow?utm_source=pypi-pillow&utm_medium=pypi",
+      "Homepage": "https://python-pillow.org",
+      "Mastodon": "https://fosstodon.org/@pillow",
+      "Release notes": "https://pillow.readthedocs.io/en/stable/releasenotes/index.html",
+      "Source": "https://github.com/python-pillow/Pillow"
+    }
+  },
+  {
+    "name": "protobuf",
+    "version": "5.29.6",
+    "source_archives": [
+      {
+        "url": "https://files.pythonhosted.org/packages/7e/57/394a763c103e0edf87f0938dafcd918d53b4c011dfc5c8ae80f3b0452dbb/protobuf-5.29.6.tar.gz",
+        "sha256": "da9ee6a5424b6b30fd5e45c5ea663aef540ca95f9ad99d1e887e819cdf9b8723"
+      }
+    ],
+    "project_urls": {
+      "Homepage": "https://developers.google.com/protocol-buffers/"
+    }
+  },
+  {
+    "name": "pyarrow",
+    "version": "25.0.0",
+    "source_archives": [
+      {
+        "url": "https://files.pythonhosted.org/packages/27/f3/95428098d1fa7d04432fb750eed06b41304c2f6a5d3319985e64db2d9d41/pyarrow-25.0.0.tar.gz",
+        "sha256": "d2d697008b5ec06d75952ef260c2e9a8a0f6ccfce24266c04c9c8ade927cb3b4"
+      }
+    ],
+    "project_urls": {
+      "Documentation": "https://arrow.apache.org/docs/python",
+      "Homepage": "https://arrow.apache.org/",
+      "Issues": "https://github.com/apache/arrow/issues",
+      "Repository": "https://github.com/apache/arrow"
+    }
+  },
+  {
+    "name": "pydeck",
+    "version": "0.9.3",
+    "source_archives": [
+      {
+        "url": "https://files.pythonhosted.org/packages/f4/c9/f71032fca47ecc09d30904d9a610234b07139f89eabc2f054b141edcc30f/pydeck-0.9.3.tar.gz",
+        "sha256": "695775cbfe51f5fdffbd9735ba469987fdc5efc96bc40a0ee4808170509c78b2"
+      }
+    ],
+    "project_urls": {
+      "Homepage": "https://github.com/visgl/deck.gl/tree/master/bindings/pydeck"
+    }
+  },
+  {
+    "name": "Pygments",
+    "version": "2.21.0",
+    "source_archives": [
+      {
+        "url": "https://files.pythonhosted.org/packages/49/2e/ced460408999b33da6b31b0021b0f37d329e202d4169aeb164493778f25b/pygments-2.21.0.tar.gz",
+        "sha256": "610ca751c9bc2492b38eb9a38a7fbc93edbbb2d7182edaf34e66ae493dee5c8c"
+      }
+    ],
+    "project_urls": {
+      "Bug Tracker": "https://github.com/pygments/pygments/issues",
+      "Changelog": "https://github.com/pygments/pygments/blob/master/CHANGES",
+      "Documentation": "https://pygments.org/docs",
+      "Homepage": "https://pygments.org",
+      "Source": "https://github.com/pygments/pygments"
+    }
+  },
+  {
+    "name": "pymupdf",
+    "version": "1.26.7",
+    "source_archives": [
+      {
+        "url": "https://files.pythonhosted.org/packages/48/d6/09b28f027b510838559f7748807192149c419b30cb90e6d5f0cf916dc9dc/pymupdf-1.26.7.tar.gz",
+        "sha256": "71add8bdc8eb1aaa207c69a13400693f06ad9b927bea976f5d5ab9df0bb489c3"
+      }
+    ],
+    "project_urls": {
+      "Changelog": "https://pymupdf.readthedocs.io/en/latest/changes.html",
+      "Documentation": "https://pymupdf.readthedocs.io/",
+      "Source": "https://github.com/pymupdf/pymupdf",
+      "Tracker": "https://github.com/pymupdf/PyMuPDF/issues"
+    }
+  },
+  {
+    "name": "python-dateutil",
+    "version": "2.9.0.post0",
+    "source_archives": [
+      {
+        "url": "https://files.pythonhosted.org/packages/66/c0/0c8b6ad9f17a802ee498c46e004a0eb49bc148f2fd230864601a86dcf6db/python-dateutil-2.9.0.post0.tar.gz",
+        "sha256": "37dd54208da7e1cd875388217d5e00ebd4179249f90fb72437e91a35459a0ad3"
+      }
+    ],
+    "project_urls": {
+      "Documentation": "https://dateutil.readthedocs.io/en/stable/",
+      "Homepage": "https://github.com/dateutil/dateutil",
+      "Source": "https://github.com/dateutil/dateutil"
+    }
+  },
+  {
+    "name": "python-dotenv",
+    "version": "0.21.0",
+    "source_archives": [
+      {
+        "url": "https://files.pythonhosted.org/packages/87/8d/ab7352188f605e3f663f34692b2ed7457da5985857e9e4c2335cd12fb3c9/python-dotenv-0.21.0.tar.gz",
+        "sha256": "b77d08274639e3d34145dfa6c7008e66df0f04b7be7a75fd0d5292c191d79045"
+      }
+    ],
+    "project_urls": {
+      "Homepage": "https://github.com/theskumar/python-dotenv"
+    }
+  },
+  {
+    "name": "pytz",
+    "version": "2026.3.post1",
+    "source_archives": [
+      {
+        "url": "https://files.pythonhosted.org/packages/fb/48/fb042503b6ca6cd271261dc559fd6432f7d8c713153e9ec5c591af4dfc1c/pytz-2026.3.post1.tar.gz",
+        "sha256": "2211d3fcf9a797d3405cac96ac7f61d80e6a644f72a3309607282fe8a2010c5d"
+      }
+    ],
+    "project_urls": {
+      "Download": "https://pypi.org/project/pytz/",
+      "Homepage": "http://pythonhosted.org/pytz",
+      "Issues": "https://github.com/stub42/pytz/issues",
+      "Source": "https://github.com/stub42/pytz.git"
+    }
+  },
+  {
+    "name": "referencing",
+    "version": "0.37.0",
+    "source_archives": [
+      {
+        "url": "https://files.pythonhosted.org/packages/22/f5/df4e9027acead3ecc63e50fe1e36aca1523e1719559c499951bb4b53188f/referencing-0.37.0.tar.gz",
+        "sha256": "44aefc3142c5b842538163acb373e24cce6632bd54bdb01b21ad5863489f50d8"
+      }
+    ],
+    "project_urls": {
+      "Changelog": "https://referencing.readthedocs.io/en/stable/changes/",
+      "Documentation": "https://referencing.readthedocs.io/",
+      "Funding": "https://github.com/sponsors/Julian",
+      "Homepage": "https://github.com/python-jsonschema/referencing",
+      "Issues": "https://github.com/python-jsonschema/referencing/issues/",
+      "Source": "https://github.com/python-jsonschema/referencing",
+      "Tidelift": "https://tidelift.com/subscription/pkg/pypi-referencing?utm_source=pypi-referencing&utm_medium=referral&utm_campaign=pypi-link"
+    }
+  },
+  {
+    "name": "requests",
+    "version": "2.32.3",
+    "source_archives": [
+      {
+        "url": "https://files.pythonhosted.org/packages/63/70/2bf7780ad2d390a8d301ad0b550f1581eadbd9a20f896afe06353c2a2913/requests-2.32.3.tar.gz",
+        "sha256": "55365417734eb18255590a9ff9eb97e9e1da868d4ccd6402399eaf68af20a760"
+      }
+    ],
+    "project_urls": {
+      "Documentation": "https://requests.readthedocs.io",
+      "Homepage": "https://requests.readthedocs.io",
+      "Source": "https://github.com/psf/requests"
+    }
+  },
+  {
+    "name": "rich",
+    "version": "13.9.4",
+    "source_archives": [
+      {
+        "url": "https://files.pythonhosted.org/packages/ab/3a/0316b28d0761c6734d6bc14e770d85506c986c85ffb239e688eeaab2c2bc/rich-13.9.4.tar.gz",
+        "sha256": "439594978a49a09530cff7ebc4b5c7103ef57baf48d5ea3184f21d9a2befa098"
+      }
+    ],
+    "project_urls": {
+      "Documentation": "https://rich.readthedocs.io/en/latest/",
+      "Homepage": "https://github.com/Textualize/rich"
+    }
+  },
+  {
+    "name": "rpds-py",
+    "version": "2026.6.3",
+    "source_archives": [
+      {
+        "url": "https://files.pythonhosted.org/packages/aa/2a/9618a122aeb2a169a28b03889a2995fe297588964333d4a7d67bdf46e147/rpds_py-2026.6.3.tar.gz",
+        "sha256": "1cebd1337c242e4ec2293e541f712b2da849b29f48f0c293684b71c0632625d4"
+      }
+    ],
+    "project_urls": {
+      "Documentation": "https://rpds.readthedocs.io/",
+      "Funding": "https://github.com/sponsors/Julian",
+      "Homepage": "https://github.com/crate-py/rpds",
+      "Issues": "https://github.com/crate-py/rpds/issues/",
+      "Source": "https://github.com/crate-py/rpds",
+      "Tidelift": "https://tidelift.com/subscription/pkg/pypi-rpds-py?utm_source=pypi-rpds-py&utm_medium=referral&utm_campaign=pypi-link",
+      "Upstream": "https://github.com/orium/rpds"
+    }
+  },
+  {
+    "name": "six",
+    "version": "1.17.0",
+    "source_archives": [
+      {
+        "url": "https://files.pythonhosted.org/packages/94/e7/b2c673351809dca68a0e064b6af791aa332cf192da575fd474ed7d6f16a2/six-1.17.0.tar.gz",
+        "sha256": "ff70335d468e7eb6ec65b95b99d3a2836546063f63acc5171de367e834932a81"
+      }
+    ],
+    "project_urls": {
+      "Homepage": "https://github.com/benjaminp/six"
+    }
+  },
+  {
+    "name": "smmap",
+    "version": "5.0.3",
+    "source_archives": [
+      {
+        "url": "https://files.pythonhosted.org/packages/1f/ea/49c993d6dfdd7338c9b1000a0f36817ed7ec84577ae2e52f890d1a4ff909/smmap-5.0.3.tar.gz",
+        "sha256": "4d9debb8b99007ae47165abc08670bd74cb74b5227dda7f643eccc4e9eb5642c"
+      }
+    ],
+    "project_urls": {
+      "Homepage": "https://github.com/gitpython-developers/smmap"
+    }
+  },
+  {
+    "name": "streamlit",
+    "version": "1.37.1",
+    "source_archives": [
+      {
+        "url": "https://files.pythonhosted.org/packages/db/b8/96bfb4bafa4b25b0e68724aa4d54622dae3a7b36613789b42732bbbf07d0/streamlit-1.37.1.tar.gz",
+        "sha256": "bc7e3813d94a39dda56f15678437eb37830973c601e8e574f2225a7bf188ea5a"
+      }
+    ],
+    "project_urls": {
+      "Bug Tracker": "https://github.com/streamlit/streamlit/issues",
+      "Community": "https://discuss.streamlit.io/",
+      "Documentation": "https://docs.streamlit.io/",
+      "Homepage": "https://streamlit.io",
+      "Release notes": "https://docs.streamlit.io/develop/quick-reference/changelog",
+      "Source Code": "https://github.com/streamlit/streamlit",
+      "Twitter": "https://twitter.com/streamlit"
+    }
+  },
+  {
+    "name": "tenacity",
+    "version": "8.5.0",
+    "source_archives": [
+      {
+        "url": "https://files.pythonhosted.org/packages/a3/4d/6a19536c50b849338fcbe9290d562b52cbdcf30d8963d3588a68a4107df1/tenacity-8.5.0.tar.gz",
+        "sha256": "8bc6c0c8a09b31e6cad13c47afbed1a567518250a9a171418582ed8d9c20ca78"
+      }
+    ],
+    "project_urls": {
+      "Homepage": "https://github.com/jd/tenacity"
+    }
+  },
+  {
+    "name": "toml",
+    "version": "0.10.2",
+    "source_archives": [
+      {
+        "url": "https://files.pythonhosted.org/packages/be/ba/1f744cdc819428fc6b5084ec34d9b30660f6f9daaf70eead706e3203ec3c/toml-0.10.2.tar.gz",
+        "sha256": "b3bda1d108d5dd99f4a20d24d9c348e91c4db7ab1b749200bded2f839ccbe68f"
+      }
+    ],
+    "project_urls": {
+      "Homepage": "https://github.com/uiri/toml"
+    }
+  },
+  {
+    "name": "tornado",
+    "version": "6.5.10",
+    "source_archives": [
+      {
+        "url": "https://files.pythonhosted.org/packages/06/61/53d562a57b28c08eda40b258c0f975e360541943ad7c7bef897a40caafda/tornado-6.5.10.tar.gz",
+        "sha256": "a6b1ccd08c04b4a06fb5aeb381be99de5ad1e5375c1785e31d78c880feb57687"
+      }
+    ],
+    "project_urls": {
+      "Homepage": "http://www.tornadoweb.org/",
+      "Source": "https://github.com/tornadoweb/tornado"
+    }
+  },
+  {
+    "name": "typing_extensions",
+    "version": "4.16.0",
+    "source_archives": [
+      {
+        "url": "https://files.pythonhosted.org/packages/f6/cc/6253133b5bb138fc3306cebfbda2c520f545d36b5be2c7255cc528bb45d6/typing_extensions-4.16.0.tar.gz",
+        "sha256": "dc983d19a509c94dba722ee6abd33940f7c05a89e243c47e907eb4db6f1a43e5"
+      }
+    ],
+    "project_urls": {
+      "Bug Tracker": "https://github.com/python/typing_extensions/issues",
+      "Changes": "https://github.com/python/typing_extensions/blob/main/CHANGELOG.md",
+      "Documentation": "https://typing-extensions.readthedocs.io/",
+      "Home": "https://github.com/python/typing_extensions",
+      "Q & A": "https://github.com/python/typing/discussions",
+      "Repository": "https://github.com/python/typing_extensions"
+    }
+  },
+  {
+    "name": "tzdata",
+    "version": "2026.3",
+    "source_archives": [
+      {
+        "url": "https://files.pythonhosted.org/packages/92/ff/5a28bdfd8c3ebec42564ac7d0e54ca3db65044a9314a97f9564fa7a1e926/tzdata-2026.3.tar.gz",
+        "sha256": "4a1518b8993086a7982523e071643f3c0e5f213e75b21318e78bcabfff9d1415"
+      }
+    ],
+    "project_urls": {
+      "Bug Reports": "https://github.com/python/tzdata/issues",
+      "Documentation": "https://tzdata.python.org",
+      "Homepage": "https://github.com/python/tzdata",
+      "Source": "https://github.com/python/tzdata"
+    }
+  },
+  {
+    "name": "urllib3",
+    "version": "2.7.0",
+    "source_archives": [
+      {
+        "url": "https://files.pythonhosted.org/packages/53/0c/06f8b233b8fd13b9e5ee11424ef85419ba0d8ba0b3138bf360be2ff56953/urllib3-2.7.0.tar.gz",
+        "sha256": "231e0ec3b63ceb14667c67be60f2f2c40a518cb38b03af60abc813da26505f4c"
+      }
+    ],
+    "project_urls": {
+      "Changelog": "https://github.com/urllib3/urllib3/blob/main/CHANGES.rst",
+      "Code": "https://github.com/urllib3/urllib3",
+      "Documentation": "https://urllib3.readthedocs.io",
+      "Issue tracker": "https://github.com/urllib3/urllib3/issues"
+    }
+  },
+  {
+    "name": "watchdog",
+    "version": "4.0.2",
+    "source_archives": [
+      {
+        "url": "https://files.pythonhosted.org/packages/4f/38/764baaa25eb5e35c9a043d4c4588f9836edfe52a708950f4b6d5f714fd42/watchdog-4.0.2.tar.gz",
+        "sha256": "b4dfbb6c49221be4535623ea4474a4d6ee0a9cef4a80b20c28db4d858b64e270"
+      }
+    ],
+    "project_urls": {
+      "Changelog": "https://github.com/gorakhargosh/watchdog/blob/master/changelog.rst",
+      "Documentation": "https://python-watchdog.readthedocs.io/en/stable/",
+      "Homepage": "https://github.com/gorakhargosh/watchdog",
+      "Issues": "https://github.com/gorakhargosh/watchdog/issues",
+      "Source": "https://github.com/gorakhargosh/watchdog/"
+    }
+  },
+  {
+    "name": "MuPDF",
+    "version": "1.26.12",
+    "source_archives": [
+      {
+        "url": "https://mupdf.com/downloads/archive/mupdf-1.26.12-source.tar.gz"
+      }
+    ],
+    "build_instructions": "https://pymupdf.readthedocs.io/en/latest/installation.html"
+  },
+  {
+    "name": "Apache ECharts",
+    "version": "5.5.0",
+    "source_archives": [
+      {
+        "url": "https://github.com/apache/echarts/archive/refs/tags/5.5.0.tar.gz"
+      }
+    ]
+  },
+  {
+    "name": "CPython",
+    "version": "3.12.9",
+    "source_archives": [
+      {
+        "url": "https://www.python.org/ftp/python/3.12.9/Python-3.12.9.tgz"
+      }
+    ]
+  }
+]

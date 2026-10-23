@@ -1,0 +1,941 @@
+{
+  "version": "1.0.0",
+  "empty_bank": true,
+  "files": [
+    {
+      "path": ".gitignore",
+      "sha256": "31dcfd6c03dce5e2d2fbd753b2c54b4e53d4f35191824e2f0da67791dc2dc8ca",
+      "bytes": 2326
+    },
+    {
+      "path": ".streamlit/config.toml",
+      "sha256": "30d8389c2a16ad74b00e908603504f5ae1eab1f99625435bd3e99d7c313df51e",
+      "bytes": 679
+    },
+    {
+      "path": "CHANGELOG.md",
+      "sha256": "62656eb6214d2072ec89798f846547f8ec7932e96a9b5938c2c46e72bfb5e914",
+      "bytes": 599
+    },
+    {
+      "path": "chapters/README.md",
+      "sha256": "d994f3fe43872780041ff8a8fc6de9fa8acc7df5239727982498c29c4151bc8b",
+      "bytes": 182
+    },
+    {
+      "path": "COPYING-AGPL-3.0",
+      "sha256": "57c8ff33c9c0cfc3ef00e650a1cc910d7ee479a8bc509f6c9209a7c2a11399d6",
+      "bytes": 34520
+    },
+    {
+      "path": "dependency-sources.json",
+      "sha256": "d238d8c8180707e77a73e76648e1679f63228bbd3d1e98487929f853111b72df",
+      "bytes": 27138
+    },
+    {
+      "path": "docs/harness_v2_contract.md",
+      "sha256": "892d5a1063484380041a405b5021641613f95830fd31355a9e6ea67d0d2598f6",
+      "bytes": 18725
+    },
+    {
+      "path": "docs/发行与安装.md",
+      "sha256": "f6ed6a1bbd906d0cbad0e1f83614e71ccfd755f798589bd747bc358ada52c845",
+      "bytes": 2695
+    },
+    {
+      "path": "docs/物理插图矫正AGENT_Harness强化说明.md",
+      "sha256": "138ff3d3d591e7c7ad9d7c703a456e2918ba56571ed1e938b085237ac68db1a4",
+      "bytes": 19215
+    },
+    {
+      "path": "env.example",
+      "sha256": "41234c518ea012054a802fe5489735023770e27fd4bc04138e5de4d9ce25c80c",
+      "bytes": 2616
+    },
+    {
+      "path": "fig/utopia_phycyclus_workflow.png",
+      "sha256": "c3f16880763f5bcf19edd4095acc11425b6fa2b22976fd574d3e4db64bec34f0",
+      "bytes": 2176429
+    },
+    {
+      "path": "fig/UtopiaPhyCyclus_logo.png",
+      "sha256": "8f77b539814c5eeaf8404d3f1cbbf9e475fe56e8b3731f3ee1572b2dda628b47",
+      "bytes": 382297
+    },
+    {
+      "path": "fig/UtopiaPhyCyclus_sisyphus_icon.ico",
+      "sha256": "ff4191277e85333b82163d37c28a97ae4c4e089d56b87c6c0d81713777ee5994",
+      "bytes": 179017
+    },
+    {
+      "path": "fig/UtopiaPhyCyclus_sisyphus_icon.png",
+      "sha256": "ac22f84eb325024206a1e452e63f478fb8d80851b99928ca1977221e1d7e7e7a",
+      "bytes": 2219751
+    },
+    {
+      "path": "LICENSE",
+      "sha256": "2320ebe1a2a6965d39daa82bc3606aab2874553332793348f048dc6f7f78ebe5",
+      "bytes": 1161
+    },
+    {
+      "path": "licenses/altair-c43f77ab58.txt",
+      "sha256": "14bf5abd0aa392f806fa0bbc88f51de36964d53071a687631e621807e556331e",
+      "bytes": 1497
+    },
+    {
+      "path": "licenses/altgraph-LICENSE.txt",
+      "sha256": "6c194d6db0c64d45535d10c95142b9b0cda7b7dcc7f1ddee302b3d536f3dbe46",
+      "bytes": 1002
+    },
+    {
+      "path": "licenses/Apache-2.0.txt",
+      "sha256": "634293835b43a6dd2094fa39182a3d9a6b9ca43b7fdb9ac354e8037af2a3093a",
+      "bytes": 11990
+    },
+    {
+      "path": "licenses/attrs-57110cbc0e.txt",
+      "sha256": "882115c95dfc2af1eeb6714f8ec6d5cbcabf667caff8729f42420da63f714e9f",
+      "bytes": 1109
+    },
+    {
+      "path": "licenses/blinker-3645e881f7.txt",
+      "sha256": "9eb73a1f38597a4aa17025d2ae1be3839624c795e985d4f0e9769ce29faca467",
+      "bytes": 1054
+    },
+    {
+      "path": "licenses/cachetools-07d4ce0c24.txt",
+      "sha256": "23c4eff7a1c027a977a0b79c4497e17582c334c5f17ef6ac8ca0b52d1e7d8417",
+      "bytes": 1085
+    },
+    {
+      "path": "licenses/certifi-21702b9e99.txt",
+      "sha256": "e93716da6b9c0d5a4a1df60fe695b370f0695603d21f6f83f053e42cfc10caf7",
+      "bytes": 989
+    },
+    {
+      "path": "licenses/charset-503057f0ca.txt",
+      "sha256": "18577485d3704f1a479ded8e573c0976cfed315fd2fd17983fa988da4c2f70d1",
+      "bytes": 1092
+    },
+    {
+      "path": "licenses/click-61527c9563.txt",
+      "sha256": "9a8ad106a394e853bfe21f42f4e72d592819a22805d991b5f3275029292b658d",
+      "bytes": 1475
+    },
+    {
+      "path": "licenses/colorama-9656447822.txt",
+      "sha256": "cac35c02686e5d04a5a7140bfb3b36e73aed496656e891102e428886d7930318",
+      "bytes": 1491
+    },
+    {
+      "path": "licenses/CPython-LICENSE.txt",
+      "sha256": "3b2f81fe21d181c499c59a256c8e1968455d6689d269aa85373bfb6af41da3bf",
+      "bytes": 13936
+    },
+    {
+      "path": "licenses/gitdb-a81bfb7ee8.txt",
+      "sha256": "efd29f596a08e8857e68e7694a50bcda72839792da7c3f041bcbff5f18009239",
+      "bytes": 1984
+    },
+    {
+      "path": "licenses/GitPython-2947a1a97f.txt",
+      "sha256": "86fc94c321a9afbc11514713511bafded225f25100dcc0f7350e82bc231b8beb",
+      "bytes": 1503
+    },
+    {
+      "path": "licenses/idna-75f82e047b.txt",
+      "sha256": "1a9a4f0e3d479a27240ddd59a9137a66ab4a0f9dfdc8ca6188cc0bfd85187f04",
+      "bytes": 1541
+    },
+    {
+      "path": "licenses/Jinja2-2a52b68432.txt",
+      "sha256": "3b49dcee4105eb37bac10faf1be260408fe85d252b8e9df2e0979fc1e094437b",
+      "bytes": 1475
+    },
+    {
+      "path": "licenses/jsonschema-55a775c529.txt",
+      "sha256": "42dcd63495f87b4eb7c7757afa379bb55a53f94afd7a5f657d9adf57236e515c",
+      "bytes": 1057
+    },
+    {
+      "path": "licenses/jsonschema-ae014103df.txt",
+      "sha256": "4f92a015a13c4d1a040bef018aa13430b4f1bc73b41b16bb846c346766de7439",
+      "bytes": 1057
+    },
+    {
+      "path": "licenses/markdown-374fe49e4b.txt",
+      "sha256": "792c48c5a849a15fdf9e37e8bcf9e6d1dd13b32b46c642a748a0a46a9919d473",
+      "bytes": 1073
+    },
+    {
+      "path": "licenses/markdown-befecbec2d.txt",
+      "sha256": "4a2260d6e2cd0f5a151a1e86dbfe7d3ed552b1e2beabf9941c1ba5c49cbce484",
+      "bytes": 1078
+    },
+    {
+      "path": "licenses/MarkupSafe-1e2ff02c38.txt",
+      "sha256": "4631ec0db5fd90a547e336817264c6798214338146f8ac94b4a57f96ee8c9ec4",
+      "bytes": 1503
+    },
+    {
+      "path": "licenses/mdurl-2362b04f47.txt",
+      "sha256": "7c605df6e28667a9603118e98274f64a49ce3eed0d26fccce9534a345e0ef955",
+      "bytes": 2338
+    },
+    {
+      "path": "licenses/narwhals-1cc2974404.txt",
+      "sha256": "811445f30147b8f0c9d444c9025fd528f9532c54b7b83f6e2368473dc91cfdf0",
+      "bytes": 1082
+    },
+    {
+      "path": "licenses/numpy-05ede52487.txt",
+      "sha256": "b4bc2f4fa1c95778f1ed3dd8f14706bece399475b978f9f34b5d3cd72521b48a",
+      "bytes": 3582
+    },
+    {
+      "path": "licenses/numpy-107179fb0c.txt",
+      "sha256": "d208152e2777ffd0126eacc1bd21c0320d69e4e6b622d21a2a12a47e8ef73763",
+      "bytes": 21155
+    },
+    {
+      "path": "licenses/numpy-2.5.1-numpy_ma_LICENSE.txt",
+      "sha256": "d78dbb208b80d92b4d333e41a4baae50d12444f46e53199fa7726a91de6e2da7",
+      "bytes": 1616
+    },
+    {
+      "path": "licenses/numpy-2.5.1-numpy_random_LICENSE.md.txt",
+      "sha256": "b4bc2f4fa1c95778f1ed3dd8f14706bece399475b978f9f34b5d3cd72521b48a",
+      "bytes": 3582
+    },
+    {
+      "path": "licenses/numpy-212e607132.txt",
+      "sha256": "b0fd592d4ead563148e3977e7b589169d46a5ef2ff133c755a81af880a3fc919",
+      "bytes": 1441
+    },
+    {
+      "path": "licenses/numpy-2923490a03.txt",
+      "sha256": "cf5619f25b112d5ce7c896efffc8e610bcb345dfadcc19f2c1460aa48fff2c9e",
+      "bytes": 2805
+    },
+    {
+      "path": "licenses/numpy-359a3652a9.txt",
+      "sha256": "322ac46d870c8aeead6c53adcccc839296fb3c8e456eae155081297daf7f8013",
+      "bytes": 1540
+    },
+    {
+      "path": "licenses/numpy-663b38660c.txt",
+      "sha256": "28cad82ce1379dc529df30da78ec012d7d0d1d576b03ddcb93388aee53659f59",
+      "bytes": 1253
+    },
+    {
+      "path": "licenses/numpy-7f455a2bab.txt",
+      "sha256": "d78dbb208b80d92b4d333e41a4baae50d12444f46e53199fa7726a91de6e2da7",
+      "bytes": 1616
+    },
+    {
+      "path": "licenses/numpy-8d61f504c0.txt",
+      "sha256": "a732977853530066790c42817087f4829b518dd98d340c916acbfd227e39d3cb",
+      "bytes": 1542
+    },
+    {
+      "path": "licenses/numpy-b0342ea604.txt",
+      "sha256": "19060ef465e1797d682ee0fc3081bd25ab1395e995e43d25c9d13c95d9a3cd6b",
+      "bytes": 2314
+    },
+    {
+      "path": "licenses/numpy-c1540c8cf2.txt",
+      "sha256": "92c10699884321f1c2947fe2a70ab23b0fbf1507f756d89dd08f38c61fc3d4fa",
+      "bytes": 2986
+    },
+    {
+      "path": "licenses/numpy-cf4077dc12.txt",
+      "sha256": "aea41976c720f91bd19725c16916a1ace40eb1ea42620d340e587a5de4bbcea0",
+      "bytes": 704
+    },
+    {
+      "path": "licenses/numpy-daa279d3b3.txt",
+      "sha256": "454ec7350e478e037061850b67395753b425b1cb0a34bbc26290b020bf89d763",
+      "bytes": 340
+    },
+    {
+      "path": "licenses/numpy-ddaa42a779.txt",
+      "sha256": "a804dff0ead9fadc5293456410bcbfc32bf024be9c4513459663fb7b442d2341",
+      "bytes": 45831
+    },
+    {
+      "path": "licenses/numpy-e2b767f4f0.txt",
+      "sha256": "d544761558b510866c21f7e8a2d5716fca76e0b98117e3b6b86314db7244d150",
+      "bytes": 1039
+    },
+    {
+      "path": "licenses/numpy-f14470a6c6.txt",
+      "sha256": "41190663b77bee5302386495a07b7eabfbfa571aa0ae2f11da6764162062fc4f",
+      "bytes": 1176
+    },
+    {
+      "path": "licenses/numpy-f704832e8b.txt",
+      "sha256": "d544761558b510866c21f7e8a2d5716fca76e0b98117e3b6b86314db7244d150",
+      "bytes": 1039
+    },
+    {
+      "path": "licenses/numpy-fc21fc10a0.txt",
+      "sha256": "585483905b13d4b42f800c55ba99e89d6e2e33ccd5f503e201c07531d148ff41",
+      "bytes": 1573
+    },
+    {
+      "path": "licenses/numpy-fccbfe0648.txt",
+      "sha256": "8db000e158c162e7249787852d8c69764706502ccee725c06641b31c1e95c8af",
+      "bytes": 1523
+    },
+    {
+      "path": "licenses/packaging-155534efe5.txt",
+      "sha256": "b70e7e9b742f1cc6f948b34c16aa39ffece94196364bc88ff0d2180f0028fac5",
+      "bytes": 1344
+    },
+    {
+      "path": "licenses/packaging-839f6a6d42.txt",
+      "sha256": "0d542e0c8804e39aa7f37eb00da5a762149dc682d7829451287e11b938e94594",
+      "bytes": 10174
+    },
+    {
+      "path": "licenses/packaging-e2d18abf05.txt",
+      "sha256": "cad1ef5bd340d73e074ba614d26f7deaca5c7940c3d8c34852e65c4909686c48",
+      "bytes": 197
+    },
+    {
+      "path": "licenses/pandas-041efe506b.txt",
+      "sha256": "533eb6d0b98e5be3ddd12dce97be35dd11282f5c47cdf8d08c81756fd5d70a26",
+      "bytes": 1634
+    },
+    {
+      "path": "licenses/pefile-LICENSE.txt",
+      "sha256": "bfd4b5e4f8a99c961fd6f94d708e38396cc146bfe8fbc5d2a86e63aa29fb4208",
+      "bytes": 1083
+    },
+    {
+      "path": "licenses/pillow-b5ec0acbd7.txt",
+      "sha256": "3c53812e2d263b505ba4a4f60a93d9637c2653e21260386515c72b5ccb58a89e",
+      "bytes": 56937
+    },
+    {
+      "path": "licenses/protobuf-f02801cd07.txt",
+      "sha256": "6e5e117324afd944dcf67f36cf329843bc1a92229a8cd9bb573d7a83130fea7d",
+      "bytes": 1732
+    },
+    {
+      "path": "licenses/pyarrow-214f889e17.txt",
+      "sha256": "b410defd7f5f8cac9cfa54a3a49fcd971de2be0462bbab980c8f869f1aac94d3",
+      "bytes": 114602
+    },
+    {
+      "path": "licenses/pyarrow-66649c183a.txt",
+      "sha256": "2ccca1e730e671f55b8028facf2261a6f74b561a4d96a2ccd743be19c5619236",
+      "bytes": 2997
+    },
+    {
+      "path": "licenses/pydeck-d6a07c4c78.txt",
+      "sha256": "fa22bc5599b857a628e0757d4a95024f4c392aa2a4321053d61f34ce505d6d90",
+      "bytes": 621
+    },
+    {
+      "path": "licenses/Pygments-59a5b25111.txt",
+      "sha256": "a9d66f1d526df02e29dce73436d34e56e8632f46c275bbdffc70569e882f9f17",
+      "bytes": 1331
+    },
+    {
+      "path": "licenses/pyinstaller-COPYING.txt.txt",
+      "sha256": "dcf75fdb959db1e3b41c0f8505069d2ece781b5ec6b3d0a4d30975cfc6580245",
+      "bytes": 32138
+    },
+    {
+      "path": "licenses/pyinstaller-hooks-contrib-LICENSE.txt",
+      "sha256": "91d0baaff00773038e72c0a1fc9d5d2d38706b7a2b9c04f34296608f931b9cd0",
+      "bytes": 27666
+    },
+    {
+      "path": "licenses/PyMuPDF-1.26.7-COPYING.txt",
+      "sha256": "40e60697600535eabfb5ae05f72829d88cfe8d02dd4792f5a754f6f51dabe55b",
+      "bytes": 64
+    },
+    {
+      "path": "licenses/pymupdf-7846cdcfd4.txt",
+      "sha256": "40e60697600535eabfb5ae05f72829d88cfe8d02dd4792f5a754f6f51dabe55b",
+      "bytes": 64
+    },
+    {
+      "path": "licenses/python-2f217a0f05.txt",
+      "sha256": "ba00f51a0d92823b5a1cde27d8b5b9d2321e67ed8da9bc163eff96d5e17e577e",
+      "bytes": 2889
+    },
+    {
+      "path": "licenses/python-69ce6cba06.txt",
+      "sha256": "d27209ab3d162782a8f8e3872b9b353c49e092c9aa467a64522883407d8d1030",
+      "bytes": 4600
+    },
+    {
+      "path": "licenses/pytz-9c61f6c026.txt",
+      "sha256": "be8b1a37ebe26c592a90f6c0eb33103a7f383ce2f4d7498c0af9a526990a07b8",
+      "bytes": 1088
+    },
+    {
+      "path": "licenses/pywin32-ctypes-LICENSE.txt.txt",
+      "sha256": "dfa83b3e2709adfcdb838d9ad55823ca674abb780e60563d9dd9544ccbf785e9",
+      "bytes": 1644
+    },
+    {
+      "path": "licenses/referencing-9d95877c88.txt",
+      "sha256": "42dcd63495f87b4eb7c7757afa379bb55a53f94afd7a5f657d9adf57236e515c",
+      "bytes": 1057
+    },
+    {
+      "path": "licenses/requests-50c382c98c.txt",
+      "sha256": "09e8a9bcec8067104652c168685ab0931e7868f9c8284b66f5ae6edae5f1130b",
+      "bytes": 10142
+    },
+    {
+      "path": "licenses/rich-054925433f.txt",
+      "sha256": "deed7c17a4318158190a3ea239cc879a5a50271cebb98ae7025f48fbe58dca15",
+      "bytes": 1056
+    },
+    {
+      "path": "licenses/rpds-58327ddfc2.txt",
+      "sha256": "8bcb72c82ea8ae74802293c41d93ad7d51434001b0ae45a603a5af0f507aee0a",
+      "bytes": 1076
+    },
+    {
+      "path": "licenses/six-4de3b64f8d.txt",
+      "sha256": "4375ba20e2b9c6c4e7cad2940a628fd90e95cc3d50ee92aae755715d8ba1fbd0",
+      "bytes": 1066
+    },
+    {
+      "path": "licenses/smmap-5f29c42c08.txt",
+      "sha256": "88e9d93f708d110b328a834302dd1d5c6afbda530e7721d15d80b3511d86f235",
+      "bytes": 1519
+    },
+    {
+      "path": "licenses/streamlit-0a0bd415fb.txt",
+      "sha256": "79a2583de88d29002f571ea5bf50d1f6020f1b5a45c248b6a5c0cb75db5f407c",
+      "bytes": 5061
+    },
+    {
+      "path": "licenses/streamlit-0ae6a074d0.txt",
+      "sha256": "6137aa4fb47a89db2c4e09f28b781fd2d462ab5f3e2e23de0cea6c59c9db8b7e",
+      "bytes": 3184
+    },
+    {
+      "path": "licenses/streamlit-1b95d7c04e.txt",
+      "sha256": "eace264927fc347189a94085023dd580c5d9b8d632033b2129186fc586534285",
+      "bytes": 281
+    },
+    {
+      "path": "licenses/streamlit-32afbaeda8.txt",
+      "sha256": "dee9b8f24daa46b8c9d6db5b9b93705046ee2c28af2afb94b1568e5257dc3584",
+      "bytes": 2051
+    },
+    {
+      "path": "licenses/streamlit-49aebb52cf.txt",
+      "sha256": "3de1e85b06a7c95309852499639981c49fd588cfab15e0684e0f649472ccb5d1",
+      "bytes": 1219
+    },
+    {
+      "path": "licenses/streamlit-5fa9476479.txt",
+      "sha256": "305572c027b87c2b5eec7ac7695a4bfa39c35a17bd7a2f7393246f4545d053ee",
+      "bytes": 212
+    },
+    {
+      "path": "licenses/streamlit-7f86ff3dc4.txt",
+      "sha256": "28085b710d6377f37c0df57a94b62543f11039a96012b395f927fcec6f918768",
+      "bytes": 188
+    },
+    {
+      "path": "licenses/streamlit-9f17a426f6.txt",
+      "sha256": "e36ea554128c5b614abb906a9d20e9667866b3542a259fa70efab00badb0f99f",
+      "bytes": 479
+    },
+    {
+      "path": "licenses/tenacity-4dc8cba5be.txt",
+      "sha256": "58d1e17ffe5109a7ae296caafcadfdbe6a7d176f0bc4ab01e12a689b0499d8bd",
+      "bytes": 11357
+    },
+    {
+      "path": "licenses/toml-330026e23b.txt",
+      "sha256": "2d9294823df6c89357c8be4927fce79361d6561e5ee7532d5926e63939aaa536",
+      "bytes": 1252
+    },
+    {
+      "path": "licenses/tornado-17a4ad2825.txt",
+      "sha256": "3ddf9be5c28fe27dad143a5dc76eea25222ad1dd68934a047064e56ed2fa40c5",
+      "bytes": 11560
+    },
+    {
+      "path": "licenses/typing_extensions-69e8e5119a.txt",
+      "sha256": "3b2f81fe21d181c499c59a256c8e1968455d6689d269aa85373bfb6af41da3bf",
+      "bytes": 13936
+    },
+    {
+      "path": "licenses/tzdata-dd2074d659.txt",
+      "sha256": "df58f69ea88683035d720b5375bcef0cf5aeaa98a1d098d572e0992c378deb46",
+      "bytes": 625
+    },
+    {
+      "path": "licenses/tzdata-ec5b9c4d80.txt",
+      "sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4",
+      "bytes": 11357
+    },
+    {
+      "path": "licenses/urllib3-02abec01d7.txt",
+      "sha256": "130e3a64d5fdd5d096a752694634a7d9df284469de86e5732100268041e3d686",
+      "bytes": 1093
+    },
+    {
+      "path": "licenses/watchdog-347e03e98c.txt",
+      "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+      "bytes": 11358
+    },
+    {
+      "path": "licenses/watchdog-af7e6f75c6.txt",
+      "sha256": "02c8760f988a76e92a9d6cb525456a86f7b0fd1953870dd491de5955cb974d41",
+      "bytes": 625
+    },
+    {
+      "path": "NOTICE.md",
+      "sha256": "dbb11282c975c5eb39fbfd0d71b9b3b15dbaca8eda4bdcb1d3db5a18bb80177f",
+      "bytes": 1332
+    },
+    {
+      "path": "ocr_prompt.txt",
+      "sha256": "73beb48df80c6f1d06e56dccbc86d51a26b947eefddb4dab0f5633d58e8d6484",
+      "bytes": 10694
+    },
+    {
+      "path": "README.md",
+      "sha256": "f545d684e504d43e03b2ed1fe8c395804a19edeb03c689d00b43bf8955a6a23d",
+      "bytes": 10522
+    },
+    {
+      "path": "requirements-build.txt",
+      "sha256": "b55961716519fdce8ca7da275078d6a3545e4bef126fe4a38bb2066005cf11bb",
+      "bytes": 66
+    },
+    {
+      "path": "requirements-lock.txt",
+      "sha256": "373b038b66dd78bc667c229af1d63a4d77567ce5a686208c9cd0fb940c517783",
+      "bytes": 857
+    },
+    {
+      "path": "requirements.txt",
+      "sha256": "d74a09e9eb890a05679740fb30fecdae4ebe35df20b85f51a9b1f68be98f0f13",
+      "bytes": 1378
+    },
+    {
+      "path": "services/__init__.py",
+      "sha256": "ba327cf8bde9fad7e42786d44f6bf8052ca9bdda259fac25ff11e2438f22516a",
+      "bytes": 62
+    },
+    {
+      "path": "services/agent_skills/__init__.py",
+      "sha256": "65f5cbf0678dda8970715b75e69a90ed6fa8c89fc4f5abfc2f38952fae0402f0",
+      "bytes": 981
+    },
+    {
+      "path": "services/agent_skills/base_skill.py",
+      "sha256": "9a855406bda589d7f7572d44670c64e7092344245a23e1d5d3c72e41c2e884a9",
+      "bytes": 2217
+    },
+    {
+      "path": "services/agent_skills/electromagnetism_circuits_skill.py",
+      "sha256": "a4ed34d4a33d056ad8115d067bda20cc1047e805c1a949a785ec6696f3e24cb9",
+      "bytes": 6357
+    },
+    {
+      "path": "services/agent_skills/intent_understanding_skill.py",
+      "sha256": "6b8d3dfcdd599475ae4ef80cd9046bf25bcdac68bd6d72fcd6ae796e15c38173",
+      "bytes": 5832
+    },
+    {
+      "path": "services/agent_skills/optics_geometry_skill.py",
+      "sha256": "6ec76b5e6e9f44f00d29f0df4ddf1de0a06a3d4e670e8c2814cd6b8f1901b4ca",
+      "bytes": 4736
+    },
+    {
+      "path": "services/agent_skills/physics_diagram_auditor_skill.py",
+      "sha256": "b9f13c708961786a099cef9c8c8e961047a030455ec9f0e553b24a47a75343d6",
+      "bytes": 7147
+    },
+    {
+      "path": "services/agent_skills/physics_mechanics_skill.py",
+      "sha256": "f8f7fe3f0005d28f8143114f7392020c117ac398f427feb59901cdcec77066ed",
+      "bytes": 5346
+    },
+    {
+      "path": "services/agent_skills/plugin_loader.py",
+      "sha256": "ba9d427a831373df4ce092ceea33a3a034c0a0ff8e5ed51a5646d568e0190d28",
+      "bytes": 5303
+    },
+    {
+      "path": "services/agent_skills/plugins/tex_diagnostics/manifest.json",
+      "sha256": "10930a5fab7b20db002154fbb9ea04b15ca1874e1785aab2c9ede398bba572e1",
+      "bytes": 314
+    },
+    {
+      "path": "services/agent_skills/plugins/tex_diagnostics/skill.py",
+      "sha256": "04668e86d64dcd8e390ed6eaa82053d3955a9a4c806e8e9f867e51ba0bc559e8",
+      "bytes": 4129
+    },
+    {
+      "path": "services/agent_skills/plugins/visual_qa/manifest.json",
+      "sha256": "c69b44a3563f1540b1127df813024cf2738f5a4e6c0e6051b0012572fd2c70e1",
+      "bytes": 344
+    },
+    {
+      "path": "services/agent_skills/plugins/visual_qa/skill.py",
+      "sha256": "7023f2d88897efde008709d84a7dbc25b90330de89bd955ffa0ef7610d6d3499",
+      "bytes": 3231
+    },
+    {
+      "path": "services/agent_skills/skill_registry.py",
+      "sha256": "a28bd137e02c5f5e3d2fb3ecde32ffa2cb1ac4758e6ff83ccd517210143af175",
+      "bytes": 7052
+    },
+    {
+      "path": "services/agent_skills/tikz_error_doctor_skill.py",
+      "sha256": "03b721b0a2462f0229c8588f92c013297dabeacca841cbec3bdec4a6c756f287",
+      "bytes": 8562
+    },
+    {
+      "path": "services/ai_service.py",
+      "sha256": "99bad99f4b2ccb13b2d0a51655a33a30d9037c9dd77064320c5f0fd9f1e6f28c",
+      "bytes": 7262
+    },
+    {
+      "path": "services/diagram_agent.py",
+      "sha256": "433ddec28751b50b028ad59d401b4be876cf7b572245eb45a01f305de0cb2b0d",
+      "bytes": 92450
+    },
+    {
+      "path": "services/diagram_agent_ui.py",
+      "sha256": "8becc592762bf3b2b5fe76902134bc52ffb988a8e3fa577c00aa16977044c527",
+      "bytes": 116022
+    },
+    {
+      "path": "services/diagram_validate.py",
+      "sha256": "4eb51be1e569b24a1ab8a25df196efa0088aecf5212995fa73b18cf0c4fd2f39",
+      "bytes": 90894
+    },
+    {
+      "path": "services/file_service.py",
+      "sha256": "7a165ca2b8479529e0254ad4e0510865b0c682a6148cd95f0b62f3d20c2a4294",
+      "bytes": 4167
+    },
+    {
+      "path": "services/launcher.py",
+      "sha256": "ceddbaabeec28ac3b993376fd5c5be2da741eb1985c926abbdc03da37bd8dfee",
+      "bytes": 5805
+    },
+    {
+      "path": "services/local_whisper.py",
+      "sha256": "2ccd75214cdaa4d867483d1e55993e17e24334e17bb49d24be013420831e099f",
+      "bytes": 9144
+    },
+    {
+      "path": "services/operation_log.py",
+      "sha256": "9da2ad74a41ca6929cc361f774abfa73c10a1930914027d38310c535ba7e98ba",
+      "bytes": 2502
+    },
+    {
+      "path": "services/performance.py",
+      "sha256": "98db2c6e33b3e91d81ff52eb0a5b28544412e08ee8cac3ebce9a587e06b366e8",
+      "bytes": 455
+    },
+    {
+      "path": "services/question_import_ai_service.py",
+      "sha256": "9a6741bd6c60d2aaf29ab95ceb7bacf28467b6f6bed9595884e79ec6ac28b722",
+      "bytes": 5381
+    },
+    {
+      "path": "services/question_service.py",
+      "sha256": "51c71f010629e9688ae870f297030a017c9aaaf949f3748160b5a6fcb2fb77cc",
+      "bytes": 9641
+    },
+    {
+      "path": "services/question_type_service.py",
+      "sha256": "c9437da1ae8aac8976ff9b12a5f6dd59e31c27f83638b0857e77da8fb2a104e3",
+      "bytes": 2871
+    },
+    {
+      "path": "services/semantic_search_service.py",
+      "sha256": "da57ea6b2f044c34ccbb30557acd4761439d383345071501c9d45a885c8e1357",
+      "bytes": 12028
+    },
+    {
+      "path": "services/sidebar_navigation.py",
+      "sha256": "b976c78510908c41c0b73b533f1ebd226d25ce2c96983468008586b1d5af25cb",
+      "bytes": 1374
+    },
+    {
+      "path": "services/tex_compile_service.py",
+      "sha256": "08c73b097878a47b37572d9af46366127a828220e9893d6c7dcd663f9676474f",
+      "bytes": 14126
+    },
+    {
+      "path": "services/tex_import_service.py",
+      "sha256": "985b439f8e7b475be8e280c942170e7a500e2c9be0dbeda4795a481392646da4",
+      "bytes": 10673
+    },
+    {
+      "path": "services/theme_settings_ui.py",
+      "sha256": "59ee411f0fc2f6d8de04d8417c6fcf231f980f20522f47d940d5a9c8f31cda7f",
+      "bytes": 6092
+    },
+    {
+      "path": "services/ui_preferences.py",
+      "sha256": "663b808837d3cd6f0bb09422e736a030acaf70ac983fc8a58daa6b7b07e6d860",
+      "bytes": 1051
+    },
+    {
+      "path": "services/whisper_bridge.mjs",
+      "sha256": "4be492d4514331b38efe3a24dfdc4a9798c2fb80991f3e1fbee894bd169bebb2",
+      "bytes": 2323
+    },
+    {
+      "path": "services/whisper_server.mjs",
+      "sha256": "93475dfb731cf4f1b8cd22efa3f512a2824f4767986604074666b953b89e59b3",
+      "bytes": 4234
+    },
+    {
+      "path": "static/echarts-5.5.0.min.js",
+      "sha256": "42f8329d989b6f6539dd2b15bbdf0d82025762ac112fbb60dc57b27d7bcf3946",
+      "bytes": 1029203
+    },
+    {
+      "path": "static/favicon.png",
+      "sha256": "9127a959697642eacf3b80ce69b1c3c67635d77e3c8808667da4a39cea128202",
+      "bytes": 2739
+    },
+    {
+      "path": "static/sidebar.webp",
+      "sha256": "e6835296c9bb8b07dc8441b50b4d1570b30503e8ea956769f4cde2551a3f1c81",
+      "bytes": 4250
+    },
+    {
+      "path": "static/sidebar_flyout.js",
+      "sha256": "55e84459f751bdf20d3467c728a64e82768b9d2344081aa119717c91b8a2d690",
+      "bytes": 5685
+    },
+    {
+      "path": "static/THIRD_PARTY_NOTICES.md",
+      "sha256": "df3d412b7630c03cf263af2cdf3b2ad29a73a9d179f91ee707dcc4ca68f56d38",
+      "bytes": 309
+    },
+    {
+      "path": "Test Paper Group/主题模板/练习类模板/练习类模板.tex",
+      "sha256": "7b6d9b897d0095cbf56778b94ceab10457ddbc74e8ccb08101c86162fd5f685f",
+      "bytes": 29119
+    },
+    {
+      "path": "Test Paper Group/主题模板/讲义类模板/handout_main.tex",
+      "sha256": "5782bb24194fd2d4d6f21f104f577d22d2f7bce885acb7b91403f89c6e59fafa",
+      "bytes": 29715
+    },
+    {
+      "path": "Test Paper Group/主题模板/讲义类模板/UtopiaPhyCyclus_book.cls",
+      "sha256": "779773ec370e08c4532cc75a0f083e649e2d7087b73507f53b5d0a9c2ce149c8",
+      "bytes": 27412
+    },
+    {
+      "path": "Test Paper Group/主题模板/讲义类模板/讲义类模板.tex",
+      "sha256": "a5364974af99856880e695cb80f8e2af43d39e0dbfaf57e77069c346bfb92d4a",
+      "bytes": 29176
+    },
+    {
+      "path": "Test Paper Group/主题模板/试卷类模板/试卷类模板.tex",
+      "sha256": "a30a7382a04bc508c32b260324424917d27feb9e63343a20082949ab065992d5",
+      "bytes": 3101
+    },
+    {
+      "path": "THIRD_PARTY_NOTICES.md",
+      "sha256": "1bb5d14f23292c5a931db29df1209a82e01dd95b5869c3da8815da4a6f8cd6cc",
+      "bytes": 2578
+    },
+    {
+      "path": "tools/fetch_release_licenses.py",
+      "sha256": "ce90fb05e5ae5781c6ebc6c0a9d5951d50b313db4853f577c0b3a3441c4601cb",
+      "bytes": 4275
+    },
+    {
+      "path": "tools/package_entry.py",
+      "sha256": "074617d087af688010a5541b798bcaaf6405946125576fe6caf91ff3ddab1c2f",
+      "bytes": 1528
+    },
+    {
+      "path": "tools/portable_entry.py",
+      "sha256": "0ea791d3663bebba96683c52f289d17bea801f3d8555dc145b3504022850d60a",
+      "bytes": 3111
+    },
+    {
+      "path": "tools/release.py",
+      "sha256": "257eece3bd65bba03493c5e459f2ae5ce3cb99fe4cc79edee0fdf3f8a75f18e0",
+      "bytes": 13539
+    },
+    {
+      "path": "tools/UtopiaPhyCyclus.spec",
+      "sha256": "0c1e4dfff1e444f25c1a54865a02d88f9c034b7bdecef3a32cbe9196278714b7",
+      "bytes": 1511
+    },
+    {
+      "path": "tools/verify_release.py",
+      "sha256": "ef68e63b05d9d92f20b04e8dae5ad58bbadc0db691c60542130176bcb27da48a",
+      "bytes": 5095
+    },
+    {
+      "path": "utils/__init__.py",
+      "sha256": "56497a9f9b62448b0ccca005dd1c89f5cdca741eb1c4d28c54abb96edb0c7d8b",
+      "bytes": 45
+    },
+    {
+      "path": "utils/agent_voice/__init__.py",
+      "sha256": "506e63a9d5083bea1f1694695c75bef7266fdec45cae9148696fd26df8fe183b",
+      "bytes": 731
+    },
+    {
+      "path": "utils/agent_voice/index.html",
+      "sha256": "348c8244619c34bf79a7d009e84dfcb44a0ecad6631b908fc910fa3e004f0d10",
+      "bytes": 1375
+    },
+    {
+      "path": "utils/batch_gen.py",
+      "sha256": "33699d6605e96838ae4c13caa076ba0e22cd097eb48074b9194969b2c7a341cd",
+      "bytes": 13408
+    },
+    {
+      "path": "utils/chart_assets/__init__.py",
+      "sha256": "9882be381e63942db75c098321529bbe18732312e4d43ece639a78de69cb5377",
+      "bytes": 503
+    },
+    {
+      "path": "utils/charts.py",
+      "sha256": "e32b52e5874ae40cf8ee28e6e0f19244d4182655bef985328be58581975115bd",
+      "bytes": 56901
+    },
+    {
+      "path": "utils/component_theme.py",
+      "sha256": "3ec6ed8c5f9c4def56f496f200acd0e340e986527f5b5d092e2fce1c59042a11",
+      "bytes": 1928
+    },
+    {
+      "path": "utils/core_config.py",
+      "sha256": "3f9b7df49a1a45d11e0da218423c9d5289bcd5c2e2dc18266321798e522ca041",
+      "bytes": 1658
+    },
+    {
+      "path": "utils/csv_ops.py",
+      "sha256": "a97a3f2fc7a4c382e1a461e6e498755ad1c75b8f4adaa1df05f63bb1833c6113",
+      "bytes": 10053
+    },
+    {
+      "path": "utils/diagram_palette.py",
+      "sha256": "53a725f6b690bcd23695166225fc23fea4a5f85d7496c981da08a418e10760ba",
+      "bytes": 2886
+    },
+    {
+      "path": "utils/file_ops.py",
+      "sha256": "824b9cfe629c7d29350c230d6fcc8bf5dfb55c843662d78fd8ba3a627ea1e67d",
+      "bytes": 9862
+    },
+    {
+      "path": "utils/init_csv_index.py",
+      "sha256": "d251018165177d3db01b67f06cb9b99016a7d4f0fade12ffb4544970b5b2c9dd",
+      "bytes": 7152
+    },
+    {
+      "path": "utils/latex_ops.py",
+      "sha256": "1dda01a27837abfb2c592d192e5bbfac7bb10b7699f1f6dca0e238025d0a49bd",
+      "bytes": 34471
+    },
+    {
+      "path": "utils/local_stats.py",
+      "sha256": "97525c6ccbe387fd5c0c52736dbabef863e483b48a46b9a97e2a065f6c0c6b17",
+      "bytes": 5836
+    },
+    {
+      "path": "utils/runtime_files.py",
+      "sha256": "d93b0492bf8588b92ee54804cde4326ee23210de8fb04ce95d6d2dc473592ebc",
+      "bytes": 819
+    },
+    {
+      "path": "utils/sidebar_theme.py",
+      "sha256": "7d636309f22212cbfca01db74f658b0d81da667ad2fa2b9559096831130f221b",
+      "bytes": 3996
+    },
+    {
+      "path": "utils/sortable_list/__init__.py",
+      "sha256": "74b053ee0d969a4363c38df9b6b80ddf0ac243da115ecd57b8f64bd385e577c5",
+      "bytes": 337
+    },
+    {
+      "path": "utils/sortable_list/index.html",
+      "sha256": "ded70e1ad5d30e4d71631a1d1de74ff6d4a47c59d99ef0ba979dde07ccb702f6",
+      "bytes": 4194
+    },
+    {
+      "path": "utils/star_rating/__init__.py",
+      "sha256": "12001428adb2fd5f12f314f8c4e1c5f0d9906122235b31a914a84c11d6758c58",
+      "bytes": 759
+    },
+    {
+      "path": "utils/star_rating/index.html",
+      "sha256": "f46016eb353ffdcb37382fbbabd394a4adcd77f0aa0550483e4cda52cb8f8659",
+      "bytes": 5758
+    },
+    {
+      "path": "utils/tex_log_tools.py",
+      "sha256": "b31529451ad076d5642fd2e1577b5c760d7dafab5b1adcbbe80fc1c8c83c2dfd",
+      "bytes": 49949
+    },
+    {
+      "path": "utils/theme_overrides.py",
+      "sha256": "62ffaed05783a0cff0a7ebddcecfffbb251122bbf1bf92953dad18a2c5a8eb6a",
+      "bytes": 11874
+    },
+    {
+      "path": "utils/theme_palettes.py",
+      "sha256": "64d25d3f83584ca66e229d5eca141d8c9f0a2f6d3e62c05e15d0c7699b1a64aa",
+      "bytes": 8080
+    },
+    {
+      "path": "utils/theme_system.py",
+      "sha256": "4c23c2b262c63d76a55aed805e1a22dee22ad26df03ac04ebab3ad610c3ea006",
+      "bytes": 56299
+    },
+    {
+      "path": "utils/tikz_ops.py",
+      "sha256": "ab1d73aa1cba122489a7afc956eeab605973c4595dba8321c11661b42e2b75c0",
+      "bytes": 33694
+    },
+    {
+      "path": "utopia_phycyclus_app.py",
+      "sha256": "c826acf4cbe863c3e92a3a32ada19afcceb33c605c667405d3fa4268c037aab0",
+      "bytes": 722618
+    },
+    {
+      "path": "UtopiaPhyCyclus_book.cls",
+      "sha256": "d82737f37cd4832849cc97983e91d0d82993f616389ba579f759cf0810548cb6",
+      "bytes": 29059
+    },
+    {
+      "path": "VERSION",
+      "sha256": "59854984853104df5c353e2f681a15fc7924742f9a2e468c29af248dce45ce03",
+      "bytes": 6
+    },
+    {
+      "path": "启动乌托邦高中物理题库助手.bat",
+      "sha256": "1a76dcd8780a84fa4edb15485700c5772c5d459a89155809d7a93d05b8601965",
+      "bytes": 2741
+    },
+    {
+      "path": "启动乌托邦高中物理题库助手.py",
+      "sha256": "65dd160d0f9c643ac1298ca98427d197be597c6fda68939e62f14bfd6356691b",
+      "bytes": 605
+    }
+  ]
+}

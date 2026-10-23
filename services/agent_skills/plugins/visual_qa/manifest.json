@@ -1,0 +1,9 @@
+{
+  "name": "visual-qa",
+  "version": "1.0.0",
+  "entry": "skill.py",
+  "class": "VisualQAReviewSkill",
+  "enabled": true,
+  "license": "MIT",
+  "description": "多模态视觉复核技能：对编译后的 PNG 做「物理图元是否齐全、方向/角度是否与题干一致」的审图 rubric，供 Pi-Agent 视觉校验步骤使用。"
+}

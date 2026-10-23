@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <style>
+    html, body {
+      margin: 0;
+      padding: 0;
+      height: 0;
+      overflow: hidden;
+      background: transparent;
+    }
+  </style>
+</head>
+<body>
+  <script>
+    function sendToStreamlit(type, data) {
+      window.parent.postMessage(
+        Object.assign({ isStreamlitMessage: true, type: type }, data || {}),
+        "*"
+      );
+    }
+
+    const Streamlit = {
+      setComponentReady: function () {
+        sendToStreamlit("streamlit:componentReady", { apiVersion: 1 });
+      },
+      setFrameHeight: function (height) {
+        sendToStreamlit("streamlit:setFrameHeight", { height: height || 0 });
+      },
+      setComponentValue: function (value) {
+        sendToStreamlit("streamlit:setComponentValue", { value: value });
+      }
+    };
+
+    // 供父页面的语音/文本引擎调用
+    window.__mcAgentEmit = function (payload) {
+      Streamlit.setComponentValue(payload);
+      return true;
+    };
+
+    // 让父页面能快速定位本组件 iframe
+    window.name = "mc-agent-voice-bridge";
+
+    window.addEventListener("message", function (event) {
+      if (event.data && event.data.type === "streamlit:render") {
+        window.__mcAgentRendered = true;
+      }
+    });
+
+    Streamlit.setComponentReady();
+    Streamlit.setFrameHeight(0);
+  </script>
+</body>
+</html>

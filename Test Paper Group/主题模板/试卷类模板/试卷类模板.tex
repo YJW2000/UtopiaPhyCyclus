@@ -1,0 +1,89 @@
+% Utopia Yuan 东北高考物理试卷
+% 结构依据 2025 年黑吉辽蒙高考物理卷：15 题，100 分，75 分钟。
+\let\stop\empty
+\documentclass{exam-zh}
+
+\usepackage{mathtools}
+\usepackage{siunitx}
+\sisetup{per-mode=symbol}
+\usepackage{graphicx}
+\usepackage{booktabs,array,multirow,diagbox}
+\usepackage{caption}
+\usepackage{lastpage}
+\usepackage{fancyhdr}
+\usepackage{tikz}
+\usepackage{tkz-euclide}
+\usepackage{pgfplots}
+\pgfplotsset{compat=1.18}
+\usetikzlibrary{
+  arrows.meta,angles,quotes,calc,positioning,intersections,
+  decorations.markings,decorations.pathmorphing,patterns,
+  shapes.geometric,3d
+}
+
+\examsetup{
+  page/size=a4paper,
+  page/show-head=true,
+  page/head-content={
+    \fancyhead[L]{\small\sffamily Utopia Yuan}
+    \fancyhead[R]{\small\sffamily 物理试卷}
+    \renewcommand{\headrulewidth}{0.4pt}
+  },
+  page/foot-content={Utopia Yuan · 物理试题 · 第;页（共;页）},
+  paren/show-paren=true,
+  paren/show-answer=false,
+  fillin/show-answer=false,
+  fillin/no-answer-type=none,
+  font=times,
+  math-font=xits
+}
+
+% “题目带答案”版本显示以下内容；“纯题目”版本由组卷程序移除这些环境。
+\ProvideDocumentEnvironment{answer}{ O{答案} O{} O{} +b }{
+  \par\noindent\textbf{#1：}\,#4\par
+}{}
+\ProvideDocumentEnvironment{solutions}{ O{解析} O{} O{} +b }{
+  \par\noindent\textbf{#1：}\,#4\par
+}{}
+\ProvideDocumentEnvironment{solution}{ O{解析} O{} O{} +b }{
+  \par\noindent\textbf{#1：}\,#4\par
+}{}
+
+% 常用物理排版命令。
+\providecommand{\dd}{\mathop{}\!\mathrm{d}}
+\providecommand{\e}{\mathrm{e}}
+\providecommand{\iu}{\mathrm{i}}
+\providecommand{\degree}{^\circ}
+\providecommand{\vect}[1]{\boldsymbol{#1}}
+\providecommand{\abs}[1]{\left|#1\right|}
+\providecommand{\textfigure}[2]{%
+  \begin{minipage}[t]{0.62\linewidth}#1\end{minipage}\hfill
+  \begin{minipage}[t]{0.34\linewidth}\centering#2\end{minipage}%
+}
+
+\title{Utopia Yuan 东北高考物理模拟试卷}
+\subject{物理}
+
+\begin{document}
+\secret
+\maketitle
+\thispagestyle{plain}
+
+\begin{center}
+  \small 本试卷共 \pageref{LastPage} 页，15 题。全卷满分 100 分，考试用时 75 分钟。
+\end{center}
+
+\begin{notice}
+  \item 答题前，考生先将自己的姓名、准考证号填写清楚，并将条形码准确粘贴在指定区域内。
+  \item 选择题使用 2B 铅笔填涂；非选择题使用 0.5 毫米黑色字迹签字笔书写。
+  \item 按题号顺序在答题卡对应区域内作答，超出答题区域书写的答案无效。
+  \item 作图可先用铅笔画出，确定后用黑色字迹签字笔描清楚。
+  \item 保持答题卡清洁，不要折叠、弄破、弄皱，不得使用涂改液、修正带或刮纸刀。
+\end{notice}
+
+% 以下两个空节是组卷程序的插入锚点，生成时会被实际题目覆盖。
+\section{选择题：本题共 10 小题，共 46 分。第 1～7 题为单项选择题，每题 4 分；第 8～10 题为多项选择题，每题 6 分。}
+
+\section{非选择题：本题共 5 小题，共 54 分。第 11～12 题为实验题，第 13～15 题为计算题。}
+
+\end{document}
