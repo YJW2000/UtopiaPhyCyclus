@@ -1,5 +1,5 @@
 {
-  "version": "1.1.1",
+  "version": "1.1.2",
   "empty_bank": true,
   "files": [
     {
@@ -14,8 +14,8 @@
     },
     {
       "path": "CHANGELOG.md",
-      "sha256": "dc17915c9bb49aa051d748ec07694c9badec39f709d6a32f7f0268e7a2bbd072",
-      "bytes": 1834
+      "sha256": "fc87dc78c6818c183ab58854eb82ccb12237b22e9a49bd7f3d9afe61ad714083",
+      "bytes": 2181
     },
     {
       "path": "chapters/README.md",
@@ -54,7 +54,7 @@
     },
     {
       "path": "docs/发行与安装.md",
-      "sha256": "887e28faf3df3140e6d14a840e627fe31c9dd15515ea2e1bae1c2392a6e3a0eb",
+      "sha256": "c1dca061ea320c31ea50715a59d90d17c1cb1883a2532feb76ce17f59308fd25",
       "bytes": 3977
     },
     {
@@ -66,6 +66,11 @@
       "path": "env.example",
       "sha256": "41234c518ea012054a802fe5489735023770e27fd4bc04138e5de4d9ce25c80c",
       "bytes": 2616
+    },
+    {
+      "path": "fig/buy-me-a-coffee.png",
+      "sha256": "bbc913c6388414a38c690f94a686235f9cf7c4013981ccd1fe9839486fa58016",
+      "bytes": 57249
     },
     {
       "path": "fig/utopia_phycyclus_workflow.png",
@@ -524,8 +529,8 @@
     },
     {
       "path": "README.md",
-      "sha256": "36711125f3d99abaab93c39c7b71ccd888f3274a9c6f18b939f08899f76cc5e6",
-      "bytes": 11127
+      "sha256": "2482c9a6c2bd28d15b0158dbec41ba1768114bba60bbf220a07cd160dc498fc0",
+      "bytes": 11368
     },
     {
       "path": "requirements-build.txt",
@@ -849,8 +854,8 @@
     },
     {
       "path": "tools/release.py",
-      "sha256": "342205d1ff6e8b4385a35c111230de88f073a727e46fae51459a03d42959ae2e",
-      "bytes": 18846
+      "sha256": "6076f3ae9010c1e352dc69cd3b933b116b635949798b4eb36a4b36d9fc36c5ee",
+      "bytes": 18877
     },
     {
       "path": "tools/UtopiaPhyCyclus.spec",
@@ -1004,7 +1009,7 @@
     },
     {
       "path": "VERSION",
-      "sha256": "74c8dcd895e1272a4276c6ceba0b4a0a8d97ff7b1ac9119b8f7a78685e5c45b1",
+      "sha256": "8456accd9a842531ca2aa6832c731ed07597335b35bbdb470044c5365e8fdc82",
       "bytes": 7
     },
     {

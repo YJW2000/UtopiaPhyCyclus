@@ -8,7 +8,13 @@ UtopiaPhyCyclus（乌托邦高中物理题库助手）是一个基于 Python、S
 
 **空题库发行：** 仓库和所有发行包仅提供软件、空白组卷模板及文档，不包含内部题目、图片、答案、索引、密钥或导出文件。请自行导入有权使用的题目。构建时使用显式白名单，独立仓库不携带旧题库的 Git 历史。
 
-**v1.1.1 Windows x64 完整版**内置 Python、项目所需 TeX Live 宏包及中文字体、Node、CPU Whisper 和 small 多语言模型。完整解压后运行 exe，AI 功能填写个人 API 即可；无需另外安装 Python、TeX、Node 或 DSH。预装宏包范围、x32 限制与测试边界见 [Windows兼容性与测试](docs/Windows兼容性与测试.md)。下面的环境安装步骤适用于源码/wheel 用户。
+**v1.1.2 Windows x64 完整版**内置 Python、项目所需 TeX Live 宏包及中文字体、Node、CPU Whisper 和 small 多语言模型。完整解压后运行 exe，AI 功能填写个人 API 即可；无需另外安装 Python、TeX、Node 或 DSH。预装宏包范围、x32 限制与测试边界见 [Windows兼容性与测试](docs/Windows兼容性与测试.md)。下面的环境安装步骤适用于源码/wheel 用户。
+
+## ☕ 请我喝咖啡
+
+如果这个项目帮到了你，欢迎请我喝杯咖啡，支持物理版的后续维护。感谢你的支持！
+
+<img src="fig/buy-me-a-coffee.png" width="263" alt="请我喝咖啡：微信赞赏二维码">
 
 ## 🧭 系统工作流
 

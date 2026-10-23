@@ -30,6 +30,7 @@ FILES = [
     'docs/物理插图矫正AGENT_Harness强化说明.md',
     'fig/UtopiaPhyCyclus_logo.png', 'fig/UtopiaPhyCyclus_sisyphus_icon.ico',
     'fig/UtopiaPhyCyclus_sisyphus_icon.png', 'fig/utopia_phycyclus_workflow.png',
+    'fig/buy-me-a-coffee.png',
     'tools/release.py', 'tools/portable_entry.py', 'tools/package_entry.py',
     'tools/UtopiaPhyCyclus.spec', 'tools/fetch_release_licenses.py',
     'tools/verify_release.py',
