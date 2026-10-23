@@ -29,4 +29,6 @@ PyMuPDF 1.26.7 本身存在 win32 wheel；它不是这里的主要阻碍。真�
 
 `UtopiaPhyCyclus.exe --self-test` 检查冻结 Python 依赖、中文/公式/TikZ/电路宏包、三个空白组卷模板的实际 PDF 编译、中文文本提取及两次真实离线语音转写。结果保存在 `.runtime/selftest/report.json`。另验证 HTTP 健康状态和真实 Streamlit WebSocket 会话。
 
-仓库附带 `tools/windows_sandbox_test.ps1`，可在具备 Windows Sandbox 的电脑上生成断网的干净 Windows 自检配置。本次构建主机没有 Windows Sandbox 可执行程序，因此本机的隔离进程验证不能描述成已经在全新 Windows 虚拟机上实测通过。它也不能保证所有 Windows 版本、处理器、驱动和企业策略组合都兼容。
+仓库附带 `tools/windows_sandbox_test.ps1`，可在具备 Windows Sandbox 的电脑上生成断网的干净 Windows 自检配置。`tools/clean_windows_guest.ps1` 可在新装的 Windows 10/11 来宾中使用系统自带 PowerShell 解压发行包，再用包内 Python 完成依赖、PDF、本地语音及真实工作台会话验收，不需要安装测试运行库。它还验证中文目录，并支持使用单独提供的个人 API 配置进行一次小型模型连接测试。
+
+各版本的实际验证结果以发行附件 `validation-report.json` 为准：`fresh_windows_vm_tested` 表示是否进行了真正的新装系统测试，`clean_windows` 记录系统版本、未安装的外部运行库和检查结果。v1.1.0 仅进行了隔离进程验证；隔离验证不能等同于全新虚拟机测试。一次干净系统测试也不能保证所有处理器、驱动和企业策略组合均兼容。

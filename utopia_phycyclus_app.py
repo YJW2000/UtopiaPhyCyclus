@@ -570,30 +570,8 @@ def inject_custom_css():
             width: 100% !important;
             max-width: none !important;
         }
-        /* ===== 按录入顺序浏览：浏览设置已上移到标题行，内容区铺满 ===== */
-        div[data-testid="stHorizontalBlock"]:has(#time-left-anchor):has(#time-right-anchor) {
-            gap: 0 !important;
-        }
-        /* 左列塌缩为 0（仅保留锚点，让既有分栏 CSS 继续命中） */
-        div[data-testid="column"]:has(#time-left-anchor) {
-            flex: 0 0 0 !important;
-            width: 0 !important;
-            max-width: 0 !important;
-            min-width: 0 !important;
-            padding: 0 !important;
-            margin: 0 !important;
-            overflow: hidden !important;
-            border: none !important;
-            position: static !important;
-            max-height: none !important;
-        }
-        div[data-testid="column"]:has(#time-right-anchor) {
-            flex: 1 1 100% !important;
-            width: 100% !important;
-            max-width: 100% !important;
-            border-left: none !important;
-            padding-left: 0 !important;
-        }
+        /* Time-order browsing uses a full-width container. The time-left/right
+           anchors below are reserved for the real two-column exam/delete view. */
         /* 标题行内联的浏览设置：小字号、单行、均匀分布 */
         div[data-testid="stHorizontalBlock"]:has(.mc-browse-settings-anchor) {
             align-items: center !important;
@@ -6973,10 +6951,11 @@ def _request_question_scroll_restore(fpath: str):
         st.session_state[BROWSE_SCROLL_RESTORE_KEY] = _norm_abs_path(fpath)
 
 
-def _render_question_scroll_anchor(fpath: str, fhash: str):
+def _render_question_scroll_anchor(fpath: str, fhash: str, question_id=None):
     anchor_id = f"browse-question-{fhash}"
+    stable_id = hashlib.sha256(str(question_id or _norm_abs_path(fpath)).encode()).hexdigest()[:24]
     st.markdown(
-        f'<span id="{anchor_id}" style="display:block;scroll-margin-top:96px"></span>',
+        f'<span id="{anchor_id}" data-mc-browse-question="{stable_id}" style="display:block;scroll-margin-top:96px"></span>',
         unsafe_allow_html=True,
     )
     if st.session_state.get(BROWSE_SCROLL_RESTORE_KEY) != _norm_abs_path(fpath):
@@ -7101,7 +7080,7 @@ def render_browse_question_editor_card(q_label, content, fpath, key_prefix, pape
 def _render_browse_question_editor_card_body(q_label, content, fpath, key_prefix, paper_type_scope=None, extra_html_label="", rename_paths_key=None, prepared_assets=None, interactive_difficulty=True):
     prepared_assets = prepared_assets or {}
     fhash = _question_key("meta", fpath)
-    _render_question_scroll_anchor(fpath, fhash)
+    _render_question_scroll_anchor(fpath, fhash, prepared_assets.get("meta", {}).get("ID"))
     render_question_header(
         q_label,
         content,
@@ -7276,6 +7255,9 @@ def _render_browse_question_editor_card_body(q_label, content, fpath, key_prefix
             render_question_preview(current_content, show_title=False, prepared_markdown=prepared_markdown)
         except Exception as e:
             st.error(f"渲染错误: {e}")
+
+    from services.editor_layout import render_editor_height_sync
+    render_editor_height_sync(fhash)
 
     _render_native_question_actions(key_prefix, fhash, fpath, is_tag_editing, is_tex_editing)
 
@@ -7749,13 +7731,46 @@ def _time_browse_key(row):
     return row.get("初次录入的时间", "") or row.get("最后修改时间", "")
 
 
+def _change_time_browse_page(offset, remember=False):
+    # Run before the page is rendered; an early st.rerun() here would skip the
+    # browse-mode radio and Streamlit would discard its widget state.
+    st.session_state["time_browse_page"] = max(1, st.session_state.get("time_browse_page", 1) + offset)
+    if remember:
+        _remember_global_time_browse_position()
+
+
+def _remember_global_time_browse_position():
+    from services.browse_preferences import remember_time_browse_position
+    try:
+        remember_time_browse_position(st.session_state)
+    except OSError:
+        st.warning("浏览位置已在本次会话记住，但无法写入本地偏好文件。")
+
+
+def _change_global_time_browse_settings():
+    st.session_state["time_browse_page"] = 1
+    _remember_global_time_browse_position()
+
+
+def _remember_global_browse_mode():
+    from services.browse_preferences import remember_browse_mode
+    try:
+        remember_browse_mode(st.session_state)
+    except OSError:
+        st.warning("浏览方式已在本次会话记住，但无法写入本地偏好文件。")
+
+
 def render_time_browse_header(page_title, paper_type_scope):
     """按录入顺序浏览：标题 + 浏览设置（排序 / 每页数量 / 页码 / 翻页）收进同一行，小字号均匀排布。"""
+    from services.browse_preferences import prepare_time_browse
+    prepare_time_browse(st.session_state)
+    index_available = True
     try:
         from utils.csv_ops import read_csv_index
         csv_data = _filter_question_rows(read_csv_index(), paper_type_scope)
     except Exception as exc:
         csv_data = []
+        index_available = False
         st.error(f"读取索引失败: {exc}")
     c_title, c_sort, c_count, c_page, c_nav = st.columns(
         [1.55, 1.55, 1.3, 0.62, 1.05], gap="small", vertical_alignment="center"
@@ -7769,14 +7784,13 @@ def render_time_browse_header(page_title, paper_type_scope):
             ["最新录入在最前", "最早录入在最前"],
             horizontal=True,
             key="time_sort_order",
+            on_change=_change_global_time_browse_settings,
         )
     with c_count:
         max_show = st.slider(
-            "每页数量（5–20）", min_value=5, max_value=20, value=10, step=1, key="time_max_show"
+            "每页数量（5–20）", min_value=5, max_value=20, step=1, key="time_max_show",
+            on_change=_change_global_time_browse_settings,
         )
-    if st.session_state.get("time_max_show_prev") != max_show:
-        st.session_state["time_browse_page"] = 1
-        st.session_state["time_max_show_prev"] = max_show
     sorted_data = (
         sorted(csv_data, key=_time_browse_key, reverse=(sort_order == "最新录入在最前"))
         if csv_data else []
@@ -7786,6 +7800,8 @@ def render_time_browse_header(page_title, paper_type_scope):
     current_page = int(st.session_state.get("time_browse_page", 1) or 1)
     current_page = max(1, min(total_pages, current_page))
     st.session_state["time_browse_page"] = current_page
+    if index_available:
+        _remember_global_time_browse_position()
     with c_page:
         st.markdown(
             f'<div class="mc-browse-page-indicator">第 {current_page} / {total_pages} 页 · 每页 {max_show} 道</div>',
@@ -7794,13 +7810,11 @@ def render_time_browse_header(page_title, paper_type_scope):
     with c_nav:
         p_prev, p_next = st.columns(2, gap="small")
         with p_prev:
-            if st.button("⬅️ 上一页", key="time_browse_prev", disabled=(current_page <= 1), use_container_width=True):
-                st.session_state["time_browse_page"] = current_page - 1
-                st.rerun()
+            st.button("⬅️ 上一页", key="time_browse_prev", disabled=(current_page <= 1), use_container_width=True,
+                      on_click=_change_time_browse_page, args=(-1, True))
         with p_next:
-            if st.button("下一页 ➡️", key="time_browse_next", disabled=(current_page >= total_pages), use_container_width=True):
-                st.session_state["time_browse_page"] = current_page + 1
-                st.rerun()
+            st.button("下一页 ➡️", key="time_browse_next", disabled=(current_page >= total_pages), use_container_width=True,
+                      on_click=_change_time_browse_page, args=(1, True))
     return {
         "csv_data": csv_data,
         "sorted_data": sorted_data,
@@ -7871,12 +7885,34 @@ def render_time_browse_list(ctx, is_exam_mode, is_delete_mode, paper_type_scope)
         st.divider()
 
 
+def _valid_browse_choice(key, options):
+    if key in st.session_state and st.session_state[key] not in options:
+        st.session_state.pop(key, None)
+
+
 def page_browse(is_exam_mode=False, is_delete_mode=False, paper_type_scope=None, page_title=None):
+    ordinary = not is_exam_mode and not is_delete_mode and paper_type_scope is None
+    if ordinary:
+        from services.browse_preferences import prepare_browse_view
+        prepare_browse_view(st.session_state)
+    _page_browse_body(is_exam_mode, is_delete_mode, paper_type_scope, page_title)
+    if ordinary:
+        from services.browse_preferences import remember_browse_view
+        from services.browse_scroll import render_scroll_bookmark
+        try:
+            remember_browse_view(st.session_state)
+        except OSError:
+            pass  # In-memory selection restoration remains available.
+        render_scroll_bookmark(st.session_state)
+
+
+def _page_browse_body(is_exam_mode=False, is_delete_mode=False, paper_type_scope=None, page_title=None):
     """Browse questions; default scope excludes WK, while the cloze library passes 'WK'."""
     is_cloze_library = paper_type_scope == "WK"
     page_title = page_title or ("🧩 挖空题库" if is_cloze_library else "🔍 全局浏览与编辑")
     _time_browse_ctx = None
-    st.markdown('<span class="mc-browse-page-anchor"></span>', unsafe_allow_html=True)
+    bookmark_class = " mc-global-browse-bookmark" if not is_exam_mode and not is_delete_mode and paper_type_scope is None else ""
+    st.markdown(f'<span class="mc-browse-page-anchor{bookmark_class}"></span>', unsafe_allow_html=True)
     if is_exam_mode:
         st.markdown("""
         <style>
@@ -8138,8 +8174,8 @@ def page_browse(is_exam_mode=False, is_delete_mode=False, paper_type_scope=None,
             render_advanced_search_inline()
 
     elif not is_exam_mode:
-        if "browse_mode" not in st.session_state:
-            st.session_state["browse_mode"] = "按知识板块浏览"
+        from services.browse_preferences import prepare_browse_mode
+        prepare_browse_mode(st.session_state)
         # 按录入顺序浏览：把「浏览设置」（排序 / 每页数量 / 翻页）收进标题行右侧
         if st.session_state.get("browse_mode") == "按录入顺序浏览":
             _time_browse_ctx = render_time_browse_header(page_title, paper_type_scope)
@@ -8154,6 +8190,7 @@ def page_browse(is_exam_mode=False, is_delete_mode=False, paper_type_scope=None,
                 horizontal=True,
                 label_visibility="collapsed",
                 key="browse_mode",
+                on_change=_remember_global_browse_mode,
             )
 
         search_workspace_active = st.session_state.get("adv_search_active") and _adv_search_has_query()
@@ -8381,6 +8418,8 @@ def page_browse(is_exam_mode=False, is_delete_mode=False, paper_type_scope=None,
             # 使用 session_state 记录当前选中的板块
             if "browse_subject" not in st.session_state:
                 st.session_state["browse_subject"] = SUBJECTS[0]
+            if st.session_state["browse_subject"] not in SUBJECTS:
+                st.session_state["browse_subject"] = SUBJECTS[0]
 
             # 顶部横排：单行横向滚动，22 个板块不再占两行
             chip_cols = st.columns(len(SUBJECTS), gap="small")
@@ -8409,6 +8448,7 @@ def page_browse(is_exam_mode=False, is_delete_mode=False, paper_type_scope=None,
                 with _c_year:
                     st.markdown('<div class="mc-browse-mini-label">📅 选择年份</div>', unsafe_allow_html=True)
                     year_options = [ALL_YEARS_OPT] + years
+                    _valid_browse_choice(f"browse_year_{subject}", year_options)
                     default_year_index = 0
                     year = st.radio(
                         "📅 选择年份",
@@ -8436,6 +8476,7 @@ def page_browse(is_exam_mode=False, is_delete_mode=False, paper_type_scope=None,
                             SHOW_ALL_OPT = "📂 展示该板块全部问题"
                             display_options = [f"{y}年 - {f}" for y, f in files]
                             file_options = [SHOW_ALL_OPT] + display_options
+                            _valid_browse_choice(f"browse_file_select_{subject}_all", file_options)
                             selected_option = st.selectbox(
                                 "3. 选择文件 (支持输入搜索)",
                                 options=file_options,
@@ -8450,6 +8491,7 @@ def page_browse(is_exam_mode=False, is_delete_mode=False, paper_type_scope=None,
                         with _c_file:
                             SHOW_ALL_OPT = "📂 展示该年份全部问题"
                             file_options = [SHOW_ALL_OPT] + files
+                            _valid_browse_choice(f"browse_file_select_{subject}_{year}", file_options)
                             selected_option = st.selectbox(
                                 "3. 选择文件 (支持输入搜索)",
                                 options=file_options,
@@ -8591,6 +8633,7 @@ def page_browse(is_exam_mode=False, is_delete_mode=False, paper_type_scope=None,
                 st.session_state.pop("paper_year", None)
                 st.session_state.pop("paper_name", None)
             st.subheader("🗂️ 类型选择")
+            _valid_browse_choice("paper_type", ["全部类型"] + type_opts)
             paper_type = st.selectbox("题目类型", options=["全部类型"] + type_opts, format_func=_fmt_paper_type, key="paper_type", label_visibility="collapsed", on_change=_on_paper_type_change)
             
             if paper_type != "全部类型":
@@ -8602,6 +8645,7 @@ def page_browse(is_exam_mode=False, is_delete_mode=False, paper_type_scope=None,
                 st.warning("题库中暂无任何年份数据")
             else:
                 st.subheader("📅 选择年份")
+                _valid_browse_choice("paper_year", years_for_type)
                 def _on_paper_year_change():
                     st.session_state.pop("paper_name", None)
                 year = st.radio("📅 选择年份", options=years_for_type, key="paper_year", horizontal=True, label_visibility="collapsed", on_change=_on_paper_year_change)
@@ -8613,6 +8657,7 @@ def page_browse(is_exam_mode=False, is_delete_mode=False, paper_type_scope=None,
                 else:
                     papers = get_papers_by_year(year, paper_type=paper_type_scope)
                 if papers:
+                    _valid_browse_choice("paper_name", papers)
                     paper_name = st.selectbox("选择试卷", options=papers, key="paper_name", label_visibility="collapsed")
                 else:
                     paper_name = None
@@ -8620,7 +8665,8 @@ def page_browse(is_exam_mode=False, is_delete_mode=False, paper_type_scope=None,
                     
                 st.write("")
                 st.subheader("👀 展示模式")
-                view_mode = st.radio("展示模式", ["单题选择模式", "所有问题展示模式"], horizontal=False, label_visibility="collapsed")
+                _valid_browse_choice("paper_view_mode", ["单题选择模式", "所有问题展示模式"])
+                view_mode = st.radio("展示模式", ["单题选择模式", "所有问题展示模式"], horizontal=False, label_visibility="collapsed", key="paper_view_mode")
                 
                 if all_years and year and paper_name:
                     if paper_type != "全部类型":
@@ -8715,13 +8761,11 @@ def page_browse(is_exam_mode=False, is_delete_mode=False, paper_type_scope=None,
     
     elif browse_mode == "按录入顺序浏览":
         if _time_browse_ctx is not None:
-            # 浏览设置已上移到页面标题行：左列塌缩为 0，内容区铺满整行
-            # （保留 #time-left-anchor 让既有的分栏/卡片布局 CSS 继续生效）
-            col_nav, col_content = st.columns([0.0001, 1])
-            with col_nav:
-                st.markdown('<div id="time-left-anchor"></div>', unsafe_allow_html=True)
+            # A real full-width block, not a near-zero navigation column patched
+            # with CSS: Streamlit also calculates editor/fragment widths itself.
+            col_content = st.container()
             with col_content:
-                st.markdown('<div id="time-right-anchor"></div>', unsafe_allow_html=True)
+                st.markdown('<div id="time-full-width-anchor"></div>', unsafe_allow_html=True)
                 render_time_browse_list(_time_browse_ctx, is_exam_mode, is_delete_mode, paper_type_scope)
         else:
             # 删除 / 组卷等模式：保留原双栏布局
@@ -8763,13 +8807,11 @@ def page_browse(is_exam_mode=False, is_delete_mode=False, paper_type_scope=None,
                     st.markdown(f"第 {current_page} 页")
                     p1, p2 = st.columns(2)
                     with p1:
-                        if st.button("⬅️ 上一页", key="time_browse_prev", disabled=(current_page <= 1), use_container_width=True):
-                            st.session_state["time_browse_page"] = current_page - 1
-                            st.rerun()
+                        st.button("⬅️ 上一页", key="time_browse_prev", disabled=(current_page <= 1), use_container_width=True,
+                                  on_click=_change_time_browse_page, args=(-1,))
                     with p2:
-                        if st.button("下一页 ➡️", key="time_browse_next", disabled=(current_page >= total_pages), use_container_width=True):
-                            st.session_state["time_browse_page"] = current_page + 1
-                            st.rerun()
+                        st.button("下一页 ➡️", key="time_browse_next", disabled=(current_page >= total_pages), use_container_width=True,
+                                  on_click=_change_time_browse_page, args=(1,))
                     fallback_ctx = {
                         "csv_data": csv_data,
                         "sorted_data": sorted_data,
@@ -13988,7 +14030,8 @@ def main():
         st.session_state["main_sidebar_radio"] = selection
         if selection == browse_nav_option:
             st.session_state["adv_search_active"] = False
-            st.session_state["browse_mode"] = "按知识板块浏览"
+            from services.browse_preferences import load_browse_mode
+            st.session_state["browse_mode"] = st.session_state.get("global_browse_mode", load_browse_mode())
         elif selection != advanced_nav_option:
             st.session_state["adv_search_active"] = False
         if selection != tools_nav_option:

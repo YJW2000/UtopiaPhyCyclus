@@ -5,6 +5,7 @@ import hashlib
 from functools import lru_cache
 import importlib.metadata
 import json
+import os
 from pathlib import Path
 import re
 import shutil
@@ -35,6 +36,7 @@ FILES = [
     'tools/bundle_runtimes.py', 'diagnostics/jfk.wav', 'diagnostics/README.md',
     'docs/Windows兼容性与测试.md', 'tools/windows_sandbox_test.ps1',
     'tools/check_portable_dlls.py',
+    'tools/clean_windows_guest.py', 'tools/clean_windows_guest.ps1',
 ]
 TREES = {
     'services': {'.py', '.mjs', '.json'},
@@ -142,7 +144,7 @@ def prepare():
     print(f'Prepared {len(manifest)} reviewed software files at {SOURCE}')
 
 
-def audit_tree(root, private=None):
+def audit_tree(root, private=None, defer_runtime_content=False):
     private = private_hashes() if private is None else private
     count = 0
     manifest_path = root / 'runtime-manifest.json'
@@ -158,11 +160,14 @@ def audit_tree(root, private=None):
             if '.env' in p.parts or digest(data) in private or any(secret in data for secret in local_secrets()):
                 raise ValueError(f'Private content in frozen runtime: {name}')
         elif name.startswith('runtimes/'):
-            data = p.read_bytes()
-            if name not in runtime_files or digest(data) != runtime_files[name]['sha256']:
+            if name not in runtime_files or p.stat().st_size != runtime_files[name]['bytes']:
                 raise ValueError(f'Unverified bundled runtime file: {name}')
-            if digest(data) in private or any(secret in data for secret in local_secrets()):
-                raise ValueError(f'Private content in bundled runtime: {name}')
+            if not defer_runtime_content:
+                data = p.read_bytes()
+                if digest(data) != runtime_files[name]['sha256']:
+                    raise ValueError(f'Unverified bundled runtime file: {name}')
+                if digest(data) in private or any(secret in data for secret in local_secrets()):
+                    raise ValueError(f'Private content in bundled runtime: {name}')
             seen_runtime.add(name)
         else:
             inspect_entry(name, p.read_bytes(), private)
@@ -173,10 +178,35 @@ def audit_tree(root, private=None):
 
 
 def zip_tree(folder, target, prefix):
+    # Reuse unchanged runtime bytes from an existing verified release. ZIP reads
+    # avoid thousands of individual Windows file opens; the complete output is
+    # still checked against every runtime hash by audit() before build succeeds.
+    runtime_cache = None
+    manifest = folder / 'runtime-manifest.json'
+    if manifest.exists():
+        for candidate in sorted((ROOT / 'dist').glob('*/UtopiaPhyCyclus-*-windows-x64.zip')):
+            if candidate.resolve() == target.resolve():
+                continue
+            with zipfile.ZipFile(candidate) as old:
+                names = [n for n in old.namelist() if n.endswith('/runtime-manifest.json')]
+                if len(names) == 1 and old.read(names[0]) == manifest.read_bytes():
+                    runtime_cache = candidate
+                    break
     with zipfile.ZipFile(target, 'w', zipfile.ZIP_DEFLATED, compresslevel=6) as z:
-        for file in sorted(folder.rglob('*')):
-            if file.is_file() and '.git' not in file.parts and '__pycache__' not in file.parts:
+        for current, directories, filenames in os.walk(folder):
+            directories[:] = sorted(d for d in directories if d not in {'.git', '__pycache__'}
+                                    and not (runtime_cache and Path(current) == folder and d == 'runtimes'))
+            for name in sorted(filenames):
+                file = Path(current) / name
                 z.write(file, prefix + '/' + file.relative_to(folder).as_posix())
+        if runtime_cache:
+            print('[BUILD] Reusing unchanged verified runtime archive bytes...', flush=True)
+            with zipfile.ZipFile(runtime_cache) as old:
+                for info in old.infolist():
+                    if '/runtimes/' in info.filename and not info.is_dir():
+                        relative = 'runtimes/' + info.filename.split('/runtimes/', 1)[1]
+                        z.writestr(prefix + '/' + relative, old.read(info), compress_type=zipfile.ZIP_DEFLATED,
+                                   compresslevel=6)
 
 
 def run(*args, cwd=None):
@@ -258,7 +288,9 @@ utopia_phycyclus = ["_app/**/*", "_app/.gitignore", "_app/.streamlit/config.toml
     shutil.copy2(SOURCE / 'ocr_prompt.txt', portable / '_internal/ocr_prompt.txt')
     shutil.copytree(RUNTIME_ASSETS, portable, dirs_exist_ok=True, copy_function=copy_runtime_file)
     print('[BUILD] Complete runtime copied; auditing the portable directory...', flush=True)
-    audit_tree(portable)
+    # Exact runtime hashes and private-content checks run on every member of the
+    # finished ZIP below. Avoid reading 25,000 runtime files twice on Windows.
+    audit_tree(portable, defer_runtime_content=True)
     print('[BUILD] Portable directory passed; creating release archives...', flush=True)
     zip_tree(SOURCE, DIST / f'UtopiaPhyCyclus-{VERSION}-source.zip', f'UtopiaPhyCyclus-{VERSION}')
     zip_tree(portable, DIST / f'UtopiaPhyCyclus-{VERSION}-windows-x64.zip', f'UtopiaPhyCyclus-{VERSION}')

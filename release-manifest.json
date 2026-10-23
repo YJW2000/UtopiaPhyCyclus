@@ -1,5 +1,5 @@
 {
-  "version": "1.1.0",
+  "version": "1.1.1",
   "empty_bank": true,
   "files": [
     {
@@ -14,8 +14,8 @@
     },
     {
       "path": "CHANGELOG.md",
-      "sha256": "fff31ed5d1ed4f2e57e5e48657fa4f5453b6e67148f6a7fc8be3a01205dc0b9b",
-      "bytes": 1170
+      "sha256": "dc17915c9bb49aa051d748ec07694c9badec39f709d6a32f7f0268e7a2bbd072",
+      "bytes": 1834
     },
     {
       "path": "chapters/README.md",
@@ -49,13 +49,13 @@
     },
     {
       "path": "docs/Windows兼容性与测试.md",
-      "sha256": "4fb202cbb51c2e56d02a63d537a7e2d33c01f96633f0fbd6f8d43bb6d7e8d815",
-      "bytes": 2809
+      "sha256": "dd9336a1f241c871851a65d0921706f6257dbc24beb225c6cf9015429b13f2ec",
+      "bytes": 3371
     },
     {
       "path": "docs/发行与安装.md",
-      "sha256": "1fb987b75ae335d7d2b51a6736cd3e906c73b814f851f8b1effccfc3484e2119",
-      "bytes": 3926
+      "sha256": "887e28faf3df3140e6d14a840e627fe31c9dd15515ea2e1bae1c2392a6e3a0eb",
+      "bytes": 3977
     },
     {
       "path": "docs/物理插图矫正AGENT_Harness强化说明.md",
@@ -524,8 +524,8 @@
     },
     {
       "path": "README.md",
-      "sha256": "e445d4964bbc0c18ba165d773365a31618e8e32c8435c6a770030f565e3568e7",
-      "bytes": 10956
+      "sha256": "36711125f3d99abaab93c39c7b71ccd888f3274a9c6f18b939f08899f76cc5e6",
+      "bytes": 11127
     },
     {
       "path": "requirements-build.txt",
@@ -623,6 +623,16 @@
       "bytes": 7262
     },
     {
+      "path": "services/browse_preferences.py",
+      "sha256": "df22c9c7a3d797d2942e8a27aecf6f25519085662cca438218b4b50764ccaad0",
+      "bytes": 4372
+    },
+    {
+      "path": "services/browse_scroll.py",
+      "sha256": "a6d5c2b12896382a9efa5092c01220ed35824c428a991b0b2f1f9922d87c3634",
+      "bytes": 1852
+    },
+    {
       "path": "services/diagram_agent.py",
       "sha256": "433ddec28751b50b028ad59d401b4be876cf7b572245eb45a01f305de0cb2b0d",
       "bytes": 92450
@@ -636,6 +646,11 @@
       "path": "services/diagram_validate.py",
       "sha256": "4eb51be1e569b24a1ab8a25df196efa0088aecf5212995fa73b18cf0c4fd2f39",
       "bytes": 90894
+    },
+    {
+      "path": "services/editor_layout.py",
+      "sha256": "641f106814d78e287b06c3807df4786907c7bff211d80c19103ef281b654d236",
+      "bytes": 446
     },
     {
       "path": "services/file_service.py",
@@ -733,9 +748,19 @@
       "bytes": 4245
     },
     {
+      "path": "static/browse_scroll.js",
+      "sha256": "29fc827fdab29c4c871979874b7349b1105b70a5570953bc59b09d14cf49de52",
+      "bytes": 5664
+    },
+    {
       "path": "static/echarts-5.5.0.min.js",
       "sha256": "42f8329d989b6f6539dd2b15bbdf0d82025762ac112fbb60dc57b27d7bcf3946",
       "bytes": 1029203
+    },
+    {
+      "path": "static/editor_height.js",
+      "sha256": "a2701b3a45969ba72468e0c34ed2673d85f72c48bf04c0b65b8275191524de24",
+      "bytes": 3105
     },
     {
       "path": "static/favicon.png",
@@ -798,6 +823,16 @@
       "bytes": 2732
     },
     {
+      "path": "tools/clean_windows_guest.ps1",
+      "sha256": "afaf2a5a668490ff85838ecde052dc9d5264f61d8ac731e8239a24eeaab7f866",
+      "bytes": 7342
+    },
+    {
+      "path": "tools/clean_windows_guest.py",
+      "sha256": "6d93664e76420a805817526fe017367be4247221a765081b661048aa37c53cd4",
+      "bytes": 6176
+    },
+    {
       "path": "tools/fetch_release_licenses.py",
       "sha256": "ce90fb05e5ae5781c6ebc6c0a9d5951d50b313db4853f577c0b3a3441c4601cb",
       "bytes": 4275
@@ -814,8 +849,8 @@
     },
     {
       "path": "tools/release.py",
-      "sha256": "c79affdf77019a0f544007393d969be8f3852d90748fad80619494f2bcb7cc42",
-      "bytes": 16771
+      "sha256": "342205d1ff6e8b4385a35c111230de88f073a727e46fae51459a03d42959ae2e",
+      "bytes": 18846
     },
     {
       "path": "tools/UtopiaPhyCyclus.spec",
@@ -959,8 +994,8 @@
     },
     {
       "path": "utopia_phycyclus_app.py",
-      "sha256": "c826acf4cbe863c3e92a3a32ada19afcceb33c605c667405d3fa4268c037aab0",
-      "bytes": 722618
+      "sha256": "8cafeea286fb726d062f1813456dff7b51a40e778b8ab55ac94852fd17899048",
+      "bytes": 725026
     },
     {
       "path": "UtopiaPhyCyclus_book.cls",
@@ -969,7 +1004,7 @@
     },
     {
       "path": "VERSION",
-      "sha256": "6ca2e3356014241331fb2b399428fca23c558e3f3d428edcf4f56eb0fe907069",
+      "sha256": "74c8dcd895e1272a4276c6ceba0b4a0a8d97ff7b1ac9119b8f7a78685e5c45b1",
       "bytes": 7
     },
     {
