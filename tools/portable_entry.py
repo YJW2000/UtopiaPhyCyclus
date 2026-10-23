@@ -13,9 +13,14 @@ import webbrowser
 
 def main():
     multiprocessing.freeze_support()
+    for output in (sys.stdout, sys.stderr):
+        if output is not None and hasattr(output, 'reconfigure'):
+            output.reconfigure(encoding='utf-8', errors='replace')
     root = Path(sys.executable).resolve().parent if getattr(sys, 'frozen', False) else Path(__file__).resolve().parents[1]
     os.chdir(root)
     sys.path.insert(0, str(root))
+    from services.portable_runtime import configure
+    configure(root)
     os.environ['STREAMLIT_GLOBAL_DEVELOPMENT_MODE'] = 'false'
     # App maintenance launches sys.executable with a script or -m module.
     if len(sys.argv) > 1 and sys.argv[1] == '-m':
@@ -30,11 +35,16 @@ def main():
         sys.argv = [str(script), *sys.argv[2:]]
         runpy.run_path(str(script), run_name='__main__')
         return
-    parser = argparse.ArgumentParser(description='UtopiaPhyCyclus 1.0.0')
+    parser = argparse.ArgumentParser(description='UtopiaPhyCyclus ' + (root / 'VERSION').read_text().strip())
     parser.add_argument('--port', type=int)
     parser.add_argument('--no-browser', action='store_true')
     parser.add_argument('--check', action='store_true')
+    parser.add_argument('--self-test', action='store_true', help='Verify bundled TeX and offline speech without an API key')
     args = parser.parse_args()
+    if args.self_test:
+        from services.portable_diagnostics import run
+        run(root)
+        return
     if args.check:
         import fitz
         import streamlit

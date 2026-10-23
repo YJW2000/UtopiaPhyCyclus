@@ -12,15 +12,11 @@ const [, , libPath, modelPath, langArg, parentPidArg] = process.argv;
 const defaultLang = langArg || 'zh';
 const parentPid = Number(parentPidArg || 0);
 
-// 父进程（Streamlit 的 python）退出后自动收尾，避免留下孤儿 node 进程
+// Parent-owned pipe closes even when the parent is terminated without atexit.
+// This avoids Windows permission/PID-namespace differences in process.kill(pid, 0).
 if (parentPid > 0) {
-  setInterval(() => {
-    try {
-      process.kill(parentPid, 0);
-    } catch (_) {
-      process.exit(0);
-    }
-  }, 15000).unref();
+  process.stdin.resume();
+  process.stdin.once('end', () => process.exit(0));
 }
 
 function logErr(err) {

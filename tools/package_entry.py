@@ -24,6 +24,8 @@ def main():
         marker.write_text(version, encoding='utf-8')
     os.chdir(target)
     sys.path.insert(0, str(target))
+    from services.portable_runtime import configure
+    configure(target)
     (target / 'chapters').mkdir(exist_ok=True)
     from streamlit.web import cli
     sys.argv = ['streamlit', 'run', str(target / 'utopia_phycyclus_app.py'),

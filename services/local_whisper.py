@@ -1,13 +1,12 @@
 # -*- coding: utf-8 -*-
-"""本地 whisper 语音识别（移植 DSH 的 dsh-ears 插件：常驻进程 + 模型只加载一次）。
+"""本地 Whisper 识别：优先使用随包运行库，兼容开发机的可选 DSH 配置。
 
-与 dsh-ears 相同的性能路径：
-- Node 侧用 `@fugood/whisper.node`（whisper.cpp，Vulkan/CPU）跑 ggml 模型；
+运行路径：
+- Node 侧用 `@fugood/whisper.node`（whisper.cpp）运行 ggml 模型，完整便携版默认 CPU；
 - 模型在服务启动时加载一次并常驻，之后每次识别只做推理；
 - Python 通过 127.0.0.1 的 HTTP 与常驻服务通信。
 
-对比旧实现（每次识别 spawn 一个 node 进程、重新加载 487MB 模型，冷启动 4~5s），
-常驻服务把稳态耗时压到 0.3~0.8s，与 dsh-ears 实测（9.5s 音频 ≈ 0.4~0.6s）一致。
+常驻服务复用模型，避免每次录音都重新加载。速度取决于 CPU、音频长度与模型。
 
 若运行时缺失或服务启动失败，调用方可回退到 `services/whisper_bridge.mjs` 的一次性识别。
 """
@@ -32,7 +31,13 @@ _SERVER = _APP_ROOT / "services" / "whisper_server.mjs"
 _BRIDGE = _APP_ROOT / "services" / "whisper_bridge.mjs"
 _HOME = Path.home()
 _EARS_ROOT = _HOME / ".dsh" / "plugins" / "dsh-ears"
-_EARS_LIB = _EARS_ROOT / "lib" / "transcribe.js"
+_BUNDLED_LIB = _APP_ROOT / 'services' / 'whisper_runtime.mjs'
+_BUNDLED_MODULES = _APP_ROOT / 'runtimes' / 'whisper'
+_EARS_LIB = Path(os.environ.get('UTOPIA_WHISPER_LIB', '')) if os.environ.get('UTOPIA_WHISPER_LIB') else (
+    _BUNDLED_LIB if (_BUNDLED_MODULES / 'node_modules/@fugood/whisper.node/package.json').is_file()
+    else _EARS_ROOT / 'lib' / 'transcribe.js')
+if _EARS_LIB == _BUNDLED_LIB:
+    os.environ.setdefault('UTOPIA_WHISPER_MODULE_DIR', str(_BUNDLED_MODULES))
 
 _LOCK = threading.Lock()
 _STATE: dict = {"proc": None, "port": None, "starting": False}
@@ -42,6 +47,7 @@ _WARM_THREAD_STARTED = False
 def _model_path() -> Optional[Path]:
     local_appdata = os.environ.get("LOCALAPPDATA", "")
     candidates = []
+    candidates.append(_APP_ROOT / 'runtimes' / 'models' / 'ggml-small.bin')
     env_model = os.environ.get("DSH_EARS_MODEL", "")
     if env_model:
         candidates.append(Path(env_model))
@@ -65,7 +71,7 @@ def availability() -> Tuple[bool, str]:
     if not _SERVER.is_file() and not _BRIDGE.is_file():
         return False, "缺少 whisper 服务脚本"
     if not _EARS_LIB.is_file():
-        return False, "未找到 DSH 的 dsh-ears 插件转写库"
+        return False, "未找到随软件提供的本地语音运行库"
     model = _model_path()
     if model is None:
         return False, "未找到 whisper 模型 ggml-small.bin"
@@ -113,7 +119,7 @@ def _start_server(wait_ready: float = 90.0) -> bool:
             os.environ.get("DSH_EARS_LANG", "zh"),
             str(os.getpid()),
         ],
-        stdin=subprocess.DEVNULL,
+        stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
         stderr=subprocess.DEVNULL,
         creationflags=creationflags,

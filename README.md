@@ -8,6 +8,8 @@ UtopiaPhyCyclus（乌托邦高中物理题库助手）是一个基于 Python、S
 
 **空题库发行：** 仓库和所有发行包仅提供软件、空白组卷模板及文档，不包含内部题目、图片、答案、索引、密钥或导出文件。请自行导入有权使用的题目。构建时使用显式白名单，独立仓库不携带旧题库的 Git 历史。
 
+**v1.1.0 Windows x64 完整版**内置 Python、项目所需 TeX Live 宏包及中文字体、Node、CPU Whisper 和 small 多语言模型。完整解压后运行 exe，AI 功能填写个人 API 即可；无需另外安装 Python、TeX、Node 或 DSH。预装宏包范围、x32 限制与测试边界见 [Windows兼容性与测试](docs/Windows兼容性与测试.md)。下面的环境安装步骤适用于源码/wheel 用户。
+
 ## 🧭 系统工作流
 
 ![UtopiaPhyCyclus Question Bank Assistant workflow](fig/utopia_phycyclus_workflow.png)
@@ -83,7 +85,7 @@ Harness v2 在「LLM 生成 + 编译重试」之上补齐了**确定性校验与
 - **大语言模型支持**：阿里云百炼 (Qwen-VL-Plus 模型)
 - **版本控制**：Git/GitHub (配置代理优化大文件传输同步)
 
-## 🚀 快速启动
+## 🚀 源码快速启动
 
 1. Windows 一键启动支持 **64 位 CPython 3.10 - 3.12**，推荐 Python 3.12。安装 Python 时建议勾选 **Python Launcher** 和 **Add python.exe to PATH**；若本机只有 Python 3.13 或更高版本，可并行安装 Python 3.12，无需卸载新版。
 

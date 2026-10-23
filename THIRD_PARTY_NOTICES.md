@@ -35,7 +35,13 @@ PyMuPDF 1.26.7 / MuPDF 1.26.12，Copyright Artifex Software, Inc.。
 
 精确版本、传递依赖、源码归档和校验值列于 dependency-sources.json；从已安装发行版复制的原始许可全文列于 licenses/，冻结运行时还保留相应 dist-info 元数据。
 
-## 可选外部软件
+## Windows 1.1.0 完整包内置的工具
 
-TeX Live / MiKTeX、Node.js、dsh-ears、whisper 模型和第三方 AI 服务均未捆绑。语音桥接脚本仅调用用户自行安装的运行库。
+- TeX Live 2026 裁剪子集：每个宏包保持自己的许可，参见 `runtimes/texlive/LICENSE.TL`、各包文档与源码，以及 `runtimes/texlive/tlpkg/texlive.tlpdb`。新增的本地 CTeX 默认配置与选包方式见 `README.UtopiaPhyCyclus.txt`。原始引擎源码访问：https://tug.org/texlive/svn/ ，发行与源码入口：https://tug.org/texlive/Contents/live/ 。
+- Fandol / TeX Gyre 字体：保留各字体随附许可与源码文档，不分发微软商业字体。
+- Node.js 24.20.0：MIT 及附带第三方声明，完整文本见 `runtimes/licenses/Node-LICENSE.txt`；源码：https://github.com/nodejs/node/tree/v24.20.0 。
+- @fugood/whisper.node 与 Windows x64 CPU 原生包 1.2.0-rc.0：MIT，保留原 npm 包源码、README 与许可；源码：https://github.com/mybigday/whisper.node ，语音适配器由本项目自行实现，不分发私有 DSH 插件。
+- Whisper multilingual small 模型：MIT。模型来自 https://huggingface.co/ggerganov/whisper.cpp ，构建时核对原始 LFS SHA-256，具体来源与校验值见 `runtimes/licenses/model-provenance.json`；模型许可见 `runtimes/licenses/Whisper-model-LICENSE.txt`。
+
+上述新增运行库的每个文件及 SHA-256 记录在完整 Windows 包的 `runtime-manifest.json`。wheel 与源码 ZIP 不包含大型运行库。第三方 AI 服务仍由用户选择与配置，不捆绑任何个人 API 密钥。
 用户导入的题目及图片不适用本项目软件许可；本仓库和发行版不分发内部题库。

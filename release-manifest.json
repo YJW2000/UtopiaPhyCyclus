@@ -1,5 +1,5 @@
 {
-  "version": "1.0.0",
+  "version": "1.1.0",
   "empty_bank": true,
   "files": [
     {
@@ -14,8 +14,8 @@
     },
     {
       "path": "CHANGELOG.md",
-      "sha256": "62656eb6214d2072ec89798f846547f8ec7932e96a9b5938c2c46e72bfb5e914",
-      "bytes": 599
+      "sha256": "fff31ed5d1ed4f2e57e5e48657fa4f5453b6e67148f6a7fc8be3a01205dc0b9b",
+      "bytes": 1170
     },
     {
       "path": "chapters/README.md",
@@ -33,14 +33,29 @@
       "bytes": 27138
     },
     {
+      "path": "diagnostics/jfk.wav",
+      "sha256": "59dfb9a4acb36fe2a2affc14bacbee2920ff435cb13cc314a08c13f66ba7860e",
+      "bytes": 352078
+    },
+    {
+      "path": "diagnostics/README.md",
+      "sha256": "d1afbb70276eb592238fdc4df5b7ef73cd2f68faaba7a52430e4aceb4b1ab337",
+      "bytes": 388
+    },
+    {
       "path": "docs/harness_v2_contract.md",
       "sha256": "892d5a1063484380041a405b5021641613f95830fd31355a9e6ea67d0d2598f6",
       "bytes": 18725
     },
     {
+      "path": "docs/Windows兼容性与测试.md",
+      "sha256": "4fb202cbb51c2e56d02a63d537a7e2d33c01f96633f0fbd6f8d43bb6d7e8d815",
+      "bytes": 2809
+    },
+    {
       "path": "docs/发行与安装.md",
-      "sha256": "f6ed6a1bbd906d0cbad0e1f83614e71ccfd755f798589bd747bc358ada52c845",
-      "bytes": 2695
+      "sha256": "1fb987b75ae335d7d2b51a6736cd3e906c73b814f851f8b1effccfc3484e2119",
+      "bytes": 3926
     },
     {
       "path": "docs/物理插图矫正AGENT_Harness强化说明.md",
@@ -509,8 +524,8 @@
     },
     {
       "path": "README.md",
-      "sha256": "f545d684e504d43e03b2ed1fe8c395804a19edeb03c689d00b43bf8955a6a23d",
-      "bytes": 10522
+      "sha256": "e445d4964bbc0c18ba165d773365a31618e8e32c8435c6a770030f565e3568e7",
+      "bytes": 10956
     },
     {
       "path": "requirements-build.txt",
@@ -629,13 +644,13 @@
     },
     {
       "path": "services/launcher.py",
-      "sha256": "ceddbaabeec28ac3b993376fd5c5be2da741eb1985c926abbdc03da37bd8dfee",
-      "bytes": 5805
+      "sha256": "6ef3ae9cf96a1bae8fb94dee7d722f65fe8836d333497a49c412f9b7011ecb11",
+      "bytes": 5877
     },
     {
       "path": "services/local_whisper.py",
-      "sha256": "2ccd75214cdaa4d867483d1e55993e17e24334e17bb49d24be013420831e099f",
-      "bytes": 9144
+      "sha256": "40a980ae4bdddd790ca78e83eb5b88ed887d68a952bd8cb5f6b34dabaee3f5e6",
+      "bytes": 9539
     },
     {
       "path": "services/operation_log.py",
@@ -646,6 +661,16 @@
       "path": "services/performance.py",
       "sha256": "98db2c6e33b3e91d81ff52eb0a5b28544412e08ee8cac3ebce9a587e06b366e8",
       "bytes": 455
+    },
+    {
+      "path": "services/portable_diagnostics.py",
+      "sha256": "05ac63c658d676f4e742520783ec3a049aa8ef53d4c64a510a3c4701d49982e4",
+      "bytes": 4148
+    },
+    {
+      "path": "services/portable_runtime.py",
+      "sha256": "a0f6ba9b33c633145c7c4ae5df2303e972fde8fae15252807077a8d673ab3069",
+      "bytes": 3504
     },
     {
       "path": "services/question_import_ai_service.py",
@@ -698,9 +723,14 @@
       "bytes": 2323
     },
     {
+      "path": "services/whisper_runtime.mjs",
+      "sha256": "daebe4c9c92c597200bcd0e42b46769878b137c9d0fe5b217cb77ef9f2423a2e",
+      "bytes": 1614
+    },
+    {
       "path": "services/whisper_server.mjs",
-      "sha256": "93475dfb731cf4f1b8cd22efa3f512a2824f4767986604074666b953b89e59b3",
-      "bytes": 4234
+      "sha256": "cbfe8bd2507f2683fa3ca65b2c925f12f7808f1fd27375d69725778612c93540",
+      "bytes": 4245
     },
     {
       "path": "static/echarts-5.5.0.min.js",
@@ -729,33 +759,43 @@
     },
     {
       "path": "Test Paper Group/主题模板/练习类模板/练习类模板.tex",
-      "sha256": "7b6d9b897d0095cbf56778b94ceab10457ddbc74e8ccb08101c86162fd5f685f",
-      "bytes": 29119
+      "sha256": "96de891de11d28e157fdc4a9334559cbbe320c4f3330e931a0b73eec93f365c6",
+      "bytes": 29184
     },
     {
       "path": "Test Paper Group/主题模板/讲义类模板/handout_main.tex",
-      "sha256": "5782bb24194fd2d4d6f21f104f577d22d2f7bce885acb7b91403f89c6e59fafa",
-      "bytes": 29715
+      "sha256": "7ec37a2182628c5def7482c2f3cc21592f2decc83f35404815be8d34519cb662",
+      "bytes": 94
     },
     {
       "path": "Test Paper Group/主题模板/讲义类模板/UtopiaPhyCyclus_book.cls",
-      "sha256": "779773ec370e08c4532cc75a0f083e649e2d7087b73507f53b5d0a9c2ce149c8",
-      "bytes": 27412
+      "sha256": "332d0f0035fc1e209c6749b39ade80ed2132f483b680e37bac6f00ff0b414c39",
+      "bytes": 27477
     },
     {
       "path": "Test Paper Group/主题模板/讲义类模板/讲义类模板.tex",
-      "sha256": "a5364974af99856880e695cb80f8e2af43d39e0dbfaf57e77069c346bfb92d4a",
-      "bytes": 29176
+      "sha256": "57706d47dbb45180d364e580155075bafc428bf132c9d955e53f0b584b606745",
+      "bytes": 29241
     },
     {
       "path": "Test Paper Group/主题模板/试卷类模板/试卷类模板.tex",
-      "sha256": "a30a7382a04bc508c32b260324424917d27feb9e63343a20082949ab065992d5",
-      "bytes": 3101
+      "sha256": "4706ab74a9365fa931cd57aa1e22d2939385f5611787ba248a0421c0683bce3f",
+      "bytes": 3102
     },
     {
       "path": "THIRD_PARTY_NOTICES.md",
-      "sha256": "1bb5d14f23292c5a931db29df1209a82e01dd95b5869c3da8815da4a6f8cd6cc",
-      "bytes": 2578
+      "sha256": "bde3986f79d7abedd75aa9790a5d35b26d7c058b66a63ba202a345c6bcc2a860",
+      "bytes": 3859
+    },
+    {
+      "path": "tools/bundle_runtimes.py",
+      "sha256": "d2e9aa4381fd3f1c411615e101ed42cb750d2f3da8c55c920cf025d1ea0dbc67",
+      "bytes": 9547
+    },
+    {
+      "path": "tools/check_portable_dlls.py",
+      "sha256": "2226236d9a2215f42242b49f35bdf74f486a14794fce021c3803ea36127139cb",
+      "bytes": 2732
     },
     {
       "path": "tools/fetch_release_licenses.py",
@@ -764,18 +804,18 @@
     },
     {
       "path": "tools/package_entry.py",
-      "sha256": "074617d087af688010a5541b798bcaaf6405946125576fe6caf91ff3ddab1c2f",
-      "bytes": 1528
+      "sha256": "a7e47ae276126674b725ef074cf363b7b2a2be7b6b2849a896599146053abe11",
+      "bytes": 1602
     },
     {
       "path": "tools/portable_entry.py",
-      "sha256": "0ea791d3663bebba96683c52f289d17bea801f3d8555dc145b3504022850d60a",
-      "bytes": 3111
+      "sha256": "b6958dd54f82635c1f22552a323d763cb1f140c6eafbebe1317bce1a2c21ab92",
+      "bytes": 3631
     },
     {
       "path": "tools/release.py",
-      "sha256": "257eece3bd65bba03493c5e459f2ae5ce3cb99fe4cc79edee0fdf3f8a75f18e0",
-      "bytes": 13539
+      "sha256": "c79affdf77019a0f544007393d969be8f3852d90748fad80619494f2bcb7cc42",
+      "bytes": 16771
     },
     {
       "path": "tools/UtopiaPhyCyclus.spec",
@@ -784,8 +824,13 @@
     },
     {
       "path": "tools/verify_release.py",
-      "sha256": "ef68e63b05d9d92f20b04e8dae5ad58bbadc0db691c60542130176bcb27da48a",
-      "bytes": 5095
+      "sha256": "6d0bee30d83990f5c07eb87563995dcc5261c32c58b63d233f22fa665905f9bf",
+      "bytes": 8298
+    },
+    {
+      "path": "tools/windows_sandbox_test.ps1",
+      "sha256": "99638885b82593a12873c00d78f4e5457c8a630235bc2d66c63ea1bdd4a50df4",
+      "bytes": 1497
     },
     {
       "path": "utils/__init__.py",
@@ -919,13 +964,13 @@
     },
     {
       "path": "UtopiaPhyCyclus_book.cls",
-      "sha256": "d82737f37cd4832849cc97983e91d0d82993f616389ba579f759cf0810548cb6",
-      "bytes": 29059
+      "sha256": "e30580c69eebc70c4b115c9ce0c35140e873bb14cc26342e2c33c0e3c8509446",
+      "bytes": 29893
     },
     {
       "path": "VERSION",
-      "sha256": "59854984853104df5c353e2f681a15fc7924742f9a2e468c29af248dce45ce03",
-      "bytes": 6
+      "sha256": "6ca2e3356014241331fb2b399428fca23c558e3f3d428edcf4f56eb0fe907069",
+      "bytes": 7
     },
     {
       "path": "启动乌托邦高中物理题库助手.bat",

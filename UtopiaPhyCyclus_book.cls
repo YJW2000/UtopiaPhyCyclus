@@ -132,7 +132,7 @@
 %  字体与绘图设置 (Fonts & Graphics)
 %----------------------------------------------------------------------------------
 \RequirePackage{fontspec}
-\setmainfont{Times New Roman}[ItalicFont=Times New Roman Italic]
+\IfFontExistsTF{Times New Roman}{\setmainfont{Times New Roman}[ItalicFont=Times New Roman Italic]}{\setmainfont{TeX Gyre Termes}}
 
 \usepgfplotslibrary{polar,colormaps,colorbrewer}
 \pgfplotsset{compat=1.16}

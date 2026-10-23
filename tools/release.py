@@ -2,6 +2,7 @@
 from __future__ import annotations
 import argparse
 import hashlib
+from functools import lru_cache
 import importlib.metadata
 import json
 from pathlib import Path
@@ -15,8 +16,9 @@ import zipfile
 ROOT = Path(__file__).resolve().parents[1]
 WORK = ROOT / '.release-work'
 SOURCE = WORK / 'source'
-DIST = ROOT / 'dist'
 VERSION = (ROOT / 'VERSION').read_text(encoding='utf-8').strip()
+DIST = ROOT / 'dist' / VERSION
+RUNTIME_ASSETS = WORK / 'runtime-assets/windows-x64'
 FILES = [
     '.gitignore', 'README.md', 'LICENSE', 'NOTICE.md', 'COPYING-AGPL-3.0',
     'THIRD_PARTY_NOTICES.md', 'CHANGELOG.md', 'VERSION', 'env.example',
@@ -30,6 +32,9 @@ FILES = [
     'tools/release.py', 'tools/portable_entry.py', 'tools/package_entry.py',
     'tools/UtopiaPhyCyclus.spec', 'tools/fetch_release_licenses.py',
     'tools/verify_release.py',
+    'tools/bundle_runtimes.py', 'diagnostics/jfk.wav', 'diagnostics/README.md',
+    'docs/Windows兼容性与测试.md', 'tools/windows_sandbox_test.ps1',
+    'tools/check_portable_dlls.py',
 ]
 TREES = {
     'services': {'.py', '.mjs', '.json'},
@@ -70,6 +75,7 @@ def private_hashes():
     return {digest(p.read_bytes()) for p in files if p.is_file() and p.stat().st_size > 32}
 
 
+@lru_cache(maxsize=1)
 def local_secrets():
     path = ROOT / '.env'
     if not path.exists():
@@ -139,17 +145,30 @@ def prepare():
 def audit_tree(root, private=None):
     private = private_hashes() if private is None else private
     count = 0
+    manifest_path = root / 'runtime-manifest.json'
+    runtime_files = {f['path']: f for f in json.loads(manifest_path.read_text(encoding='utf-8'))['files']} if manifest_path.exists() else {}
+    seen_runtime = set()
     for p in root.rglob('*'):
         if not p.is_file() or '.git' in p.parts:
             continue
         name = p.relative_to(root).as_posix()
         # Third-party runtime distributions legitimately contain caches and licenses.
         if name.startswith('_internal/'):
-            if '.env' in p.parts or digest(p.read_bytes()) in private:
+            data = p.read_bytes()
+            if '.env' in p.parts or digest(data) in private or any(secret in data for secret in local_secrets()):
                 raise ValueError(f'Private content in frozen runtime: {name}')
+        elif name.startswith('runtimes/'):
+            data = p.read_bytes()
+            if name not in runtime_files or digest(data) != runtime_files[name]['sha256']:
+                raise ValueError(f'Unverified bundled runtime file: {name}')
+            if digest(data) in private or any(secret in data for secret in local_secrets()):
+                raise ValueError(f'Private content in bundled runtime: {name}')
+            seen_runtime.add(name)
         else:
             inspect_entry(name, p.read_bytes(), private)
         count += 1
+    if runtime_files and seen_runtime != set(runtime_files):
+        raise ValueError('Bundled runtime files do not match runtime-manifest.json')
     return count
 
 
@@ -164,6 +183,13 @@ def run(*args, cwd=None):
     subprocess.run([str(a) for a in args], cwd=cwd or ROOT, check=True)
 
 
+def copy_runtime_file(source, target):
+    source, target = Path(source), Path(target)
+    if target.is_file() and source.stat().st_size == target.stat().st_size and source.stat().st_mtime_ns == target.stat().st_mtime_ns:
+        return str(target)
+    return shutil.copy2(source, target)
+
+
 def build(skip_frozen=False):
     for line in (ROOT / 'requirements.txt').read_text(encoding='utf-8').splitlines():
         if line.strip() and not line.lstrip().startswith('#'):
@@ -171,7 +197,9 @@ def build(skip_frozen=False):
             if importlib.metadata.version(name) != version:
                 raise RuntimeError(f'Build dependency mismatch: install {name}=={version} in the build environment')
     prepare()
-    DIST.mkdir(exist_ok=True)
+    if not (RUNTIME_ASSETS / 'runtime-manifest.json').is_file():
+        raise RuntimeError('Prepare the verified runtime payload with tools/bundle_runtimes.py first')
+    DIST.mkdir(parents=True, exist_ok=True)
     project = safe_output(WORK / 'p')
     if project.exists():
         shutil.rmtree(project)
@@ -219,7 +247,7 @@ utopia_phycyclus = ["_app/**/*", "_app/.gitignore", "_app/.streamlit/config.toml
     for file in portable.rglob('*'):
         if file.is_file():
             relative = file.relative_to(portable).as_posix()
-            if not relative.startswith('_internal/') and relative != 'UtopiaPhyCyclus.exe' and relative not in allowed:
+            if not relative.startswith(('_internal/', 'runtimes/')) and relative not in {'UtopiaPhyCyclus.exe', 'runtime-manifest.json'} and relative not in allowed:
                 safe_output(file).unlink()
     shutil.copytree(SOURCE, portable, dirs_exist_ok=True, ignore=shutil.ignore_patterns('.git', '__pycache__'))
     for folder in ['services', 'utils']:
@@ -228,14 +256,19 @@ utopia_phycyclus = ["_app/**/*", "_app/.gitignore", "_app/.streamlit/config.toml
         shutil.copytree(SOURCE / folder, portable / '_internal' / folder, dirs_exist_ok=True,
                         ignore=shutil.ignore_patterns('__pycache__'))
     shutil.copy2(SOURCE / 'ocr_prompt.txt', portable / '_internal/ocr_prompt.txt')
+    shutil.copytree(RUNTIME_ASSETS, portable, dirs_exist_ok=True, copy_function=copy_runtime_file)
+    print('[BUILD] Complete runtime copied; auditing the portable directory...', flush=True)
     audit_tree(portable)
+    print('[BUILD] Portable directory passed; creating release archives...', flush=True)
     zip_tree(SOURCE, DIST / f'UtopiaPhyCyclus-{VERSION}-source.zip', f'UtopiaPhyCyclus-{VERSION}')
     zip_tree(portable, DIST / f'UtopiaPhyCyclus-{VERSION}-windows-x64.zip', f'UtopiaPhyCyclus-{VERSION}')
     shutil.copy2(SOURCE / 'release-manifest.json', DIST / 'release-manifest.json')
     shutil.copy2(SOURCE / 'dependency-sources.json', DIST / 'dependency-sources.json')
+    shutil.copy2(portable / 'runtime-manifest.json', DIST / 'runtime-manifest.json')
     checksums = [f'{digest(p.read_bytes())}  {p.name}' for p in sorted(DIST.iterdir())
                  if p.is_file() and p.name != 'SHA256SUMS.txt']
     (DIST / 'SHA256SUMS.txt').write_text('\n'.join(checksums) + '\n', encoding='utf-8')
+    print('[BUILD] Archives created; checking the actual archive contents...', flush=True)
     audit()
 
 
@@ -251,17 +284,30 @@ def audit():
     for archive in sorted(DIST.iterdir() if DIST.exists() else []):
         if archive.suffix in {'.zip', '.whl'}:
             with zipfile.ZipFile(archive) as z:
+                runtime_manifest = next((name for name in z.namelist() if name.endswith('/runtime-manifest.json')), None)
+                runtime_files = {f['path']: f for f in json.loads(z.read(runtime_manifest))['files']} if runtime_manifest else {}
+                runtime_seen = set()
                 for info in z.infolist():
                     if info.is_dir():
                         continue
                     name = info.filename
                     # Drop archive wrapper and installed-package wrapper for path checks.
-                    if '/_internal/' in name:
+                    if '/runtimes/' in name:
+                        relative = 'runtimes/' + name.split('/runtimes/', 1)[1]
+                        data = z.read(info)
+                        if relative not in runtime_files or digest(data) != runtime_files[relative]['sha256']:
+                            raise ValueError(f'Unverified runtime in {archive.name}: {name}')
+                        if digest(data) in private or any(secret in data for secret in local_secrets()):
+                            raise ValueError(f'Private content in {archive.name}: {name}')
+                        runtime_seen.add(relative)
+                    elif '/_internal/' in name:
                         data = z.read(info)
                         if digest(data) in private:
                             raise ValueError(f'Private content in {archive.name}: {name}')
                     else:
                         inspect_entry(name, z.read(info), private)
+                if runtime_seen != set(runtime_files):
+                    raise ValueError(f'Runtime manifest is incomplete: {archive.name}')
             archives.append(archive.name)
         elif archive.name.endswith('.tar.gz'):
             with tarfile.open(archive) as tar:

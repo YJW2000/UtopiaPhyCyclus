@@ -96,6 +96,8 @@ def main():
     parser.add_argument('--repair', action='store_true')
     args = parser.parse_args()
     root = Path(__file__).resolve().parents[1]
+    from services.portable_runtime import configure
+    configure(root)
     os.chdir(root)
     runtime = root/'.runtime'
     runtime.mkdir(exist_ok=True)

@@ -2,6 +2,7 @@
 import argparse
 import asyncio
 import json
+import hashlib
 import os
 from pathlib import Path
 import shutil
@@ -69,22 +70,54 @@ async def frozen_session(port):
 
 def frozen_test():
     original = ROOT / '.release-work/frozen/UtopiaPhyCyclus'
-    app = ROOT / '.release-work/verification-frozen'
-    if app.exists():
-        if not app.resolve().is_relative_to((ROOT / '.release-work').resolve()):
-            raise RuntimeError('Unsafe verification directory')
-        shutil.rmtree(app)
-    shutil.copytree(original, app)
+    existing_app = os.environ.get('UTOPIA_TEST_APP')
+    app = Path(existing_app).resolve() if existing_app else ROOT / '.release-work/verification-frozen'
+    if existing_app:
+        if not (app / 'UtopiaPhyCyclus.exe').is_file():
+            raise RuntimeError('UTOPIA_TEST_APP must name an existing complete portable directory')
+    else:
+        if app.exists():
+            if not app.resolve().is_relative_to((ROOT / '.release-work').resolve()):
+                raise RuntimeError('Unsafe verification directory')
+            shutil.rmtree(app)
+        shutil.copytree(original, app)
     executable = app / 'UtopiaPhyCyclus.exe'
-    result = subprocess.run([str(executable), '--check'], cwd=app, capture_output=True, text=True, timeout=60)
+    from check_portable_dlls import audit as audit_dlls
+    native_dependencies = audit_dlls(app)
+    profile = app.parent / 'utopia-clean-profile' if existing_app else ROOT / '.release-work/clean-profile'
+    for name in ['AppData/Roaming', 'AppData/Local', 'Temp']:
+        (profile / name).mkdir(parents=True, exist_ok=True)
+    env = dict(os.environ)
+    for key in list(env):
+        if key.startswith(('PYTHON', 'CONDA', 'AI_', 'PI_AGENT_', 'DSH_', 'UTOPIA_', 'TEXMF', 'FONTCONFIG')) or key == 'VIRTUAL_ENV':
+            env.pop(key, None)
+    windows_root = os.environ.get('SystemRoot', r'C:\Windows')
+    env.update({'PATH': os.pathsep.join([os.path.join(windows_root, 'System32'), windows_root]),
+                'USERPROFILE': str(profile), 'HOME': str(profile),
+                'APPDATA': str(profile / 'AppData/Roaming'), 'LOCALAPPDATA': str(profile / 'AppData/Local'),
+                'TEMP': str(profile / 'Temp'), 'TMP': str(profile / 'Temp'),
+                'UTOPIA_RUNTIME_CACHE': os.environ.get('UTOPIA_RUNTIME_CACHE', str(profile / 'runtime-cache'))})
+    assert shutil.which('python', path=env['PATH']) is None
+    assert shutil.which('xelatex', path=env['PATH']) is None
+    assert shutil.which('node', path=env['PATH']) is None
+    result = subprocess.run([str(executable), '--check'], cwd=app, env=env, capture_output=True, text=True, timeout=180)
     assert result.returncode == 0, result.stderr
     print(result.stdout.strip())
+    selftest_log = ROOT / '.release-work/full-selftest.log'
+    with selftest_log.open('w', encoding='utf-8') as output:
+        completed = subprocess.run([str(executable), '--self-test'], cwd=app, env=env,
+                                   stdout=output, stderr=subprocess.STDOUT, timeout=600,
+                                   creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
+    assert completed.returncode == 0, selftest_log.read_text(encoding='utf-8', errors='replace')[-3000:]
+    selftest = json.loads((app / '.runtime/selftest/report.json').read_text(encoding='utf-8'))
+    assert selftest['passed'] and selftest['frozen_python']
+    print('PASS: frozen PDF templates and two real offline speech transcriptions', flush=True)
     with socket.socket() as probe:
         probe.bind(('127.0.0.1', 0))
         port = probe.getsockname()[1]
     log_path = ROOT / '.release-work/frozen-smoke.log'
     with log_path.open('w', encoding='utf-8') as log:
-        proc = subprocess.Popen([str(executable), '--no-browser', '--port', str(port)], cwd=app,
+        proc = subprocess.Popen([str(executable), '--no-browser', '--port', str(port)], cwd=app, env=env,
                                 stdout=log, stderr=subprocess.STDOUT,
                                 creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
         try:
@@ -105,6 +138,15 @@ def frozen_test():
             assert not list((app / 'chapters').rglob('*.tex'))
             print(json.dumps({'frozen_health': 'passed', 'real_websocket_session': 'passed',
                               'session_messages': messages, 'startup_exceptions': 0}))
+            report = {'version': (app / 'VERSION').read_text().strip(), 'passed': True,
+                      'executable_sha256': hashlib.sha256(executable.read_bytes()).hexdigest(),
+                      'runtime_manifest_sha256': hashlib.sha256((app / 'runtime-manifest.json').read_bytes()).hexdigest(),
+                      'validation_method': 'isolated_process_ascii_extraction',
+                      'python_on_path': False, 'isolated_profile': True, 'external_tex_node_on_path': False,
+                      'http_health': 'passed', 'real_websocket_messages': messages,
+                      'fresh_windows_vm_tested': False, 'selftest': selftest,
+                      'native_dependencies': native_dependencies}
+            (ROOT / '.release-work/validation-report.json').write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding='utf-8')
         finally:
             proc.terminate()
             proc.wait(timeout=15)
