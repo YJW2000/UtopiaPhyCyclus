@@ -432,6 +432,25 @@ def _replace_braced_command(text, command, formatter):
 def latex_to_markdown(content, show_title=True):
     """简单的 LaTeX 转 Markdown 用于预览"""
     content = repair_problem_headers(content)
+    # Compile untouched diagrams only after all prose conversions. Otherwise
+    # textbf/hspace/choices rewrite TikZ labels, and later regexes process the
+    # source inside a failed diagram's <details> a second time.
+    diagrams = []
+    diagram_prefix = 'MCTIKZPREVIEWTOKEN'
+    while diagram_prefix in content:
+        diagram_prefix += 'X'
+
+    def protect_diagram(code, **kwargs):
+        token = f'{diagram_prefix}{len(diagrams)}END'
+        diagrams.append((token, code, kwargs))
+        return token
+
+    for pattern in (
+        r'\\begingroup(?:(?!\\endgroup)[\s\S])*?\\begin\{tikzpicture\}[\s\S]*?\\end\{tikzpicture\}(?:(?!\\endgroup)[\s\S])*?\\endgroup',
+        r'\\begin\{tikzpicture\}[\s\S]*?\\end\{tikzpicture\}',
+        r'\\begingroup(?:(?!\\endgroup)[\s\S])*?\\(?:draw|coordinate|node|fill|path|foreach)\b(?:(?!\\endgroup)[\s\S])*?\\endgroup',
+    ):
+        content = re.sub(pattern, lambda match: protect_diagram(match.group(0)), content)
     # 兼容历史数据：预览时也剔除残留的 \newpage 等分页命令
     content = strip_layout_commands(content)
     content = re.sub(r'(?m)(?<!\\)%[^\n]*', '', content)
@@ -551,38 +570,17 @@ def latex_to_markdown(content, show_title=True):
                 with open(full_path, 'r', encoding='utf-8') as f:
                     tikz_code = f.read()
                 
-                return _tikz_image_markdown(tikz_code, source_tex_path=full_path, target_png_path=png_path)
+                return protect_diagram(tikz_code, source_tex_path=full_path, target_png_path=png_path)
             else:
                 return f"\n> ⚠️ 找不到引用的图片文件: `{input_path}`\n"
         return match.group(0)
 
     content = re.sub(r'\\input\{(.*?)\}', replace_input_tikz, content)
 
-    # 2. 替换题库中遗留的内联 TikZ 代码块
-    def replace_inline_tikz(match):
-        tikz_code = match.group(0)
-        return _tikz_image_markdown(tikz_code)
-
-    content = re.sub(
-        r'\\begingroup(?:(?!\\endgroup)[\s\S])*?\\begin\{tikzpicture\}[\s\S]*?\\end\{tikzpicture\}(?:(?!\\endgroup)[\s\S])*?\\endgroup',
-        replace_inline_tikz,
-        content,
-        flags=re.DOTALL,
-    )
-    content = re.sub(r'\\begin\{tikzpicture\}.*?\\end\{tikzpicture\}', replace_inline_tikz, content, flags=re.DOTALL)
-    content = re.sub(
-        r'\\begingroup(?:(?!\\endgroup)[\s\S])*?\\(?:draw|coordinate|node|fill|path|foreach)\b(?:(?!\\endgroup)[\s\S])*?\\endgroup',
-        replace_inline_tikz,
-        content,
-        flags=re.DOTALL,
-    )
-
-    # TikZ 已转成图片后再剥离 figure/minipage/centerline 等版式外壳，
-    # 避免提前删除 TikZ 内部的 \small 等字号命令影响出图效果。
+    # TikZ 已隔离，再剥离 figure/minipage/centerline 等版式外壳。
     content = _strip_preview_layout_wrappers(content)
 
-    # TikZ 必须先渲染成图片，再做 Markdown 强调替换。否则图中
-    # \textbf{A} 会被改成 **A**，随后被 LaTeX 当成普通星号绘制。
+    # 这里只转换正文强调命令；隔离的 TikZ 保留原始 \textbf 等命令。
     # 使用括号配平解析，兼容 \textbf{... $\frac{1}{2}$ ...} 这类嵌套写法。
     content = _replace_braced_command(content, 'textbf', lambda inner: '**' + inner + '**')
     content = _replace_braced_command(content, 'emph', lambda inner: '*' + inner + '*')
@@ -592,10 +590,22 @@ def latex_to_markdown(content, show_title=True):
     content = _replace_circled_for_preview(content)
     
     # 尝试处理表格 tabular -> Markdown Table
-    def replace_tabular(match):
-        table_content = match.group(1)
+    def replace_tabular(table_content):
         table_content = table_content.replace(r'\hline', '')
         rows = [row.strip() for row in table_content.split(r'\\') if row.strip()]
+
+        if diagram_prefix in table_content:
+            # These tables arrange figures and captions, rather than data.
+            # HTML cells keep rendered images beside each other without
+            # inserting multiline image markup into a Markdown table row.
+            html_rows = []
+            for row in rows:
+                row = re.sub(r'^\s*\[[^\]]*\]', '', row).strip()
+                cells = [re.sub(r'^\{([^{}]*)\}$', r'\1', cell.strip()) for cell in row.split('&')]
+                html_rows.append('<tr>' + ''.join(
+                    '<td style="text-align:center;vertical-align:top;border:0;padding:0.4rem;">' + cell + '</td>'
+                    for cell in cells) + '</tr>')
+            return '\n\n<table style="width:100%;border:0;"><tbody>' + ''.join(html_rows) + '</tbody></table>\n\n'
         
         md_rows = []
         for row in rows:
@@ -613,7 +623,30 @@ def latex_to_markdown(content, show_title=True):
             
         return '\n' + '\n'.join(md_rows) + '\n'
 
-    content = re.sub(r'\\begin\{tabular\}\{.*?\}\s*(.*?)\s*\\end\{tabular\}', replace_tabular, content, flags=re.DOTALL)
+    # Column specifications contain nested braces: @{}c@{\hspace{...}}c@{}.
+    # Consume the complete specification, working from inner tables outward.
+    table_start = re.compile(r'\\begin\{tabular\}(?:\[[^\]]*\])?\s*\{')
+    while True:
+        starts = list(table_start.finditer(content))
+        if not starts:
+            break
+        match = starts[-1]
+        cursor, depth = match.end(), 1
+        while cursor < len(content) and depth:
+            if content[cursor] == '{':
+                depth += 1
+            elif content[cursor] == '}':
+                depth -= 1
+            cursor += 1
+        end = content.find(r'\end{tabular}', cursor)
+        if depth or end < 0:
+            break
+        content = (content[:match.start()] + replace_tabular(content[cursor:end])
+                   + content[end + len(r'\end{tabular}'):])
+
+    # Table row spacing (\\[3pt]) can resemble a display-math opener to
+    # the segment scanner. Recheck prose spacing after removing table syntax.
+    content = _replace_spacing_outside_math(content)
     
     content = content.replace(r'\begin{center}', '').replace(r'\end{center}', '')
 
@@ -721,7 +754,9 @@ def latex_to_markdown(content, show_title=True):
     # 版式命令（\hfill 等）可能留下只有全角空格的行，预览中不应显示
     content = re.sub(r"(?m)^[\u3000\s]+$", "", content)
     content = re.sub(r"\n{3,}", "\n\n", content)
-    
+    for token, code, kwargs in diagrams:
+        content = content.replace(token, _tikz_image_markdown(code, **kwargs).strip())
+
     return content
 
 def generate_filename(year, p_type, name, number, subject):

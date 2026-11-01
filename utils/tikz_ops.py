@@ -319,6 +319,9 @@ def _build_standalone_document(tikz_code):
 \\usetikzlibrary{{shapes.geometric,through,decorations.pathmorphing,arrows.meta,quotes,mindmap,shapes.symbols,shapes.arrows,automata,angles,3d,trees,shadows,shapes.callouts,decorations.pathreplacing,decorations.markings}}
 \\definecolor{{structure}}{{RGB}}{{34,94,168}}
 {palette_definitions}\\tikzset{{
+  fw/.style={{line width=0.7pt,line cap=round,line join=round}},
+  wire/.style={{fw}},
+  comp/.style={{fw,fill=white}},
   cube/.style={{thick}},
   hide/.style={{thick,dashed,dash pattern=on 3pt off 2pt,gray!70}},
   hidden/.style={{thick,dashed,dash pattern=on 4pt off 2.4pt}},

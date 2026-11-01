@@ -44,6 +44,12 @@ from services.semantic_search_service import (
     index_status as semantic_index_status,
     search as semantic_search,
 )
+from services.fuzzy_search_service import (
+    SORT_OPTIONS as FUZZY_SORT_OPTIONS,
+    build_documents as build_fuzzy_documents,
+    search as fuzzy_search,
+    sort_results as sort_fuzzy_results,
+)
 from utils.runtime_files import ensure_log_csv
 from utils.sortable_list import st_sortable_list
 from utils.local_stats import sync_question_activity
@@ -13545,8 +13551,98 @@ def render_advanced_search_results(is_delete_mode=False, paper_type_scope=None, 
     else:
         st.warning("未找到匹配的题目。")
 
+@st.cache_data(show_spinner=False, max_entries=4)
+def _fuzzy_search_documents_cached(csv_token):
+    return build_fuzzy_documents(_csv_index_cached(csv_token))
+
+
+@st.cache_data(show_spinner=False, max_entries=32)
+def _fuzzy_search_results_cached(csv_token, query):
+    matches = fuzzy_search(_fuzzy_search_documents_cached(csv_token), query)
+    results = []
+    for match in matches:
+        row = match["row"]
+        relative_path = str(row.get("相对文件路径", "") or "").strip()
+        if not relative_path:
+            continue
+        path = os.path.join(CHAPTERS_DIR, relative_path)
+        filename = row.get("文件名称") or os.path.basename(path)
+        if not filename.lower().endswith(".tex"):
+            filename += ".tex"
+        results.append({**match, "path": path, "file": filename})
+    return results
+
+
+def page_fuzzy_search():
+    st.header("🔍 模糊查找")
+    st.caption("同时查找题目正文、标签、知识点、物理方法、答案解析及来源信息，支持部分词、近似词与常见物理关联词。多个关键词可用空格分隔。")
+
+    def reset_page():
+        st.session_state["fuzzy_results_page"] = 1
+
+    def submit_query():
+        st.session_state["fuzzy_query_saved"] = st.session_state.get("fuzzy_query", "").strip()
+        reset_page()
+
+    # Keep the last query when Streamlit unmounts this page's widgets.
+    if "fuzzy_query" not in st.session_state:
+        st.session_state["fuzzy_query"] = st.session_state.get("fuzzy_query_saved", "")
+    query_column, button_column = st.columns([5, 1], gap="small")
+    with query_column:
+        st.text_input("模糊关键词", placeholder="例如：碰撞 动量守恒、牛二、传送带 能量转化", key="fuzzy_query", on_change=submit_query)
+    with button_column:
+        st.markdown("<div style='height:28px'></div>", unsafe_allow_html=True)
+        st.button("开始查找", key="fuzzy_search_submit", type="primary", use_container_width=True, on_click=submit_query)
+    query = st.session_state.get("fuzzy_query_saved", "")
+    if not query:
+        st.info("输入相关词后按回车或点击「开始查找」。例如「牛二」可关联「牛顿第二定律」。")
+        return
+
+    sort_label_column, sort_options_column = st.columns([0.65, 8], gap="small", vertical_alignment="center")
+    with sort_label_column:
+        st.caption("排序方式")
+    with sort_options_column:
+        order = st.radio(
+            "结果排序", FUZZY_SORT_OPTIONS, horizontal=True, label_visibility="collapsed",
+            key="fuzzy_sort_order", on_change=reset_page,
+        )
+    try:
+        with st.spinner("正在查找相关题目…"):
+            matches = _fuzzy_search_results_cached(_csv_index_cache_token(), query)
+            results = sort_fuzzy_results([item for item in matches if os.path.isfile(item["path"])], order)
+    except (OSError, ValueError) as exc:
+        st.error(f"题库索引暂时无法读取：{exc}")
+        return
+    st.subheader(f"查找结果 · {len(results)} 题")
+    if not results:
+        st.info("没有找到相关题目，可缩短关键词或换用相关的物理术语。")
+        return
+    size_column, page_column = st.columns(2)
+    with size_column:
+        page_size = st.selectbox("每页显示", [5, 10, 15, 20], index=1, key="fuzzy_results_page_size", on_change=reset_page)
+    pages = max(1, (len(results) + page_size - 1) // page_size)
+    st.session_state["fuzzy_results_page"] = max(1, min(pages, st.session_state.get("fuzzy_results_page", 1)))
+    with page_column:
+        page = st.number_input("页码", min_value=1, max_value=pages, step=1, key="fuzzy_results_page")
+    start = (page - 1) * page_size
+    st.caption(f"显示第 {start + 1}–{min(len(results), start + page_size)} 条 / 共 {len(results)} 条 · 第 {page}/{pages} 页")
+    for result in results[start:start + page_size]:
+        row = result["row"]
+        st.caption(f"{result['reason']} · 录入时间：{row.get('初次录入的时间') or '未记录'} · 难度：{row.get('难度星级') or '未设置'}")
+        try:
+            assets = load_question_editor_assets(result["path"])
+        except OSError:
+            st.warning(f"题目文件暂时无法读取：{result['file']}")
+            continue
+        render_browse_question_editor_card(
+            format_question_title(result["file"]), assets["content"], result["path"],
+            "fuzzy_search", prepared_assets=assets,
+        )
+        st.divider()
+
+
 def page_advanced_search():
-    st.header("🔎 三级查找")
+    st.header("🔎 精确查找")
     st.caption("一级先选检索字段再填关键词；二、三级可留空，也可继续缩小范围。")
 
     if st.session_state.get("adv_search_active") and _adv_search_has_query():
@@ -13587,14 +13683,13 @@ def _cached_logo_base64(logo_path: str, mtime: float = None) -> str:
 def _format_nav_label(option: str) -> str:
     """侧边栏导航标签：图标 + 名称单行显示（对齐复盘软件侧栏排版）。
 
-    含二级功能的入口（智能录题 / TeX 录入）在右侧追加展开箭头：
-    当前就在该入口下时显示向上箭头，否则向下。
+    含二级功能的入口在右侧追加展开箭头。
     """
     match = re.match(r"^(\S+)\s+(.+)$", option)
     if not match:
         return option
     icon, name = match.group(1), match.group(2).strip()
-    if name in ("智能录题", "TeX录入", "设置"):
+    if name in ("智能录题", "TeX录入", "题目查找", "设置"):
         # 箭头与页面状态无关，保证 format_func 是纯函数（AppTest 与 Streamlit 都要求）
         return f"{icon}  {name}  ⌄"
     return f"{icon}  {name}"
@@ -13927,7 +14022,7 @@ def main():
     browse_nav_option = "🔍  全局浏览"
     exam_nav_option = "🖨️  组卷排版"
     tools_nav_option = "🛠️  维护工具"
-    advanced_nav_option = "🔎  精确查找"
+    advanced_nav_option = "🔎  题目查找"
     intro_nav_option = "📘  架构介绍"
     manual_nav_option = "📖  规范指南"
     settings_nav_option = "⚙️  设置"
@@ -13985,6 +14080,9 @@ def main():
         "🛠️\n工具箱": tools_nav_option,
         "🛠️\n工具": tools_nav_option,
         "三级查找": advanced_nav_option,
+        "精确查找": advanced_nav_option,
+        "题目查找": advanced_nav_option,
+        "模糊查找": advanced_nav_option,
         "🔎  三级精确查找": advanced_nav_option,
         "🔎\n三级查找": advanced_nav_option,
         "🔎\n查找": advanced_nav_option,
@@ -14011,6 +14109,10 @@ def main():
 
     for state_key in ("main_nav_selection", "main_sidebar_radio"):
         saved_value = st.session_state.get(state_key)
+        if saved_value and ("精确查找" in saved_value or "三级查找" in saved_value):
+            st.session_state["search_subpage"] = "精确查找"
+        elif saved_value and "模糊查找" in saved_value:
+            st.session_state["search_subpage"] = "模糊查找"
         if saved_value and ('API' in str(saved_value) or saved_value == '🔑\n设置'):
             st.session_state['settings_subpage']='🔑 API设置'
         elif saved_value and 'UI设置' in str(saved_value):
@@ -14021,6 +14123,8 @@ def main():
         st.session_state["main_nav_selection"] = default_nav_option
     if "main_sidebar_radio" not in st.session_state or st.session_state["main_sidebar_radio"] not in nav_options:
         st.session_state["main_sidebar_radio"] = st.session_state["main_nav_selection"]
+    if st.session_state.get("search_subpage") not in ("精确查找", "模糊查找"):
+        st.session_state["search_subpage"] = "精确查找"
 
     def _select_main_navigation(selection):
         if selection not in nav_options:
@@ -14161,6 +14265,7 @@ def main():
         render_sidebar_flyouts(nav_options, _select_main_navigation, {
             entry_nav_option: ('entry_mode_sidebar', ['单题录入', '批量试题录入', '同卷试题录入']),
             tex_entry_nav_option: ('tex_workspace_mode', ['单题录入', '批量试题录入', '同卷试题录入']),
+            advanced_nav_option: ('search_subpage', ['精确查找', '模糊查找']),
             settings_nav_option: ('settings_subpage', ['🎨 UI设置', '🔑 API设置']),
         })
 
@@ -14197,7 +14302,10 @@ def main():
     elif selected_nav == tools_nav_option:
         page_tools()
     elif selected_nav == advanced_nav_option:
-        page_advanced_search()
+        if st.session_state.get("search_subpage") == "模糊查找":
+            page_fuzzy_search()
+        else:
+            page_advanced_search()
     elif selected_nav == intro_nav_option:
         page_system_intro()
     elif selected_nav == manual_nav_option:
