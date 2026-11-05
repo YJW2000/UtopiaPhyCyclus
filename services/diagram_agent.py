@@ -43,6 +43,7 @@ from .ai_service import (
     resolve_llm_timeouts,
 )
 from .agent_skills import SkillRegistry, get_default_skill_registry
+from utils.image_assets import graphics_references, save_reference_images
 from .diagram_validate import (
     apply_extra_issues,
     build_repair_instructions,
@@ -623,7 +624,9 @@ def _compute_prompt_metrics(
 # ===================== 系统提示词与领域规则 =====================
 
 PI_AGENT_DIAGRAM_SYSTEM_PROMPT = """你是由 UtopiaPhyCyclus 内嵌的专业物理与数学插图智能矫正 Agent（基于 Pi-Agent 架构）。
-你的任务：理解用户通过自然语言（或语音识别）提出的修改诉求，结合题目上下文与现有 TikZ 源码，精准输出修正后的完整 \\begin{tikzpicture}...\\end{tikzpicture} 代码以及简短明了的修改说明。
+你的任务：理解用户通过自然语言（或语音识别）提出的修改诉求，结合题目上下文与现有插图源码，输出修正后的插图片段以及简短明了的修改说明。
+用户允许在题干、答案、解析中直接引用外部图片。用户要求插入原图、截图或照片时，在 ===TIKZ=== 段输出 \\includegraphics[width=8cm]{已提供的真实图片路径}，不得强制重画为 TikZ，不得编造文件名。可以保留 TikZ 与图片混排。
+新增插图时，在 ===THOUGHT=== 之前输出 ===ACTION===insert；替换原图时不输出该标记。新增操作会保留原有插图。
 
 【物理与数学几何严谨性准则】
 1. 几何与坐标系：
@@ -637,24 +640,24 @@ PI_AGENT_DIAGRAM_SYSTEM_PROMPT = """你是由 UtopiaPhyCyclus 内嵌的专业物
    - 弹簧：统一采用波浪弯曲装饰线（例如 `[decorate, decoration={coil, aspect=0.5, segment length=3mm, amplitude=2mm}]`）或规则折线。
    - 滑轮与轻绳：轻绳相切于滑轮边缘，滑轮用带圆心的圆形绘制。
    - 质点/小球：小球用 `\\fill (x,y) circle (0.15);` 或带描边绘制，并标出质心。
-   - 电学电路与电磁场：点状“垂直纸面向外”用 `\\odot` 或带圈圆点，叉状“垂直纸面向里”用 `\\otimes` 或画叉；导线交叉且连接处必须点实心圆点。
+   - 电学电路与电磁场：垂直纸面向外用独立 `\\bullet`，向里用独立 `\\times`，外面均不加圈；导线交叉且连接处必须点实心圆点。
    - 光学：入射光线、反射光线和折射光线必须在射线中间或适当位置绘制前进箭头；法线用虚线。
    - 运动轨迹：抛物线、圆弧运动轨迹推荐使用虚线 `dashed`。
 
 3. TikZ 语法安全与编译保障（至关重要）：
    - 必须使用标准已支持的库：`calc, positioning, intersections, arrows.meta, quotes, angles, patterns, decorations.pathmorphing, decorations.pathreplacing, decorations.markings`。
    - 节点文本中的所有公式、角度符号、希腊字母或上下标必须严格放在 `$...$` 内，例如 `node[above] {$F_N$}`、`node[right] {$30^\\circ$}`、`node {$v_0$}`，严禁裸写数学符号！
-   - 禁止使用 Unicode 数学符号（θ、°、×、⊙），一律写成 `$\\theta$`、`$30^\\circ$`、`$\\times$`、`$\\odot$`。
+   - 禁止使用 Unicode 数学符号（θ、°、×、•），一律写成 `$\\theta$`、`$30^\\circ$`、`$\\times$`、`$\\bullet$`。
    - 每个 \\draw/\\fill/\\path/\\node/\\coordinate 语句必须以分号 `;` 结尾；跨行书写时只在语句真正结束时写分号。
    - 禁止输出 Markdown 外部代码块反引号（禁止 ```latex、``` 等），只输出纯代码及自然段落。
-   - 严禁包含 \\documentclass、\\usepackage 等完整文档头，仅输出完整的 \\begin{tikzpicture}...\\end{tikzpicture} 环境。
+   - 严禁包含 \\documentclass、\\usepackage 等完整文档头，仅输出 tikzpicture 或 includegraphics 插图片段。
    - 严禁使用模板未加载的宏包命令：\\ce/\\pu（mhchem）、\\SI/\\qty/\\si/\\unit/\\num（siunitx）、\\vb/\\va/\\dv/\\pdv/\\abs/\\norm（physics）；单位请写成 `$F=10\\,\\mathrm{N}$`。
 
 4. Harness 验收标准（你的输出会被确定性校验器逐项检查，未通过会进入下一轮修复）：
-   - 结构：恰好一个 tikzpicture 环境；花括号、$、环境均配平；
+   - 结构：TikZ 图使用一个 tikzpicture 环境；外部图片使用 includegraphics；花括号、$、环境均配平；
    - 语法：路径语句以 ; 结束；node 花括号闭合；具名坐标先定义后引用；不引用模板未预载库；
    - 语义：node 数学符号包 $...$；数学模式中文字必须写 \\text{中文}；
-   - 物理：受力图有箭头且有力标注；斜面有角度弧或角度标注；垂直纸面磁场有 ⊙/⊗；光路有箭头与法线；电路闭合且连接处有实心点；弹簧用 coil；滑轮为圆且有切线；
+   - 物理：受力图有箭头且有力标注；斜面有角度弧或角度标注；垂直纸面磁场使用无圈实心点/叉；光路有箭头与法线；电路闭合且连接处有实心点；弹簧用 coil；滑轮为圆且有切线；
    - 几何：题干给出角度（如 30°）时，图中斜线实际倾角应与之一致（误差 ≤ 8°）；
    - 可读性：标注不重叠，坐标量级适中（建议 |x|,|y| ≤ 10）。
 
@@ -773,7 +776,7 @@ class DiagramTools:
 
     @staticmethod
     def extract_tikz_blocks(latex_text: str) -> List[Dict[str, Any]]:
-        """从 LaTeX 正文中提取所有 tikzpicture 块"""
+        """提取插图片段（兼容旧名称；包含 TikZ 外部的 includegraphics）。"""
         if not latex_text:
             return []
         pattern = r"(\\begin\{tikzpicture\}(?:\[.*?\])?[\s\S]*?\\end\{tikzpicture\})"
@@ -785,7 +788,10 @@ class DiagramTools:
                 "start": match.start(),
                 "end": match.end(),
             })
-        return blocks
+        for ref in graphics_references(latex_text):
+            if not any(block['start'] <= ref['start'] < block['end'] for block in blocks):
+                blocks.append(dict(code=ref['code'], start=ref['start'], end=ref['end']))
+        return sorted(blocks, key=lambda block: block['start'])
 
     @staticmethod
     def compile_preview(tikz_code: str, base_dir: str) -> Tuple[bool, Optional[str], Optional[str]]:
@@ -823,15 +829,20 @@ class DiagramTools:
             )
 
     @staticmethod
-    def apply_tikz_to_latex(full_latex: str, new_tikz: str, target_index: int = 0) -> str:
+    def apply_tikz_to_latex(full_latex: str, new_tikz: str, target_index: int = 0, insert_new: bool = False) -> str:
         """
         将修正后的 TikZ 代码注入或替换回原 LaTeX 正文中
         """
         if not full_latex:
             return new_tikz
 
+        if insert_new and new_tikz in full_latex:
+            return full_latex
+        if insert_new and '% 插图位置' in full_latex:
+            return full_latex.replace('% 插图位置', new_tikz, 1)
+
         existing_blocks = DiagramTools.extract_tikz_blocks(full_latex)
-        if existing_blocks and 0 <= target_index < len(existing_blocks):
+        if not insert_new and existing_blocks and 0 <= target_index < len(existing_blocks):
             target = existing_blocks[target_index]
             before = full_latex[:target["start"]]
             after = full_latex[target["end"]:]
@@ -845,6 +856,9 @@ class DiagramTools:
             parts = full_latex.rsplit("\\end{problem}", 1)
             return parts[0].rstrip() + "\n\n" + new_tikz + "\n\\end{problem}" + parts[1]
         else:
+            if r'\end{document}' in full_latex:
+                before, after = full_latex.rsplit(r'\end{document}', 1)
+                return before.rstrip() + '\n\n' + new_tikz + '\n\\end{document}' + after
             return full_latex.rstrip() + "\n\n" + new_tikz
 
 
@@ -872,6 +886,7 @@ class AgentMessage:
         visual_check: Optional[Dict[str, Any]] = None,
         images: Optional[List[Dict[str, Any]]] = None,
         prompt_metrics: Optional[Dict[str, Any]] = None,
+        insert_new: bool = False,
     ):
         self.role = role  # "user" | "assistant" | "system"
         self.content = content
@@ -896,6 +911,7 @@ class AgentMessage:
         # ⑨ 本轮 prompt 体积指标（chars/est_tokens/history_messages/skill 数等）；
         # 旧会话缺省 {}，UI 防御式读取展示。
         self.prompt_metrics = prompt_metrics or {}
+        self.insert_new = bool(insert_new)
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -917,6 +933,7 @@ class AgentMessage:
             "visual_check": self.visual_check,
             "images": self.images,
             "prompt_metrics": self.prompt_metrics,
+            "insert_new": self.insert_new,
         }
 
     @classmethod
@@ -941,6 +958,7 @@ class AgentMessage:
             visual_check=data.get("visual_check") or {},
             # 旧会话没有 images 键 → []；坏数据（非 list/非 dict 元素）容错丢弃
             images=_parse_message_images(data.get("images")),
+            insert_new=bool(data.get('insert_new', False)),
             # 旧会话没有 prompt_metrics 键 → {}；非 dict 数据容错丢弃
             prompt_metrics=(
                 data.get("prompt_metrics")
@@ -1133,7 +1151,15 @@ class PiDiagramAgent:
                 # 剩余部分作为说明
                 explanation = text.replace(tikz_code, "").strip()
             else:
-                explanation = text
+                refs = graphics_references(text)
+                if refs:
+                    tikz_code = '\n'.join(ref['code'] for ref in refs)
+                    explanation = text
+                    for ref in reversed(refs):
+                        explanation = explanation[:ref['start']] + explanation[ref['end']:]
+                    explanation = explanation.strip()
+                else:
+                    explanation = text
 
         # 清除可能残留的 markdown 标记
         tikz_code = re.sub(r"^```(?:latex|tex|tikz)?\s*", "", tikz_code, flags=re.MULTILINE)
@@ -1143,7 +1169,7 @@ class PiDiagramAgent:
         thought = thought.replace("===THOUGHT===", "").strip()
 
         # 如果没有写开头结尾，但包含 tikz body，补齐
-        if tikz_code and "\\begin{tikzpicture}" not in tikz_code:
+        if tikz_code and "\\begin{tikzpicture}" not in tikz_code and not graphics_references(tikz_code):
             tikz_code = "\\begin{tikzpicture}[line cap=round, line join=round]\n" + tikz_code + "\n\\end{tikzpicture}"
 
         return thought, tikz_code, explanation
@@ -1415,6 +1441,11 @@ class PiDiagramAgent:
 
         # 参考图片：严格校验（绝不抛异常），只随本轮 user 消息发送
         normalized_images = _normalize_reference_images(reference_images)
+        try:
+            available_images = save_reference_images(normalized_images, self.base_dir)
+        except (OSError, ValueError) as exc:
+            logger.info('Reference images remain reference-only: %s', type(exc).__name__)
+            available_images = []
         images_pending = bool(normalized_images)
         image_input_degraded = False
         image_fallback_status: Optional[int] = None
@@ -1465,7 +1496,7 @@ class PiDiagramAgent:
         if current_tikz:
             context_prompt += f"【当前题目中的 TikZ 插图源码】：\n{current_tikz}\n\n"
         else:
-            context_prompt += "【说明】：当前题目源码中暂未包含任何 TikZ 图形。请根据题目题干描述及用户的指示全新生成符合要求的 TikZ 示意图。\n\n"
+            context_prompt += "【说明】：当前题目源码中暂未包含插图。请根据题干及用户指示全新生成符合要求的 TikZ 示意图，或使用上传图片的真实路径插入原图。\n\n"
 
         if detected_actions:
             context_prompt += "【Skill 前置提炼的几何/物理动作目标】：\n"
@@ -1474,6 +1505,9 @@ class PiDiagramAgent:
             context_prompt += "\n"
 
         context_prompt += f"【用户本次的矫正指示（支持自然语言/语音转文字）】：\n{effective_instruction}\n"
+        if available_images:
+            context_prompt += '\n【本次上传图片的真实文件路径，可直接 includegraphics 引用】：\n'
+            context_prompt += '\n'.join(f"- {item['name']}: {item['path']}" for item in available_images) + '\n'
 
         # 注入动态技能知识与规范（④ 只注入 top N，避免技能指引把 prompt 撑大）
         skill_prompt_aug = self.skill_registry.build_prompt_augmentation(prompt_skills)
@@ -1658,7 +1692,9 @@ class PiDiagramAgent:
                     prompt_metrics=prompt_metrics,
                 )
             last_reply = resp_json.get("choices", [{}])[0].get("message", {}).get("content", "")
-            thought, tikz_code, expl = self._clean_response(last_reply)
+            insert_new = bool(re.search(r'===ACTION===\s*insert\b', last_reply, re.I))
+            cleaned_reply = re.sub(r'===ACTION===\s*(?:insert|replace)\s*', '', last_reply, flags=re.I)
+            thought, tikz_code, expl = self._clean_response(cleaned_reply)
             final_thought = thought or final_thought
             final_expl = expl or final_expl
 
@@ -1670,7 +1706,11 @@ class PiDiagramAgent:
             # 4. 确定性后置净化（技能流水线 + 校验器 autofix）
             fixes_applied: List[str] = []
             try:
-                tikz_code, post_fixes = self.skill_registry.run_post_processing(tikz_code, activated_skills)
+                # TikZ-only skills must not rewrite filenames or turn images into paths.
+                if graphics_references(tikz_code) and r'\begin{tikzpicture}' not in tikz_code:
+                    post_fixes = []
+                else:
+                    tikz_code, post_fixes = self.skill_registry.run_post_processing(tikz_code, activated_skills)
                 fixes_applied.extend(post_fixes or [])
             except Exception as exc:
                 logger.warning("skill post-processing failed: %s", exc)
@@ -1678,7 +1718,7 @@ class PiDiagramAgent:
             validation: Dict[str, Any] = _empty_validation()
             if validation_enabled:
                 try:
-                    validation = validate_diagram(tikz_code, question_context, effective_instruction)
+                    validation = validate_diagram(tikz_code, question_context, effective_instruction, resource_dir=self.base_dir)
                     fixed_code = validation.get("code") or tikz_code
                     if fixed_code != tikz_code:
                         fixes_applied.extend(validation.get("autofixes") or [])
@@ -1721,6 +1761,7 @@ class PiDiagramAgent:
                         validation = validate_diagram(
                             tikz_code, question_context, effective_instruction,
                             compile_log="" if compile_ok else compile_log,
+                            resource_dir=self.base_dir,
                         )
                         if not compile_ok:
                             # 日志为空/无法解析时也要保证门禁不误判为通过
@@ -1774,6 +1815,7 @@ class PiDiagramAgent:
             candidate: Dict[str, Any] = {
                 "thought": thought or final_thought,
                 "tikz": tikz_code,
+                "insert_new": insert_new,
                 "explanation": expl or final_expl or "已为您重新处理插图。",
                 "preview_b64": preview_b64,
                 "compile_ok": compile_ok,
@@ -1881,7 +1923,7 @@ class PiDiagramAgent:
         final = best
         final_tikz = final["tikz"]
         updated_latex = (
-            DiagramTools.apply_tikz_to_latex(current_question_latex, final_tikz)
+            DiagramTools.apply_tikz_to_latex(current_question_latex, final_tikz, insert_new=bool(final.get('insert_new')))
             if final_tikz else current_question_latex
         )
         # 附上自愈/修复过程信息（若最终候选不是第一轮，说明经历过多次修正）
@@ -1918,6 +1960,7 @@ class PiDiagramAgent:
             compile_error_kind=final.get("compile_error_kind") or "",
             visual_check=final.get("visual") or {},
             prompt_metrics=dict(prompt_metrics),
+            insert_new=bool(final.get('insert_new')),
         )
 
         # 质量门禁 fail（含编译未成功）时禁止自动同步；用户仍可手动应用

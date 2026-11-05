@@ -14,6 +14,7 @@ import json
 import subprocess
 import shutil
 import uuid
+import sqlite3
 import sys
 from dotenv import load_dotenv, dotenv_values
 try:
@@ -35,6 +36,8 @@ from services.question_service import (
 )
 from services.tex_import_service import decode_tex, parse_tex_questions, detect_tex_questions, repair_problem_headers, join_tex_questions
 from services.tex_compile_service import cleanup_preview_cache, compile_tex_preview, render_pdf_page
+from services.question_image_ui import apply_pending_diagram_update, queue_diagram_update, render_question_image_upload
+from utils.image_assets import copy_graphics, graphics_fingerprint
 from services.question_import_ai_service import classify_question, split_question_with_ai
 from services.question_type_service import QUESTION_TYPES, infer_question_type, require_question_type
 from services.semantic_search_service import (
@@ -52,7 +55,6 @@ from services.fuzzy_search_service import (
 )
 from utils.runtime_files import ensure_log_csv
 from utils.sortable_list import st_sortable_list
-from utils.local_stats import sync_question_activity
 
 def _compat_container(*, key=None, **kwargs):
     return st.container(**kwargs)
@@ -73,6 +75,7 @@ from utils.latex_ops import *
 from utils.latex_ops import parse_meta_data as _parse_question_meta, inject_meta_data as _inject_question_meta
 from utils.diagram_palette import as_tex_definitions as _diagram_color_definitions
 from utils.csv_ops import add_to_csv_index, read_csv_index, update_csv_index_for_edit
+from utils import question_index
 from utils.theme_system import (
     normalize_skin_id,
     generate_theme_css,
@@ -123,17 +126,18 @@ def _editable_paper_type_options(paper_type_scope=None):
     return [paper_type for paper_type in PAPER_TYPES if paper_type != "WK"]
 
 
-def render_question_preview(content: str, show_title: bool = False, prepared_markdown: str = None):
+def render_question_preview(content: str, show_title: bool = False, prepared_markdown: str = None, source_dir=None):
     """Render a question preview with typography isolated from surrounding UI."""
     st.markdown('<span class="mc-question-preview-anchor"></span>', unsafe_allow_html=True)
     preview_markdown = prepared_markdown
     if preview_markdown is None:
-        preview_markdown = _cached_latex_to_markdown(content, show_title)
+        preview_markdown = _cached_latex_to_markdown(content, show_title, source_dir)
     st.markdown(preview_markdown, unsafe_allow_html=True)
 
 
-def _cached_latex_to_markdown(content: str, show_title: bool = False):
-    return _latex_markdown_cached(content, show_title, _preview_render_token())
+def _cached_latex_to_markdown(content: str, show_title: bool = False, source_dir=None):
+    return _latex_markdown_cached(content, show_title,
+                                  (_preview_render_token(), graphics_fingerprint(content, source_dir=source_dir)), source_dir)
 
 
 def _preview_render_token():
@@ -148,8 +152,8 @@ def _preview_render_token():
 
 
 @st.cache_data(show_spinner=False, max_entries=256)
-def _latex_markdown_cached(content: str, show_title: bool, render_token):
-    return latex_to_markdown(content, show_title=show_title)
+def _latex_markdown_cached(content: str, show_title: bool, render_token, source_dir=None):
+    return latex_to_markdown(content, show_title=show_title, source_dir=source_dir)
 
 
 @st.cache_data(show_spinner=False, max_entries=512)
@@ -171,12 +175,13 @@ def _load_question_editor_assets_cached(fpath: str, change_token, render_token):
         "content": content,
         "meta": meta,
         "editor_height": get_editor_height(content),
-        "preview_markdown": _cached_latex_to_markdown(content, show_title=False),
+        "preview_markdown": _cached_latex_to_markdown(content, show_title=False, source_dir=os.path.dirname(fpath)),
     }
 
 
 def load_question_editor_assets(fpath: str):
-    return _load_question_editor_assets_cached(fpath, file_change_token(fpath), _preview_render_token())
+    image_token = graphics_fingerprint(read_question_text(fpath), source_dir=os.path.dirname(fpath))
+    return _load_question_editor_assets_cached(fpath, file_change_token(fpath), (_preview_render_token(), image_token))
 
 
 @st.cache_data(show_spinner=False, max_entries=512)
@@ -2079,43 +2084,15 @@ def _is_managed_question_file(file_path: str) -> bool:
     )
 
 def _remove_question_from_csv_index(file_path: str) -> int:
-    from utils.csv_ops import read_csv_index, write_csv_index
+    relative_path = os.path.relpath(os.path.abspath(file_path), CHAPTERS_DIR)
+    return question_index.delete_row(relative_path)
 
-    abs_path = os.path.abspath(file_path)
-    rel_path = os.path.relpath(abs_path, CHAPTERS_DIR)
-    target_rel = os.path.normcase(os.path.normpath(rel_path))
-    target_name = os.path.basename(abs_path).replace(".tex", "")
-
-    rows = read_csv_index()
-    kept_rows = []
-    removed_count = 0
-    for row in rows:
-        row_rel = os.path.normcase(os.path.normpath(row.get("相对文件路径", "") or ""))
-        row_name = (row.get("文件名称", "") or "").strip()
-        if row_rel == target_rel or (not row_rel and row_name == target_name):
-            removed_count += 1
-            continue
-        kept_rows.append(row)
-
-    if removed_count:
-        write_csv_index(kept_rows)
-    return removed_count
 
 def _get_question_csv_rows(file_path: str):
-    from utils.csv_ops import read_csv_index
+    relative_path = os.path.relpath(os.path.abspath(file_path), CHAPTERS_DIR)
+    row = question_index.get_row(relative_path)
+    return [row] if row else []
 
-    abs_path = os.path.abspath(file_path)
-    rel_path = os.path.relpath(abs_path, CHAPTERS_DIR)
-    target_rel = os.path.normcase(os.path.normpath(rel_path))
-    target_name = os.path.basename(abs_path).replace(".tex", "")
-
-    matched_rows = []
-    for row in read_csv_index():
-        row_rel = os.path.normcase(os.path.normpath(row.get("相对文件路径", "") or ""))
-        row_name = (row.get("文件名称", "") or "").strip()
-        if row_rel == target_rel or (not row_rel and row_name == target_name):
-            matched_rows.append(dict(row))
-    return matched_rows
 
 def _csv_has_question_record(file_path: str) -> bool:
     return bool(_get_question_csv_rows(file_path))
@@ -2175,7 +2152,7 @@ def _rebuild_csv_index_from_files():
     """删除题目后按磁盘现状全量重建 CSV，避免遗留孤立索引记录。"""
     import runpy
 
-    init_script = os.path.join(BASE_DIR, "utils", "init_csv_index.py")
+    init_script = os.path.join(BASE_DIR, "utils", "init_sqlite_index.py")
     runpy.run_path(init_script, run_name="__main__")
     _clear_advanced_search_result_cache()
     clear_statistics_cache()
@@ -2214,10 +2191,6 @@ def delete_question_file_and_sync(file_path: str):
     clear_statistics_cache()
 
     _update_chapter_indexes_from_ui()
-    try:
-        _rebuild_csv_index_from_files()
-    except Exception as e:
-        st.toast(f"题目已删除，但重建题库索引失败：{e}", icon="⚠️")
 
     _remember_deleted_question({
         "id": hashlib.md5(f"{abs_path}:{time.time()}".encode("utf-8")).hexdigest()[:12],
@@ -2253,23 +2226,11 @@ def restore_deleted_question_and_sync(record: dict):
     if os.path.exists(original_path):
         raise FileExistsError("原位置已经存在同名题目文件，请先检查题库目录。")
 
-    from utils.csv_ops import read_csv_index, write_csv_index
     csv_rows = record.get("csv_rows") or []
     if csv_rows:
-        data = read_csv_index()
-        existing_rels = {
-            os.path.normcase(os.path.normpath(row.get("相对文件路径", "") or ""))
-            for row in data
-        }
-        added_any = False
         for row in csv_rows:
-            rel_path = os.path.normcase(os.path.normpath(row.get("相对文件路径", "") or ""))
-            if rel_path not in existing_rels:
-                data.append(row)
-                existing_rels.add(rel_path)
-                added_any = True
-        if added_any:
-            write_csv_index(data)
+            if question_index.get_row(row.get("相对文件路径", "")) is None:
+                question_index.put_row(row)
     else:
         basename = os.path.basename(original_path).replace(".tex", "")
         parts = basename.split("-")
@@ -2437,7 +2398,7 @@ def restore_deleted_questions_dialog():
 
     c_title, c_exit = st.columns([4, 1], vertical_alignment="center")
     with c_title:
-        st.caption("这里显示本次删除模式中删除、且尚未恢复的题目。恢复会复制备份回原路径，并同步 CSV 索引和章节索引。")
+        st.caption("这里显示本次删除模式中删除、且尚未恢复的题目。恢复会复制备份回原路径，并同步题库索引和章节索引。")
     with c_exit:
         st.markdown('<span class="delete-exit-btn-hook"></span>', unsafe_allow_html=True)
         with _compat_container(key="restore_deleted_close_wrap"):
@@ -2627,7 +2588,7 @@ def _execute_delete_question_from_ui(fpath: str, q_label: str):
 @st.dialog("确认删除该题", width="small")
 def confirm_delete_question_dialog(fpath: str, q_label: str, key_hash: str):
     st.warning(f"确认删除：{q_label}？")
-    st.caption("删除会移除题目文件、CSV 索引记录和章节索引引用，原题目文件会自动备份到 .backups。若误删，可点删除模式右上角的“恢复误删题目”恢复本次删除记录，或点“管理备份问题”查找历史备份；当前备份不会自动定期清理。")
+    st.caption("删除会移除题目文件、题库索引记录和章节索引引用，原题目文件会自动备份到 .backups。若误删，可点删除模式右上角的“恢复误删题目”恢复本次删除记录，或点“管理备份问题”查找历史备份；当前备份不会自动定期清理。")
 
     c_opt, c_ok, c_cancel = st.columns([2.2, 1, 1], vertical_alignment="bottom")
     with c_opt:
@@ -2777,7 +2738,7 @@ def ocr_image_to_latex(images=None, max_image_size: int = 1600, max_tokens: int 
         "你是 OCR 转写助手。你只需要把图片中的内容逐字逐符号转写成 LaTeX 源码。\n"
         "禁止解题、禁止推理、禁止补全缺失步骤、禁止生成答案与解析。\n"
         "如果图片里本身包含答案/解析/提示，请原样转写；否则不要凭空生成。\n\n"
-        "只输出题目正文以及必要的 problem、choices、answer、solutions、tikzpicture 环境。\n"
+        "只输出题目正文、必要的 problem、choices、answer、solutions、tikzpicture 环境及自动裁图标记。\n"
         "不要输出 Markdown 代码围栏或 latex/tex 语言标记；不要输出 documentclass、usepackage、"
         "usetikzlibrary、begin{document}、end{document} 等完整文档前导内容。\n"
         "TikZ 节点中的角度、上下标等数学内容必须放入 $...$，例如 {$60^\\circ$}。\n\n"
@@ -2791,36 +2752,11 @@ def ocr_image_to_latex(images=None, max_image_size: int = 1600, max_tokens: int 
         return "❌ 没有提供图片"
 
     try:
-        from PIL import Image
-        import io
-
-        # 构造消息内容
-        content_parts = [{"type": "text", "text": prompt}]
-
-        for img in images:
-            # 试卷截图中的细线、短箭头和小字标签对分辨率很敏感。
-            # 小图适度放大，大图则限制长边，避免请求体过大。
-            if max(img.size) < 1000:
-                ratio = min(2.0, max_image_size / max(img.size))
-                new_size = (max(1, int(img.size[0] * ratio)), max(1, int(img.size[1] * ratio)))
-                img = img.resize(new_size, Image.Resampling.LANCZOS)
-            if max(img.size) > max_image_size:
-                ratio = max_image_size / max(img.size)
-                new_size = (int(img.size[0] * ratio), int(img.size[1] * ratio))
-                img = img.resize(new_size, Image.Resampling.LANCZOS)
-
-            # 使用无损 PNG，避免 JPEG 块效应损坏物理图中的细线和小字。
-            buffered = io.BytesIO()
-            img = img.convert("RGB") # 兼容 PNG 透明通道
-            img.save(buffered, format="PNG", optimize=True)
-            base64_image = base64.b64encode(buffered.getvalue()).decode('utf-8')
-
-            content_parts.append({
-                "type": "image_url",
-                "image_url": {
-                    "url": f"data:image/png;base64,{base64_image}"
-                }
-            })
+        from services.ocr_image_service import (
+            OcrCropError, crop_retry_messages, materialize_ocr_crops, prepare_ocr_images,
+        )
+        # Keep oriented originals; resize only the copies sent to the model.
+        originals, content_parts = prepare_ocr_images(images, prompt, max_image_size)
 
         headers = {
             "Content-Type": "application/json",
@@ -2846,26 +2782,37 @@ def ocr_image_to_latex(images=None, max_image_size: int = 1600, max_tokens: int 
             st.toast(f"正在请求: {url}")
             print(f"Requesting URL: {url}") # 控制台打印
 
-            try:
-                # 设置超时时间为 180 秒 (3分钟)
-                response = requests.post(url, headers=headers, json=payload, timeout=180)
-            except requests.exceptions.Timeout:
-                return "❌ 请求超时 (180s)，请检查网络或稍后重试。"
-            except requests.exceptions.RequestException as req_err:
-                 return f"❌ 网络请求失败: {str(req_err)}\n请检查 URL ({url}) 是否正确及服务是否可达。"
+            for crop_attempt in range(2):
+                try:
+                    response = requests.post(url, headers=headers, json=payload, timeout=180)
+                except requests.exceptions.Timeout:
+                    return "❌ 请求超时 (180s)，请检查网络或稍后重试。"
+                except requests.exceptions.RequestException as req_err:
+                    return f"❌ 网络请求失败: {str(req_err)}\n请检查 URL ({url}) 是否正确及服务是否可达。"
 
-            if response.status_code != 200:
-                return f"❌ 识别失败 (HTTP {response.status_code}):\n{response.text[:500]}"
-
-            try:
-                result = response.json()
-            except Exception as json_err:
-                return f"❌ JSON 解析失败: {str(json_err)}\n\n原始响应内容(前500字符):\n{response.text[:500]}"
-
-            if 'choices' in result and len(result['choices']) > 0:
-                return result['choices'][0]['message']['content']
-            else:
-                return f"❌ 未收到有效回复: {result}"
+                if response.status_code != 200:
+                    return f"❌ 识别失败 (HTTP {response.status_code}):\n{response.text[:500]}"
+                try:
+                    result = response.json()
+                except Exception as json_err:
+                    return f"❌ JSON 解析失败: {str(json_err)}\n\n原始响应内容(前500字符):\n{response.text[:500]}"
+                if not result.get('choices'):
+                    return f"❌ 未收到有效回复: {result}"
+                reply = result['choices'][0]['message']['content']
+                if not isinstance(reply, str) or not reply.strip():
+                    return '❌ 未收到有效的识别正文，请重试。'
+                try:
+                    extracted = materialize_ocr_crops(reply, originals, BASE_DIR)
+                except OcrCropError as crop_error:
+                    st.session_state['ocr_crop_failed_draft'] = reply
+                    if crop_attempt == 0:
+                        payload = dict(payload, messages=crop_retry_messages(payload['messages'], reply, crop_error))
+                        continue
+                    return f"❌ 自动裁图失败：{crop_error}\n识别源码已保留，未写入题库：\n\n{reply}"
+                st.session_state.pop('ocr_crop_failed_draft', None)
+                if extracted.crops:
+                    st.toast(f'已从原图自动裁剪并插入 {len(extracted.crops)} 张插图', icon='🖼️')
+                return extracted.latex
 
     except Exception as e:
         return f"❌ 发生错误: {str(e)}"
@@ -2917,26 +2864,15 @@ def ocr_solution_images_to_answer_solutions(images=None) -> dict:
         "严格输出 JSON，且只包含两个字段：answer_tex 与 solutions_tex。\n"
         "answer_tex：必须是完整的 \\begin{answer}...\\end{answer} 环境；如果图片里没有明确答案，则输出空字符串。\n"
         "solutions_tex：必须是完整的 \\begin{solutions}...\\end{solutions} 环境；如果图片里没有解答过程，则输出空字符串。\n"
+        "需要保留原图时，自动裁图标记放在对应 JSON 字段的 LaTeX 中；反斜线必须遵守标准 JSON 转义。\n"
         "禁止输出反引号 ` 或 Markdown 代码块。\n"
     )
 
     try:
-        from PIL import Image
-        import io
-
-        content_parts = [{"type": "text", "text": prompt}]
-        for img in images:
-            max_size = 1400
-            if max(img.size) > max_size:
-                ratio = max_size / max(img.size)
-                new_size = (int(img.size[0] * ratio), int(img.size[1] * ratio))
-                img = img.resize(new_size, Image.Resampling.LANCZOS)
-
-            buffered = io.BytesIO()
-            img = img.convert("RGB")
-            img.save(buffered, format="JPEG", quality=85)
-            base64_image = base64.b64encode(buffered.getvalue()).decode("utf-8")
-            content_parts.append({"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64_image}"}})
+        from services.ocr_image_service import (
+            OcrCropError, crop_retry_messages, materialize_ocr_crops, prepare_ocr_images,
+        )
+        originals, content_parts = prepare_ocr_images(images, prompt, max_image_size=1400)
 
         headers = {"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"}
         payload = {
@@ -2947,22 +2883,31 @@ def ocr_solution_images_to_answer_solutions(images=None) -> dict:
             "response_format": {"type": "json_object"} if "gpt" in model_name.lower() or "qwen" in model_name.lower() else None,
         }
 
-        response, _ = post_chat_completion(base_url, headers, payload, timeout=180)
-        if response.status_code != 200:
-            return {"error": f"识别失败 (HTTP {response.status_code}):\n{response.text[:500]}"}
-
-        result = response.json()
-        if "choices" not in result or not result["choices"]:
-            return {"error": "AI 未返回有效内容"}
-        reply = result["choices"][0]["message"]["content"]
-        try:
-            data = _extract_json_obj_from_text(reply)
-        except Exception:
-            return {"error": "AI 返回格式解析失败（非 JSON）"}
-
-        answer_tex = _repair_latex_from_json_escapes(str(data.get("answer_tex", "")).strip())
-        solutions_tex = _repair_latex_from_json_escapes(str(data.get("solutions_tex", "")).strip())
-        return {"answer_tex": answer_tex, "solutions_tex": solutions_tex}
+        for crop_attempt in range(2):
+            response, _ = post_chat_completion(base_url, headers, payload, timeout=180)
+            if response.status_code != 200:
+                return {"error": f"识别失败 (HTTP {response.status_code}):\n{response.text[:500]}"}
+            result = response.json()
+            if not result.get('choices'):
+                return {"error": "AI 未返回有效内容"}
+            reply = result['choices'][0]['message']['content']
+            try:
+                data = _extract_json_obj_from_text(reply)
+            except Exception:
+                return {"error": "AI 返回格式解析失败（非 JSON）"}
+            answer_tex = _repair_latex_from_json_escapes(str(data.get('answer_tex', '')).strip())
+            solutions_tex = _repair_latex_from_json_escapes(str(data.get('solutions_tex', '')).strip())
+            try:
+                answer = materialize_ocr_crops(answer_tex, originals, BASE_DIR)
+                solutions = materialize_ocr_crops(solutions_tex, originals, BASE_DIR)
+            except OcrCropError as crop_error:
+                st.session_state['ocr_solution_crop_failed_draft'] = reply
+                if crop_attempt == 0:
+                    payload = dict(payload, messages=crop_retry_messages(payload['messages'], reply, crop_error))
+                    continue
+                return {'error': f'自动裁图失败：{crop_error}；识别原文已保留。', 'draft': data}
+            st.session_state.pop('ocr_solution_crop_failed_draft', None)
+            return {'answer_tex': answer.latex, 'solutions_tex': solutions.latex}
     except requests.exceptions.Timeout:
         return {"error": f"请求超时（模型：{model_name}）。可重试或切换更快模型。"}
     except Exception as e:
@@ -3109,6 +3054,8 @@ def generate_question_png_from_latex(content: str, filename_hint: str = "挖空�
     last_output = ""
 
     try:
+        from pathlib import Path
+        tex_content = copy_graphics(tex_content, Path(compile_dir) / 'images', BASE_DIR)
         with open(tex_path, "w", encoding="utf-8") as f:
             f.write(tex_content)
 
@@ -4503,6 +4450,9 @@ def _tex_merge_ai_draft():
 
 
 def _tex_workspace_questions(source, filename, defaults, mode):
+    from utils.image_assets import package_question_images
+    source = package_question_images(source, filename, os.path.join(APP_ROOT, '.runtime', 'tex-import-images'),
+                                     APP_ROOT, st.session_state.get('tex_workspace_resource_dir', BASE_DIR))
     questions = detect_tex_questions(source, filename, defaults)
     if mode == "单题录入" and len(questions) != 1:
         raise ValueError(f"当前文件包含 {len(questions)} 道题，请选择批量或同卷模式。")
@@ -4634,6 +4584,8 @@ def _save_tex_workspace_questions(questions):
             meta.update(ID=get_next_id(), **{"组卷引用次数": "0"})
             content = inject_meta_data(content, meta)
             ensure_dir(os.path.dirname(path))
+            content = extract_and_replace_tikz(content, filename, os.path.dirname(path),
+                                               source_dir=st.session_state.get('tex_workspace_resource_dir', BASE_DIR))
             create_question_file(path, content, year, paper_type, paper, number, subject)
             logs.append(dict(status="success", file=filename, message="已保存", path=path))
         except QuestionDuplicateError:
@@ -4762,6 +4714,7 @@ def page_tex_entry():
         with c_compile:
             compile_clicked = st.button("▶ 编译预览", key="tex_workspace_compile", type="primary", use_container_width=True)
         st.markdown("<style>[data-testid='stTextArea'] textarea[aria-label='TeX 源码'] {font-family: Consolas, 'Cascadia Code', monospace; font-size:14px; line-height:1.55; tab-size:2;}</style>", unsafe_allow_html=True)
+        render_question_image_upload('tex_workspace_source', 'tex_workspace', APP_ROOT, on_change=_tex_editor_changed)
         source = st.text_area("TeX 源码", key="tex_workspace_source", height=600, on_change=_tex_editor_changed,
                               placeholder=TEX_ENTRY_EXAMPLE, label_visibility="collapsed")
         documents[selected]["source"] = source
@@ -4827,7 +4780,8 @@ def page_tex_entry():
                     st.session_state.update(main_sidebar_radio="🔍\n全局浏览\n与编辑", adv_search_active=False,
                                             recent_saved_active=True, recent_saved_paths=[log["path"] for log in saved])
                 st.button("在题库中查看已保存题目 ↗", key="tex_workspace_browse", on_click=open_tex_saved)
-    fingerprint = hashlib.sha256((source + json.dumps(defaults, ensure_ascii=False) + engine + resource_dir + mode).encode("utf-8")).hexdigest()
+    fingerprint = hashlib.sha256((source + json.dumps(defaults, ensure_ascii=False) + engine + resource_dir + mode
+                                  + repr(graphics_fingerprint(source, BASE_DIR, resource_dir))).encode("utf-8")).hexdigest()
     if compile_clicked:
         if not source.strip():
             documents[selected]["compile_result"] = dict(ok=False, error="请先输入或上传 TeX 源码。", log="")
@@ -5860,6 +5814,7 @@ def page_entry(force_single_mode: bool = False, cloze_mode: bool = False):
             auto_solve_enabled = st.checkbox(auto_solve_label, key=auto_solve_key, value=auto_solve_default)
 
             render_find_replace("entry_content")
+            apply_pending_diagram_update('entry_content')
             
             def on_content_change():
                 """当用户编辑源码框时，同步回表单字段"""
@@ -5888,9 +5843,11 @@ def page_entry(force_single_mode: bool = False, cloze_mode: bool = False):
                         st.session_state["entry_subject_multi"] = valid_subjs
                         st.session_state["entry_subject_user_locked"] = True
             
+            render_question_image_upload('entry_content', 'entry_single', APP_ROOT)
             content = st.text_area("题目内容 (LaTeX)", height=400, placeholder="在此粘贴题目内容...", key="entry_content", label_visibility="collapsed", on_change=on_content_change)
             # === 物理/数学插图智能矫正 Agent (Pi-Agent 架构，含实时语音与自然语言反馈) ===
-            render_diagram_agent_dialog(content_state_key="entry_content", key_prefix="entry_single", base_dir=APP_ROOT)
+            render_diagram_agent_dialog(content_state_key="entry_content", key_prefix="entry_single", base_dir=APP_ROOT,
+                                        on_apply_callback=lambda updated: queue_diagram_update('entry_content', updated))
             
         elif mode in ["批量试题录入", "同卷试题录入"]:
             def _split_batch_text_to_items(text: str):
@@ -7122,6 +7079,7 @@ def _render_browse_question_editor_card_body(q_label, content, fpath, key_prefix
     c_src, c_preview = st.columns([0.95, 1.05], gap="large")
     with c_src:
         if is_tex_editing:
+            render_question_image_upload(text_area_key, f'{key_prefix}_{fhash}', APP_ROOT)
             current_content = st.text_area("源码", height=est_height, key=text_area_key)
         else:
             st.text_area("源码", value=content, height=est_height, disabled=True, key=f"{text_area_key}_readonly")
@@ -7258,7 +7216,8 @@ def _render_browse_question_editor_card_body(q_label, content, fpath, key_prefix
             prepared_markdown = None
             if current_content == content:
                 prepared_markdown = prepared_assets.get("preview_markdown")
-            render_question_preview(current_content, show_title=False, prepared_markdown=prepared_markdown)
+            render_question_preview(current_content, show_title=False, prepared_markdown=prepared_markdown,
+                                    source_dir=os.path.dirname(fpath))
         except Exception as e:
             st.error(f"渲染错误: {e}")
 
@@ -7770,14 +7729,6 @@ def render_time_browse_header(page_title, paper_type_scope):
     """按录入顺序浏览：标题 + 浏览设置（排序 / 每页数量 / 页码 / 翻页）收进同一行，小字号均匀排布。"""
     from services.browse_preferences import prepare_time_browse
     prepare_time_browse(st.session_state)
-    index_available = True
-    try:
-        from utils.csv_ops import read_csv_index
-        csv_data = _filter_question_rows(read_csv_index(), paper_type_scope)
-    except Exception as exc:
-        csv_data = []
-        index_available = False
-        st.error(f"读取索引失败: {exc}")
     c_title, c_sort, c_count, c_page, c_nav = st.columns(
         [1.55, 1.55, 1.3, 0.62, 1.05], gap="small", vertical_alignment="center"
     )
@@ -7797,14 +7748,18 @@ def render_time_browse_header(page_title, paper_type_scope):
             "每页数量（5–20）", min_value=5, max_value=20, step=1, key="time_max_show",
             on_change=_change_global_time_browse_settings,
         )
-    sorted_data = (
-        sorted(csv_data, key=_time_browse_key, reverse=(sort_order == "最新录入在最前"))
-        if csv_data else []
-    )
-    total_count = len(sorted_data)
-    total_pages = max(1, (total_count + max_show - 1) // max_show)
-    current_page = int(st.session_state.get("time_browse_page", 1) or 1)
-    current_page = max(1, min(total_pages, current_page))
+    index_available = True
+    try:
+        result = question_index.browse_page(
+            st.session_state.get("time_browse_page", 1), max_show,
+            newest=(sort_order == "最新录入在最前"), scope=paper_type_scope,
+        )
+    except (OSError, ValueError, sqlite3.Error) as exc:
+        index_available = False
+        st.error(f"读取题库索引失败：{exc}")
+        saved_page = max(1, int(st.session_state.get("time_browse_page", 1)))
+        result = {"rows": [], "total": 0, "page": saved_page, "pages": saved_page}
+    total_count, total_pages, current_page = result["total"], result["pages"], result["page"]
     st.session_state["time_browse_page"] = current_page
     if index_available:
         _remember_global_time_browse_position()
@@ -7822,28 +7777,19 @@ def render_time_browse_header(page_title, paper_type_scope):
             st.button("下一页 ➡️", key="time_browse_next", disabled=(current_page >= total_pages), use_container_width=True,
                       on_click=_change_time_browse_page, args=(1, True))
     return {
-        "csv_data": csv_data,
-        "sorted_data": sorted_data,
-        "max_show": max_show,
-        "total_count": total_count,
-        "total_pages": total_pages,
-        "current_page": current_page,
+        "display_data": result["rows"], "max_show": max_show,
+        "total_count": total_count, "total_pages": total_pages, "current_page": current_page,
     }
 
 
 def render_time_browse_list(ctx, is_exam_mode, is_delete_mode, paper_type_scope):
-    """按录入顺序浏览的题目列表（浏览设置所在位置不固定，列表渲染独立出来复用）。"""
-    csv_data = ctx["csv_data"]
-    sorted_data = ctx["sorted_data"]
-    max_show = ctx["max_show"]
+    """Load editor/preview assets only for the current SQLite result page."""
+    display_data = ctx["display_data"]
     current_page = ctx["current_page"]
-    if not csv_data:
+    total_count = ctx["total_count"]
+    if not total_count:
         st.info("题库为空或索引未建立，请先一键重建题库索引。")
         return
-    total_count = len(sorted_data)
-    start_idx = (current_page - 1) * max_show
-    end_idx = min(start_idx + max_show, total_count)
-    display_data = sorted_data[start_idx:end_idx]
 
     st.markdown(
         f'<div class="mc-browse-count">共找到 {total_count} 道题目，当前展示第 {current_page} 页。</div>',
@@ -8211,7 +8157,7 @@ def _page_browse_body(is_exam_mode=False, is_delete_mode=False, paper_type_scope
     # 根据红线截图，我们在这里画一条醒目的红线
     st.markdown('<hr class="mc-browse-divider" style="border-top: 1px solid #e1e4e8;">', unsafe_allow_html=True)
     if is_delete_mode:
-        st.caption("删除会移除题目文件、CSV 索引记录和对应章节索引；原题目文件会自动备份到 .backups。若误删，可点右上角“恢复误删题目”恢复本次删除记录，或点“管理备份问题”查找历史备份；当前备份不会自动定期清理。")
+        st.caption("删除会移除题目文件、题库索引记录和对应章节索引；原题目文件会自动备份到 .backups。若误删，可点右上角“恢复误删题目”恢复本次删除记录，或点“管理备份问题”查找历史备份；当前备份不会自动定期清理。")
     
     if not is_exam_mode and not is_delete_mode and st.session_state.get("recent_saved_active") and st.session_state.get("recent_saved_paths"):
         paths = [p for p in st.session_state.get("recent_saved_paths", []) if p and os.path.exists(p)]
@@ -8788,25 +8734,21 @@ def _page_browse_body(is_exam_mode=False, is_delete_mode=False, paper_type_scope
                 st.divider()
 
                 fallback_ctx = None
+                st.subheader("显示数量限制")
+                max_show = st.slider("最多展示题目数量", min_value=5, max_value=20, value=10, step=1, label_visibility="visible", key="time_max_show")
+                if st.session_state.get("time_max_show_prev") != max_show:
+                    st.session_state["time_browse_page"] = 1
+                    st.session_state["time_max_show_prev"] = max_show
                 try:
-                    from utils.csv_ops import read_csv_index
-                    csv_data = _filter_question_rows(read_csv_index(), paper_type_scope)
-                except Exception as e:
-                    csv_data = []
-                    st.error(f"读取索引失败: {e}")
-
-                if csv_data:
-                    st.subheader("显示数量限制")
-                    max_show = st.slider("最多展示题目数量", min_value=5, max_value=20, value=10, step=1, label_visibility="visible", key="time_max_show")
-                    if st.session_state.get("time_max_show_prev") != max_show:
-                        st.session_state["time_browse_page"] = 1
-                        st.session_state["time_max_show_prev"] = max_show
-
-                    sorted_data = sorted(csv_data, key=_time_browse_key, reverse=(sort_order == "最新录入在最前"))
-                    total_count = len(sorted_data)
-                    total_pages = max(1, (total_count + max_show - 1) // max_show)
-                    current_page = int(st.session_state.get("time_browse_page", 1) or 1)
-                    current_page = max(1, min(total_pages, current_page))
+                    result = question_index.browse_page(
+                        st.session_state.get("time_browse_page", 1), max_show,
+                        newest=(sort_order == "最新录入在最前"), scope=paper_type_scope,
+                    )
+                except (OSError, ValueError, sqlite3.Error) as exc:
+                    result = {"total": 0}
+                    st.error(f"读取题库索引失败：{exc}")
+                if result["total"]:
+                    total_count, total_pages, current_page = result["total"], result["pages"], result["page"]
                     st.session_state["time_browse_page"] = current_page
 
                     st.divider()
@@ -8819,8 +8761,7 @@ def _page_browse_body(is_exam_mode=False, is_delete_mode=False, paper_type_scope
                         st.button("下一页 ➡️", key="time_browse_next", disabled=(current_page >= total_pages), use_container_width=True,
                                   on_click=_change_time_browse_page, args=(1,))
                     fallback_ctx = {
-                        "csv_data": csv_data,
-                        "sorted_data": sorted_data,
+                        "display_data": result["rows"],
                         "max_show": max_show,
                         "total_count": total_count,
                         "total_pages": total_pages,
@@ -9580,6 +9521,8 @@ def _write_exam_bundle(export_filename, export_dir, pre_content, generated_body,
         variant_title = f"{export_filename}（{variant}）"
         variant_content = pre_content + bodies[variant] + "\n\n" + post_content
         variant_content = _set_generated_document_title(variant_content, variant_title)
+        from pathlib import Path
+        variant_content = copy_graphics(variant_content, Path(final_export_dir) / 'images', APP_ROOT)
         output_file = _exam_output_tex_path(export_filename, export_dir, variant)
         atomic_write_text(output_file, variant_content, backup=os.path.exists(output_file))
         output_files[variant] = output_file
@@ -9862,6 +9805,9 @@ def generate_exam_paper(export_filename, export_dir, blocks, theme_name):
             if os.path.exists(q_path):
                 with open(q_path, "r", encoding="utf-8") as qf:
                     q_content = qf.read()
+                    # Normalize legacy question-local paths before combining questions.
+                    from utils.image_assets import package_question_images
+                    q_content = package_question_images(q_content, os.path.basename(q_path), os.path.dirname(q_path), APP_ROOT)
                     question_sources.append(q_content)
                     if theme_name == "讲义类模板":
                         body_lines.append("\\begin{lanbox}\n" + q_content + "\n\\end{lanbox}")
@@ -10542,16 +10488,16 @@ def page_tools():
         <div class="tool-card">
             <div class="tool-title">🗄️ 1. 数据库维护</div>
             <div class="tool-desc-highlight">
-                如果您手动删除、外部复制等变动，导致与 CSV 索引不一致，或者统计数据异常，可以点击下方按钮进行一键重建。该操作会保留现有题目的 ID，并自动追加新题或删除不存在的死链接。
+                如果您手动删除、外部复制等变动，导致与题库索引不一致，或者统计数据异常，可以点击下方按钮进行一键重建。该操作会保留现有题目的 ID，并自动追加新题或删除不存在的死链接。
             </div>
         </div>
         """, unsafe_allow_html=True)
         # 负 margin 把按钮拉进卡片里
         st.markdown("<style>div:has(> button[key='btn_rebuild_db']) { margin-top: -65px; padding: 0 20px; position: relative; z-index: 10; }</style>", unsafe_allow_html=True)
         if st.button("🔄 一键重建/同步题库索引", key="btn_rebuild_db", use_container_width=True):
-            with st.spinner("正在扫描所有目录并重建 CSV 索引..."):
+            with st.spinner("正在扫描所有目录并重建题库索引..."):
                 try:
-                    init_script = os.path.join(BASE_DIR, "utils", "init_csv_index.py")
+                    init_script = os.path.join(BASE_DIR, "utils", "init_sqlite_index.py")
                     subprocess.run(
                         [sys.executable, init_script],
                         cwd=BASE_DIR,
@@ -10641,7 +10587,7 @@ def page_tools():
         <div class="tool-card">
             <div class="tool-title">🏷️ 5. 标签与属性修改</div>
             <div class="tool-desc">
-                查找并修改某一道题或某一整套试卷的元数据：年份、试卷类别、试卷名称、题号、知识板块，并同步更新文件名与 CSV 索引。
+                查找并修改某一道题或某一整套试卷的元数据：年份、试卷类别、试卷名称、题号、知识板块，并同步更新文件名与题库索引。
             </div>
         </div>
         """, unsafe_allow_html=True)
@@ -10655,7 +10601,7 @@ def page_tools():
         <div class="tool-card">
             <div class="tool-title">🗑️ 6. 删除题库问题</div>
             <div class="tool-desc">
-                进入专用删除模式，沿用全局浏览和三级查找定位题目。删除时会先把题目文件及同名相关图备份到 <code>.backups</code>，再从题库目录移除，并同步 CSV 索引和章节索引；误删可在删除模式右上角“恢复误删题目”恢复本次删除记录，也可点“管理备份问题”查找历史备份。当前备份不会自动定期清理。
+                进入专用删除模式，沿用全局浏览和三级查找定位题目。删除时会先把题目文件及同名相关图备份到 <code>.backups</code>，再从题库目录移除，并同步题库索引和章节索引；误删可在删除模式右上角“恢复误删题目”恢复本次删除记录，也可点“管理备份问题”查找历史备份。当前备份不会自动定期清理。
             </div>
         </div>
         """, unsafe_allow_html=True)
@@ -11452,7 +11398,7 @@ def _tag_history_suggestions_cached(csv_token, limit=5):
     from utils.csv_ops import read_csv_index
 
     stats = {}
-    for row in _filter_question_rows(read_csv_index()):
+    for row in question_index.read_rows(fields=["标签", "最后修改时间", "初次录入的时间"], scope=None):
         row_time = max(
             _parse_tag_history_time(row.get("最后修改时间", "")),
             _parse_tag_history_time(row.get("初次录入的时间", "")),
@@ -11469,7 +11415,7 @@ def _tag_history_suggestions_cached(csv_token, limit=5):
     return ranked[:limit]
 
 def get_tag_history_suggestions(limit=5):
-    return _tag_history_suggestions_cached(file_change_token(CSV_INDEX_PATH), limit)
+    return _tag_history_suggestions_cached(_csv_index_cache_token(), limit)
 
 def _append_tag_text(current_tags: str, tag: str) -> str:
     tags = _split_tag_values(current_tags)
@@ -11490,11 +11436,8 @@ def _cloze_source_lookup_cached(source_question_id: str, csv_token: str) -> dict
     if not source_question_id:
         return {}
 
-    for row in read_csv_index():
-        if (row.get("试卷类型", "") or "").strip() == "WK":
-            continue
-        if str(row.get("题目ID", "") or "").strip() != source_question_id:
-            continue
+    row = question_index.get_row(question_id=source_question_id)
+    if row and row.get("试卷类型") != "WK":
         rel_path = (row.get("相对文件路径", "") or "").strip()
         source_path = os.path.join(CHAPTERS_DIR, rel_path) if rel_path else ""
         return {
@@ -11517,7 +11460,7 @@ def render_cloze_source_trace(content: str, fpath: str, meta: dict):
         return
 
     trace_key = f"cloze_source_trace_open_{hashlib.md5(fpath.encode()).hexdigest()[:12]}"
-    lookup = _cloze_source_lookup_cached(source_question_id, file_change_token(CSV_INDEX_PATH))
+    lookup = _cloze_source_lookup_cached(source_question_id, _csv_index_cache_token())
     trace_label, trace_action = st.columns([4, 1])
     with trace_label:
         source_label = lookup.get("label") or f"题目 ID：{source_question_id}"
@@ -12173,20 +12116,23 @@ def _filter_question_rows(rows, paper_type_scope=None):
     return filtered_rows
 
 def _csv_index_cache_token():
-    from utils.core_config import CSV_INDEX_PATH
-    return file_change_token(CSV_INDEX_PATH)
+    return question_index.cache_token()
 
-@st.cache_data(show_spinner=False)
+@st.cache_data(show_spinner=False, max_entries=2)
 def _csv_index_cached(csv_token):
     from utils.csv_ops import read_csv_index
     return _filter_question_rows(read_csv_index())
 
-@st.cache_data(show_spinner=False)
+@st.cache_data(show_spinner=False, max_entries=2)
 def _advanced_search_index_cached(csv_token, paper_type_scope=None):
     from utils.csv_ops import read_csv_index
 
+    return _advanced_search_items(_filter_question_rows(read_csv_index(), paper_type_scope))
+
+
+def _advanced_search_items(rows):
     index_rows = []
-    for row in _filter_question_rows(read_csv_index(), paper_type_scope):
+    for row in rows:
         rel_path = (row.get("相对文件路径", "") or "").strip()
         abs_path = os.path.join(CHAPTERS_DIR, rel_path) if rel_path else ""
         filename = (row.get("文件名称", "") or "").strip()
@@ -12224,139 +12170,8 @@ def get_statistics():
 
 @st.cache_data(show_spinner=False, max_entries=4)
 def _get_statistics_cached(csv_token, day):
-    stats = {
-        "total_questions": 0,
-        "total_tikz": 0,
-        "today_new_questions": 0,
-        "today_mod_questions": 0,
-        "today_new_tikz": 0,
-        "today_mod_tikz": 0,
-        "daily_activity": {},
-        "hourly_activity_by_day": {},
-        "subject_counts": {},
-        "type_counts": {},
-        "difficulty_dist": {},
-        "tag_counts": {},
-        "total_difficulty": 0.0,
-        "difficulty_count": 0
-    }
+    return question_index.statistics()
 
-    # 优先尝试从 CSV 索引表读取（性能提升 100 倍）
-    try:
-        from utils.csv_ops import read_csv_index
-        csv_data = _filter_question_rows(read_csv_index())
-        if csv_data is not None:
-            stats["total_questions"] = len(csv_data)
-            stats.update(sync_question_activity(csv_data))
-
-            for row in csv_data:
-                # 统计包含 TikZ 的题目
-                if row.get("包含TikZ绘图") == "是":
-                    stats["total_tikz"] += 1
-
-                # 新增统计：各板块分布
-                subj = row.get("知识板块", "").split("，")[0] if row.get("知识板块") else "未分类"
-                stats["subject_counts"][subj] = stats["subject_counts"].get(subj, 0) + 1
-
-                # 新增统计：各题型分布
-                q_type = row.get("题型", "未知")
-                stats["type_counts"][q_type] = stats["type_counts"].get(q_type, 0) + 1
-
-                # 新增统计：平均难度与分布
-                diff_str = row.get("难度星级", "")
-                if diff_str and diff_str.replace('.', '', 1).isdigit():
-                    diff_val = float(diff_str)
-                    stats["total_difficulty"] += diff_val
-                    stats["difficulty_count"] += 1
-
-                    # 划分难度区间
-                    if diff_val <= 2.0:
-                        diff_label = "0-2星 (基础)"
-                    elif diff_val <= 4.0:
-                        diff_label = "3-4星 (中档)"
-                    else:
-                        diff_label = "5-6星 (压轴)"
-                    stats["difficulty_dist"][diff_label] = stats["difficulty_dist"].get(diff_label, 0) + 1
-
-                # 新增统计：标签词云数据
-                tags = row.get("标签", "")
-                if tags:
-                    for tag in tags.split("，"):
-                        tag = tag.strip()
-                        if tag:
-                            stats["tag_counts"][tag] = stats["tag_counts"].get(tag, 0) + 1
-
-            return stats
-    except Exception as e:
-        # 如果 CSV 读取失败，回退到遍历文件夹的旧逻辑
-        pass
-
-    # ================= 降级：文件夹遍历统计 =================
-    today_start = datetime.datetime.combine(datetime.date.today(), datetime.time.min).timestamp()
-
-    if not os.path.exists(CHAPTERS_DIR):
-        return stats
-
-    for root, dirs, files in os.walk(CHAPTERS_DIR):
-        is_tikz_dir = "相关图" in root
-
-        for file in files:
-            if not file.endswith(".tex"):
-                continue
-            if file.startswith("content_"):
-                continue
-            if "-WK-" in file:
-                continue
-
-            file_path = os.path.join(root, file)
-            try:
-                stat_info = os.stat(file_path)
-                ctime = stat_info.st_ctime
-                mtime = stat_info.st_mtime
-
-                # 修改点：不再仅依赖文件的创建时间，而是统计每天所有题目的最后修改时间
-                # 作为活跃度的依据（或者是创建时间也可以，这里我们把最后修改时间也算进去）
-                c_date = datetime.datetime.fromtimestamp(ctime).date().isoformat()
-                m_date = datetime.datetime.fromtimestamp(mtime).date().isoformat()
-
-                c_hour = datetime.datetime.fromtimestamp(ctime).strftime('%H')
-                m_hour = datetime.datetime.fromtimestamp(mtime).strftime('%H')
-
-                if c_date not in stats["hourly_activity_by_day"]:
-                    stats["hourly_activity_by_day"][c_date] = {str(i).zfill(2): 0 for i in range(24)}
-                stats["hourly_activity_by_day"][c_date][c_hour] += 1
-
-                if m_hour != c_hour or m_date != c_date:
-                    if m_date not in stats["hourly_activity_by_day"]:
-                        stats["hourly_activity_by_day"][m_date] = {str(i).zfill(2): 0 for i in range(24)}
-                    stats["hourly_activity_by_day"][m_date][m_hour] += 1
-
-                is_today_created = ctime >= today_start
-                is_today_modified = mtime >= today_start and not is_today_created
-
-                # 新增逻辑：无论是新创建还是修改，都记录到热力图的活跃度中
-                if not is_tikz_dir and " 图" not in file:
-                    stats["daily_activity"][c_date] = stats["daily_activity"].get(c_date, 0) + 1
-                    if m_date != c_date:
-                        stats["daily_activity"][m_date] = stats["daily_activity"].get(m_date, 0) + 1
-
-                if is_tikz_dir or " 图" in file:
-                    stats["total_tikz"] += 1
-                    if is_today_created:
-                        stats["today_new_tikz"] += 1
-                    elif is_today_modified:
-                        stats["today_mod_tikz"] += 1
-                else:
-                    stats["total_questions"] += 1
-                    if is_today_created:
-                        stats["today_new_questions"] += 1
-                    elif is_today_modified:
-                        stats["today_mod_questions"] += 1
-
-            except Exception:
-                pass
-
-    return stats
 
 def render_statistics_dashboard():
     from utils.charts import generate_heatmap_html, generate_activity_curve_html, generate_echarts_bar_html, generate_echarts_pie_html
@@ -12701,16 +12516,16 @@ def page_system_intro():
 
 ---
 
-### ⚡ 5) CSV 索引：加速检索的缓存层
+### ⚡ 5) SQLite 题库索引
 
-系统会维护一个 `utils/题库索引表.csv` 作为“高速缓存索引”来提升检索速度：
+系统使用 `utils/question_index.sqlite3` 保存题库索引，现有 CSV 可迁移，日常使用与重建只读写 SQLite：
 
 - 🔁 索引可通过扫描全库重新生成（以 `.tex` 为准）
-- ✅ 即便 CSV 丢失，也能依靠 `.tex` 里的 Label Data 重新构建
-- 🚀 浏览、三级查找、统计面板优先读取 CSV，避免每次全量扫描 `.tex`
-- 🧯 CSV 写入前会做基础校验，降低重复 ID、关键字段缺失导致索引损坏的风险
+- ✅ `.tex` 题目文件保持原位；迁移完成后可清理旧 CSV；重建不会再生成 CSV
+- 🚀 浏览由数据库分页；中文全文检索保留关联词与近似匹配；保存只更新对应题目
+- 🧯 索引写入使用事务、唯一 ID 校验和自动失效的搜索缓存
 
-（对应脚本：`utils/init_csv_index.py`）
+（对应脚本：`utils/init_sqlite_index.py`）
 
 ---
 
@@ -12720,7 +12535,8 @@ def page_system_intro():
 
 - `utopia_phycyclus_app.py`：主应用入口，负责 Streamlit 页面、交互状态、业务流程串联
 - `utils/core_config.py`：全局路径、试卷类型、知识板块等基础配置
-- `utils/csv_ops.py`：题库索引的读取、写入、增量更新与字段解析
+- `utils/question_index.py`：SQLite 索引、分页、中文检索与增量更新
+- `utils/csv_ops.py`：兼容旧接口及 LaTeX 字段解析
 - `utils/latex_ops.py`：LaTeX 题目结构处理、TikZ 提取、题目重命名与保存辅助
 - `utils/tikz_ops.py`：TikZ 编译、缓存与预览渲染
 - `utils/charts.py`：数据统计页面的图表渲染
@@ -12738,11 +12554,11 @@ def page_system_intro():
 
 题库项目的核心风险不是页面显示，而是“误覆盖、索引错乱、题目 ID 重复、批量操作难回退”。因此系统内部做了几层保护：
 
-- `.tex` 是最终可信数据源，CSV 只是可重建的高速索引
+- `.tex` 是最终可信数据源，SQLite 是可重建的检索索引
 - 覆盖保存时使用原子写入，避免写到一半导致文件损坏
 - 修改既有题目或批量处理时，会尽量在 `.backups/` 中保留覆盖前副本
-- CSV 写入前会检查关键字段与重复 ID，发现异常时阻止写入
-- 搜索缓存会跟随 CSV 文件变化自动失效，减少“刚保存但搜索不到”的情况
+- 数据库提交前会检查关键字段与重复 ID，发现异常时整笔回滚
+- 搜索缓存会跟随数据库提交版本自动失效，减少“刚保存但搜索不到”的情况
 
 如果出现搜索结果异常、统计不准确、题目移动后找不到，优先执行“工具箱”中的一键重建/同步题库索引。
 
@@ -13384,6 +13200,7 @@ def _get_advanced_search_results(is_delete_mode=False, paper_type_scope=None):
         return False
 
     query_key = (
+        _csv_index_cache_token(),
         search_mode,
         semantic_query,
         t1,
@@ -13398,7 +13215,18 @@ def _get_advanced_search_results(is_delete_mode=False, paper_type_scope=None):
     if st.session_state.get("adv_last_query") == query_key and st.session_state.get("adv_last_results") is not None:
         results = st.session_state.get("adv_last_results") or []
     else:
-        search_rows = _advanced_search_index_cached(_csv_index_cache_token(), paper_type_scope)
+        filtered_rows = question_index.exact_rows(
+            [(t1, q1), (t2, q2), (t3, q3)], scope=paper_type_scope,
+            light=(search_mode == "精确筛选" or not semantic_query),
+        )
+        if search_mode == "精确筛选" or not semantic_query:
+            results = [{"file": row["文件名称"] + ".tex",
+                        "path": os.path.join(CHAPTERS_DIR, row["相对文件路径"]),
+                        "reason": "字段匹配"} for row in filtered_rows]
+            st.session_state["adv_last_query"] = query_key
+            st.session_state["adv_last_results"] = results
+            return results
+        search_rows = _advanced_search_items(filtered_rows)
 
         results = []
         with st.spinner("正在全库检索中..."):
@@ -13519,6 +13347,9 @@ def render_advanced_search_results(is_delete_mode=False, paper_type_scope=None, 
         for i, res in enumerate(results[start:end], start=start):
             fpath = res["path"]
             fname = res["file"]
+            if not os.path.isfile(fpath):
+                st.warning(f"题目文件不存在，请重建索引：{fname}")
+                continue
 
             prepared_assets = None
             if is_delete_mode:
@@ -13551,22 +13382,13 @@ def render_advanced_search_results(is_delete_mode=False, paper_type_scope=None, 
     else:
         st.warning("未找到匹配的题目。")
 
-@st.cache_data(show_spinner=False, max_entries=4)
-def _fuzzy_search_documents_cached(csv_token):
-    return build_fuzzy_documents(_csv_index_cached(csv_token))
-
-
-@st.cache_data(show_spinner=False, max_entries=32)
+@st.cache_data(show_spinner=False, max_entries=8)
 def _fuzzy_search_results_cached(csv_token, query):
-    matches = fuzzy_search(_fuzzy_search_documents_cached(csv_token), query)
     results = []
-    for match in matches:
+    for match in question_index.fuzzy_search(query):
         row = match["row"]
-        relative_path = str(row.get("相对文件路径", "") or "").strip()
-        if not relative_path:
-            continue
-        path = os.path.join(CHAPTERS_DIR, relative_path)
-        filename = row.get("文件名称") or os.path.basename(path)
+        path = os.path.join(CHAPTERS_DIR, row["相对文件路径"])
+        filename = row["文件名称"]
         if not filename.lower().endswith(".tex"):
             filename += ".tex"
         results.append({**match, "path": path, "file": filename})
@@ -13609,8 +13431,8 @@ def page_fuzzy_search():
     try:
         with st.spinner("正在查找相关题目…"):
             matches = _fuzzy_search_results_cached(_csv_index_cache_token(), query)
-            results = sort_fuzzy_results([item for item in matches if os.path.isfile(item["path"])], order)
-    except (OSError, ValueError) as exc:
+            results = sort_fuzzy_results(matches, order)
+    except (OSError, ValueError, sqlite3.Error) as exc:
         st.error(f"题库索引暂时无法读取：{exc}")
         return
     st.subheader(f"查找结果 · {len(results)} 题")
@@ -13628,6 +13450,9 @@ def page_fuzzy_search():
     st.caption(f"显示第 {start + 1}–{min(len(results), start + page_size)} 条 / 共 {len(results)} 条 · 第 {page}/{pages} 页")
     for result in results[start:start + page_size]:
         row = result["row"]
+        if not os.path.isfile(result["path"]):
+            st.warning(f"题目文件不存在，请重建索引：{result['file']}")
+            continue
         st.caption(f"{result['reason']} · 录入时间：{row.get('初次录入的时间') or '未记录'} · 难度：{row.get('难度星级') or '未设置'}")
         try:
             assets = load_question_editor_assets(result["path"])

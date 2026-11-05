@@ -307,9 +307,13 @@ def _build_standalone_document(tikz_code):
     # AI/OCR 生成的 TikZ 常用未定义的语义色名（primaryblue/meterblue/...），
     # 未定义时 xelatex 会报 pgfkeys unknown key；集中在 \tikzset 之前注入别名。
     palette_definitions = as_tex_definitions()
-    return f"""\\documentclass[tikz, border=2mm]{{standalone}}
+    # The tikz class option crops only tikzpicture environments and would omit
+    # external images placed alongside them. Use the ordinary standalone box.
+    standalone_options = 'border=2mm' if r'\includegraphics' in tikz_code else 'tikz, border=2mm'
+    return f"""\\documentclass[{standalone_options}]{{standalone}}
 {cjk_package}\\usepackage{{amsmath}}
 \\usepackage{{amssymb}}
+\\usepackage{{graphicx}}
 \\usepackage{{xcolor}}
 \\usepackage{{tikz}}
 \\usepackage{{pgfplots}}
@@ -453,6 +457,9 @@ def _compile_tikz_once(
         except Exception:  # pragma: no cover - 防御：注入失败不阻断编译
             driver_env = {}
         merged_env = dict(driver_env)
+        # The source is compiled inside .tikz_cache; images are named relative to
+        # the question/project directory, including images inside TikZ nodes.
+        merged_env['TEXINPUTS'] = '.' + os.pathsep + '../' + os.pathsep + os.environ.get('TEXINPUTS', '')
         if extra_env:
             try:
                 merged_env.update({str(key): str(value) for key, value in extra_env.items()})
@@ -758,7 +765,9 @@ def get_tikz_image_b64(tikz_code, base_dir, source_tex_path=None, target_png_pat
     except OSError:
         engine_token = ''
     environment = repr(tuple((key, os.getenv(key, '')) for key in ('TEXINPUTS', 'TEXMFHOME', 'TEXMFCNF')))
-    signature = _build_standalone_document(tikz_code) + engine + engine_token + environment + '|dpi=150|v2'
+    from .image_assets import graphics_fingerprint
+    assets_token = repr(graphics_fingerprint(tikz_code, base_dir))
+    signature = _build_standalone_document(tikz_code) + engine + engine_token + environment + assets_token + '|dpi=150|v2'
     code_hash = hashlib.sha256(signature.encode('utf-8')).hexdigest()
     requested_target = target_png_path
     target_png_path = os.path.join(cache_dir, f'{code_hash}.png')

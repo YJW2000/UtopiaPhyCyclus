@@ -12,6 +12,7 @@ import uuid
 from services.tex_import_service import parse_tex_questions
 from utils.tex_log_tools import extract_tex_errors, summarize_tex_log
 from utils.tikz_ops import _driver_tmp_env
+from utils.image_assets import graphics_references, resolve_image
 
 
 #: TeX 录入预览编译目录名：``<项目>/.tikz_cache/tex-entry/preview-<uuid>/``
@@ -181,6 +182,10 @@ def build_preview_document(source: str, project_dir: str, defaults: dict) -> str
     questions = parse_tex_questions(source, '草稿.tex', defaults)
     main = (Path(project_dir) / 'main.tex').read_text(encoding='utf-8')
     preamble = main.split(r'\begin{document}', 1)[0]
+    # The bank class supplies these environments; main.tex may carry older
+    # custom definitions. Preserve those definitions by renewing the defaults.
+    preamble = re.sub(r'\\NewDocumentEnvironment\{(solutions|answer)\}',
+                      r'\\RenewDocumentEnvironment{\1}', preamble)
     body = '\n\n'.join(q.content for q in questions)
     return preamble + '\n\\begin{document}\n\\pagestyle{empty}\n' + body + '\n\\end{document}\n'
 
@@ -197,6 +202,15 @@ def compile_tex_preview(source: str, project_dir: str, defaults: dict,
     directory = None
     try:
         document = build_preview_document(source, project_dir, defaults)
+        # Resolve using the original source, before fragment parsing discards
+        # its graphicspath. Keep paths relative to the compiler's working dir.
+        for ref in reversed(graphics_references(document)):
+            try:
+                image = resolve_image(ref['path'], project_dir, work_dir, source)
+            except (OSError, ValueError):
+                continue  # Let TeX produce its normal actionable missing-file log.
+            filename = os.path.relpath(image, work_dir).replace('\\', '/')
+            document = document[:ref['path_start']] + filename + document[ref['path_end']:]
         cache = Path(project_dir) / '.tikz_cache' / 'tex-entry'
         cache.mkdir(parents=True, exist_ok=True)
         # 每次编译独占唯一目录（旧 PDF 不可能误判成功）。这里**不用** tempfile.TemporaryDirectory：

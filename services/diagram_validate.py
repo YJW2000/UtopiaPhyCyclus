@@ -99,7 +99,7 @@ _ARROW_RE = re.compile(
     r"|-{\s*(?:Latex|Stealth|latex|stealth)(?![A-Za-z])"
     r"|\\arrow\s*\{|\\arrow\b)"
 )
-_MAGNETIC_RE = re.compile(r"(?:\\odot|\\otimes|\\bigodot|\\bigotimes|\\varotimes|\\varodot)")
+_MAGNETIC_RE = re.compile(r"(?:\\odot|\\otimes|\\bigodot|\\bigotimes|\\varotimes|\\varodot|\\bullet\b|\\times\b)")
 _CIRCUIT_ENV_RE = re.compile(r"\\begin\{circuitikz\}|\\usepackage\s*\{?circuitikz")
 _DOC_HEADER_RE = re.compile(r"\\(?:documentclass|usepackage)\b")
 _FORBIDDEN_COMMANDS_RE = re.compile(r"\\(?:input|include|includeonly|bibliography)\b")
@@ -1119,7 +1119,7 @@ def _check_structure(code: str) -> List[DiagramIssue]:
 
     begin_count = len(re.findall(r"\\begin\{tikzpicture\}", masked))
     end_count = len(re.findall(r"\\end\{tikzpicture\}", masked))
-    if begin_count == 0:
+    if begin_count == 0 and not re.search(r'\\includegraphics\b', masked):
         issues.append(DiagramIssue("error", "missing-env", "缺少 \\begin{tikzpicture}", "补全 tikzpicture 环境后再提交"))
     elif begin_count != end_count:
         issues.append(DiagramIssue("error", "unbalanced-env", "tikzpicture 环境未闭合", "补齐 \\end{tikzpicture}"))
@@ -1409,8 +1409,8 @@ def _check_physics(code: str, question_text: str, user_instruction: str) -> Tupl
         manual_symbol = _has_manual_magnetic_symbol(masked, circles, segments)
         if vertical_query and magnetic_symbols == 0 and not manual_symbol:
             issues.append(DiagramIssue(
-                "warning", "magnetic-symbol", "题干涉及垂直纸面的磁场，但图中缺少 ⊙/⊗ 符号",
-                "用 \\odot 表示垂直纸面向外，\\otimes 表示向里（也可用圆 + 叉 / 圆 + 实心点自绘），并配箭头说明方向",
+                "warning", "magnetic-symbol", "题干涉及垂直纸面的磁场，但图中缺少方向符号",
+                "按用户约定，用无圈实心点 \\bullet 表示向外，独立叉号 \\times 表示向里；核对方向，不要加外圈",
                 category="physics",
             ))
         if manual_symbol:
@@ -1930,6 +1930,7 @@ def structural_failure(validation: Dict[str, Any]) -> bool:
         "empty", "missing-env", "unbalanced-env", "brace", "math-balance", "empty-picture",
         "structure.empty", "structure.missing-env", "structure.unbalanced-env",
         "structure.brace", "structure.math-balance", "structure.empty-picture",
+        "image.invalid-command", "image.missing-file",
     })
 
 
@@ -1965,6 +1966,7 @@ def validate_diagram(
     question_text: str = "",
     user_instruction: str = "",
     compile_log: str = "",
+    resource_dir: str = "",
 ) -> Dict[str, Any]:
     """执行完整校验，返回可直接展示/回灌给模型的报告字典（见契约 1.2）。"""
     original = tikz if isinstance(tikz, str) else ""
@@ -1993,9 +1995,15 @@ def validate_diagram(
     except Exception:
         semantics_issues = []
     try:
-        physics_issues, physics_metrics = _check_physics(code, question_text, user_instruction)
+        if r'\includegraphics' in code and r'\begin{tikzpicture}' not in code:
+            # Pixel content cannot be inspected using TikZ path heuristics.
+            # Compile and optional visual QA still run in the Agent harness.
+            physics_issues, physics_metrics = [], {}
+            checks_run.append('physics-visual-only')
+        else:
+            physics_issues, physics_metrics = _check_physics(code, question_text, user_instruction)
+            checks_run.append('physics')
         issues.extend(physics_issues)
-        checks_run.append("physics")
     except Exception:
         physics_issues, physics_metrics = [], {}
     try:
@@ -2018,6 +2026,23 @@ def validate_diagram(
             checks_run.append("compile")
         except Exception:
             compile_issues = []
+
+    if r'\includegraphics' in code:
+        from utils.image_assets import graphics_references, resolve_image
+        references = graphics_references(code)
+        if len(references) != len(re.findall(r'\\includegraphics\*?\b', _mask_comments(code))):
+            issues.append(DiagramIssue('error', 'image.invalid-command', '图片引用格式不完整',
+                                       r'使用 \includegraphics[width=8cm]{图片文件名.png}', category='structure'))
+        for ref in references:
+            try:
+                if resource_dir:
+                    resolve_image(ref['path'], resource_dir)
+                else:
+                    resolve_image(ref['path'])
+            except (OSError, ValueError) as exc:
+                issues.append(DiagramIssue('error', 'image.missing-file', str(exc),
+                                           '使用已上传图片的真实文件名与路径', category='structure'))
+        checks_run.append('external-images')
 
     issues = _dedupe(issues)
     order = {"error": 0, "warning": 1, "info": 2}
@@ -2122,7 +2147,10 @@ def format_report(validation: Dict[str, Any], title: str = "自动校验报告")
             parts.append(f"偏差={metrics.get('angle_delta_deg')}°")
         lines.append("[几何] 数值几何：" + "，".join(parts))
     if not errors and not warnings:
-        lines.append("[通过] 结构、物理图元与标注检查全部通过。")
+        if 'physics-visual-only' in (validation.get('checks_run') or []):
+            lines.append('[通过] 外部图片引用检查通过；图片中的物理关系由视觉审图核对。')
+        else:
+            lines.append("[通过] 结构、物理图元与标注检查全部通过。")
     return "\n".join(lines)
 
 
@@ -2149,7 +2177,7 @@ def build_repair_instructions(validation: Dict[str, Any]) -> str:
     if not errors and not warnings:
         parts.append("校验已通过，可直接输出修正后的代码。")
     parts.append(
-        "请只输出修正后的完整 \\begin{tikzpicture}...\\end{tikzpicture} 代码"
+        "请只输出修正后的完整插图片段（tikzpicture 或引用真实文件的 includegraphics）"
         "（保留 ===THOUGHT=== / ===TIKZ=== / ===EXPLANATION=== 三段结构），不要解释。"
     )
     return "\n".join(parts)

@@ -42,9 +42,9 @@ class ElectromagnetismCircuitsSkill(BaseDiagramSkill):
     def get_system_instructions(self) -> str:
         return """【电磁学与电路规范图元技能规范 (Electromagnetism & Circuits Skill)】:
 1. 磁场图元规范：
-   - “垂直纸面向里”的磁场统一使用 `\\times` 或 `\\otimes`：
+   - “垂直纸面向里”的磁场统一使用独立 `\\times`，外面不加圈：
      `\\foreach \\x in {1,2,3,4} \\foreach \\y in {1,2,3} \\node at (\\x,\\y) {$\\times$};`
-   - “垂直纸面向外”的磁场统一使用圆点 `\\cdot` 或 `\\odot`。
+   - “垂直纸面向外”的磁场统一使用独立实心点 `\\bullet`，外面不加圈。
    - 区域边界必须使用实线或虚线清晰框定，标注磁感应强度 $B$ 与电场强度 $E$（带右向或下向箭头）。
 
 2. 粒子轨迹规范：

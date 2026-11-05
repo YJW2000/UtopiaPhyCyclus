@@ -4,8 +4,8 @@
   "files": [
     {
       "path": ".gitignore",
-      "sha256": "31dcfd6c03dce5e2d2fbd753b2c54b4e53d4f35191824e2f0da67791dc2dc8ca",
-      "bytes": 2326
+      "sha256": "10e6ad51019207a74227e1def212bdf477988093b6373e402b8105522082af99",
+      "bytes": 2386
     },
     {
       "path": ".streamlit/config.toml",
@@ -46,6 +46,11 @@
       "path": "docs/harness_v2_contract.md",
       "sha256": "892d5a1063484380041a405b5021641613f95830fd31355a9e6ea67d0d2598f6",
       "bytes": 18725
+    },
+    {
+      "path": "docs/SQLite索引升级.md",
+      "sha256": "6b2abb6d90f79d6d5afcf5ee020cdbb62b76e068c29a1edc2bbc6905ad8cb205",
+      "bytes": 4765
     },
     {
       "path": "docs/Windows兼容性与测试.md",
@@ -524,13 +529,13 @@
     },
     {
       "path": "ocr_prompt.txt",
-      "sha256": "73beb48df80c6f1d06e56dccbc86d51a26b947eefddb4dab0f5633d58e8d6484",
-      "bytes": 10694
+      "sha256": "f78b6a40e5e30de45c80a15caed2c4f0e84f6ff0903c782026842d5ee8dcfcd5",
+      "bytes": 11085
     },
     {
       "path": "README.md",
-      "sha256": "2482c9a6c2bd28d15b0158dbec41ba1768114bba60bbf220a07cd160dc498fc0",
-      "bytes": 11368
+      "sha256": "add209bc94a676d30d03b8a854efc39acd34a8a3415eb032a5638c110d77a6dc",
+      "bytes": 13280
     },
     {
       "path": "requirements-build.txt",
@@ -564,8 +569,8 @@
     },
     {
       "path": "services/agent_skills/electromagnetism_circuits_skill.py",
-      "sha256": "a4ed34d4a33d056ad8115d067bda20cc1047e805c1a949a785ec6696f3e24cb9",
-      "bytes": 6357
+      "sha256": "9c5232531d63ed6d0fef3b40368bf771050d5641e16617cf7447d0fb485ed124",
+      "bytes": 6382
     },
     {
       "path": "services/agent_skills/intent_understanding_skill.py",
@@ -579,8 +584,8 @@
     },
     {
       "path": "services/agent_skills/physics_diagram_auditor_skill.py",
-      "sha256": "b9f13c708961786a099cef9c8c8e961047a030455ec9f0e553b24a47a75343d6",
-      "bytes": 7147
+      "sha256": "86303b5dfa26853ceb48739946ffa3fbecd30fd492eeb8e509efc21b33a95034",
+      "bytes": 7301
     },
     {
       "path": "services/agent_skills/physics_mechanics_skill.py",
@@ -639,18 +644,18 @@
     },
     {
       "path": "services/diagram_agent.py",
-      "sha256": "433ddec28751b50b028ad59d401b4be876cf7b572245eb45a01f305de0cb2b0d",
-      "bytes": 92450
+      "sha256": "330f905bb9780aab2c496ebc6269da1876bf807a8704ced26f013ff3edc87497",
+      "bytes": 95544
     },
     {
       "path": "services/diagram_agent_ui.py",
-      "sha256": "8becc592762bf3b2b5fe76902134bc52ffb988a8e3fa577c00aa16977044c527",
-      "bytes": 116022
+      "sha256": "7f9719caaefb4f8cd12fb16080c65eacb7f6e302d49fb4ca9827eb3d80188f4a",
+      "bytes": 116149
     },
     {
       "path": "services/diagram_validate.py",
-      "sha256": "4eb51be1e569b24a1ab8a25df196efa0088aecf5212995fa73b18cf0c4fd2f39",
-      "bytes": 90894
+      "sha256": "563f4de4893e1960d88ad3706ffc0a2e4596a5dce4045ddbd5cf8e5c27b29ead",
+      "bytes": 92617
     },
     {
       "path": "services/editor_layout.py",
@@ -663,6 +668,11 @@
       "bytes": 4167
     },
     {
+      "path": "services/fuzzy_search_service.py",
+      "sha256": "0e54283a53dc82e59d6450ab5093b1458c5ce6525d56e59267915f11fe49149d",
+      "bytes": 8653
+    },
+    {
       "path": "services/launcher.py",
       "sha256": "6ef3ae9cf96a1bae8fb94dee7d722f65fe8836d333497a49c412f9b7011ecb11",
       "bytes": 5877
@@ -671,6 +681,11 @@
       "path": "services/local_whisper.py",
       "sha256": "40a980ae4bdddd790ca78e83eb5b88ed887d68a952bd8cb5f6b34dabaee3f5e6",
       "bytes": 9539
+    },
+    {
+      "path": "services/ocr_image_service.py",
+      "sha256": "f14508b0c3ee4a3a0bf9b32ee81e224c85c954066fb317dc20c91d063604bb4b",
+      "bytes": 9439
     },
     {
       "path": "services/operation_log.py",
@@ -693,14 +708,19 @@
       "bytes": 3504
     },
     {
+      "path": "services/question_image_ui.py",
+      "sha256": "f409f3beffd920eb1a7e61b592b416e1b68a3a15c6ad33cdc2dc21561646cfb4",
+      "bytes": 3877
+    },
+    {
       "path": "services/question_import_ai_service.py",
       "sha256": "9a6741bd6c60d2aaf29ab95ceb7bacf28467b6f6bed9595884e79ec6ac28b722",
       "bytes": 5381
     },
     {
       "path": "services/question_service.py",
-      "sha256": "51c71f010629e9688ae870f297030a017c9aaaf949f3748160b5a6fcb2fb77cc",
-      "bytes": 9641
+      "sha256": "9e3c38f918ad9c5e5ceb65ff709d43aaacd9f2f966565f608e7c12ce50c3249e",
+      "bytes": 10092
     },
     {
       "path": "services/question_type_service.py",
@@ -719,8 +739,8 @@
     },
     {
       "path": "services/tex_compile_service.py",
-      "sha256": "08c73b097878a47b37572d9af46366127a828220e9893d6c7dcd663f9676474f",
-      "bytes": 14126
+      "sha256": "3e152f8602adc3580e42c1438291354e11451d21fa37ba899e82d2ce39bcf920",
+      "bytes": 15095
     },
     {
       "path": "services/tex_import_service.py",
@@ -854,8 +874,8 @@
     },
     {
       "path": "tools/release.py",
-      "sha256": "6076f3ae9010c1e352dc69cd3b933b116b635949798b4eb36a4b36d9fc36c5ee",
-      "bytes": 18877
+      "sha256": "cc9cf6b98103b16dfef6d17af31e9b98acb4f8046b3c1f32548d66ae716f4225",
+      "bytes": 18911
     },
     {
       "path": "tools/UtopiaPhyCyclus.spec",
@@ -914,8 +934,8 @@
     },
     {
       "path": "utils/csv_ops.py",
-      "sha256": "a97a3f2fc7a4c382e1a461e6e498755ad1c75b8f4adaa1df05f63bb1833c6113",
-      "bytes": 10053
+      "sha256": "ad36a1ee781d51acc1cf55bada124e761f14b4f0626bc73deeb631751fb45ffd",
+      "bytes": 7402
     },
     {
       "path": "utils/diagram_palette.py",
@@ -928,19 +948,44 @@
       "bytes": 9862
     },
     {
+      "path": "utils/image_assets.py",
+      "sha256": "4c456cf6adab8842202a82bb9c1f9b73a1dc54c47b9b6afeae0d31d5165231ac",
+      "bytes": 7616
+    },
+    {
+      "path": "utils/index_rebuild.py",
+      "sha256": "d98b674dddd09a5e8d2e33458d2797d9b42dd98206e05dbc53a76e9871d94536",
+      "bytes": 3550
+    },
+    {
+      "path": "utils/index_schema.py",
+      "sha256": "69e83a3706f170be617164d048837213e2ba5a6fca354da1934e9bf57fdc7092",
+      "bytes": 495
+    },
+    {
       "path": "utils/init_csv_index.py",
-      "sha256": "d251018165177d3db01b67f06cb9b99016a7d4f0fade12ffb4544970b5b2c9dd",
-      "bytes": 7152
+      "sha256": "8a093867aef71feac35fec857014ab52ba64ab8ed3fec7def4e682acee9e3a9e",
+      "bytes": 428
+    },
+    {
+      "path": "utils/init_sqlite_index.py",
+      "sha256": "f0b6b6dbbb6a0a63edbea528af9238e5deb72cd9268e9810ef87865da2bdce91",
+      "bytes": 311
     },
     {
       "path": "utils/latex_ops.py",
-      "sha256": "1dda01a27837abfb2c592d192e5bbfac7bb10b7699f1f6dca0e238025d0a49bd",
-      "bytes": 34471
+      "sha256": "e9a33580f44d25291cc343e4d9949f58b9a839dd3fa7fd766a85d7da738720d9",
+      "bytes": 37273
     },
     {
       "path": "utils/local_stats.py",
       "sha256": "97525c6ccbe387fd5c0c52736dbabef863e483b48a46b9a97e2a065f6c0c6b17",
       "bytes": 5836
+    },
+    {
+      "path": "utils/question_index.py",
+      "sha256": "f7240cc135b958b7d88fdf22a8e0147657092d180376be5f9856196c158fba8e",
+      "bytes": 22745
     },
     {
       "path": "utils/runtime_files.py",
@@ -994,18 +1039,18 @@
     },
     {
       "path": "utils/tikz_ops.py",
-      "sha256": "ab1d73aa1cba122489a7afc956eeab605973c4595dba8321c11661b42e2b75c0",
-      "bytes": 33694
+      "sha256": "636cdfd1b01404f69e5f9c4f90f217c40be7d519b70a35d825581d7f847e05d9",
+      "bytes": 34497
     },
     {
       "path": "utopia_phycyclus_app.py",
-      "sha256": "8cafeea286fb726d062f1813456dff7b51a40e778b8ab55ac94852fd17899048",
-      "bytes": 725026
+      "sha256": "70fd0a924d1c0a1a1d0554365b00140e1a28439fc347ea4300705486eb694105",
+      "bytes": 725526
     },
     {
       "path": "UtopiaPhyCyclus_book.cls",
-      "sha256": "e30580c69eebc70c4b115c9ce0c35140e873bb14cc26342e2c33c0e3c8509446",
-      "bytes": 29893
+      "sha256": "68bbe9dc95ca23420c068618ec33b7ffa91c284e9dc0b6b716e269602a0b98fa",
+      "bytes": 30424
     },
     {
       "path": "VERSION",

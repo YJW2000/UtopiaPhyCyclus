@@ -144,6 +144,12 @@
 \usetikzlibrary{shapes.geometric,through,decorations.pathmorphing, arrows.meta,quotes,mindmap,shapes.symbols,shapes.arrows,automata,angles,3d,trees,shadows,automata,arrows,
 shapes.callouts,decorations.pathreplacing}
 
+\tikzset{
+  fw/.style={line width=0.7pt,line cap=round,line join=round},
+  wire/.style={fw},
+  comp/.style={fw,fill=white},
+  dot/.style={fill=black,draw=none},
+}
 \RequirePackage[x11names]{xcolor}
 \RequirePackage{pdfpages}
 
@@ -767,3 +773,16 @@ IfNoValueTF={#3}{}{#3}
   \fi
 }{}
 
+
+% 默认 solutions 与 answer 环境（兼容单章与整书编译）
+\ProvideDocumentEnvironment{solutions}{ O{【答案】} O{} O{} +b }{%
+  \par\noindent\textbf{#1}\par
+  #4
+  \par\vspace{\baselineskip}
+}{}
+
+\ProvideDocumentEnvironment{answer}{ O{【答案】} O{} O{} +b }{%
+  \par\noindent\textbf{#1}\par
+  #4
+  \par\vspace{\baselineskip}
+}{}

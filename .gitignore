@@ -38,6 +38,8 @@ utils/题库索引表.csv
 utils/semantic_index.sqlite3
 utils/local_stats.sqlite3
 utils/local_stats.sqlite3-*
+utils/question_index.sqlite3
+utils/question_index.sqlite3-*
 utils/operation_log.sqlite3
 utils/operation_log.sqlite3-*
 

@@ -64,6 +64,7 @@ class FuzzySearchTests(unittest.TestCase):
 import os
 import streamlit as st
 from unittest.mock import patch
+from services.fuzzy_search_service import build_documents, search
 import utopia_phycyclus_app as app
 folder = FOLDER
 route = st.radio('Test route', ['search', 'other'])
@@ -75,7 +76,7 @@ rows = [{'题目ID': str(i), '题干': '碰撞', '物理方法': '动量守恒',
 def show(label, content, path, *args, **kwargs):
     st.write('result:' + os.path.basename(path))
 if route == 'search':
-    with patch.object(app, 'CHAPTERS_DIR', folder), patch.object(app, '_csv_index_cache_token', return_value=(folder, version)), patch.object(app, '_csv_index_cached', return_value=rows), patch.object(app, 'load_question_editor_assets', return_value={'content': 'test'}), patch.object(app, 'render_browse_question_editor_card', side_effect=show):
+    with patch.object(app, 'CHAPTERS_DIR', folder), patch.object(app, '_csv_index_cache_token', return_value=(folder, version)), patch.object(app.question_index, 'fuzzy_search', side_effect=lambda query: search(build_documents(rows), query)), patch.object(app, 'load_question_editor_assets', return_value={'content': 'test'}), patch.object(app, 'render_browse_question_editor_card', side_effect=show):
         app.page_fuzzy_search()
 '''.replace("FOLDER", repr(folder))
             script_path = Path(folder, "fuzzy_test_app.py")
@@ -101,7 +102,8 @@ if route == 'search':
             self.assertEqual(at.text_input(key="fuzzy_query").value, "碰撞")
             Path(folder, "1.tex").unlink()
             at.run()
-            self.assertIn("查找结果 · 1 题", [h.value for h in at.subheader])
+            self.assertIn("查找结果 · 2 题", [h.value for h in at.subheader])
+            self.assertTrue(any("题目文件不存在" in warning.value for warning in at.warning))
             at.text_input(key="fuzzy_query").set_value("   ").run()
             self.assertFalse(at.exception)
             self.assertFalse(at.subheader)

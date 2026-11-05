@@ -6,6 +6,7 @@ from .file_ops import ensure_dir
 from .tikz_ops import get_tikz_image_b64
 from services.file_service import atomic_write_text, backup_existing_file
 from services.tex_import_service import repair_problem_headers
+from .image_assets import GRAPHICS_RE, image_preview_markdown, package_question_images
 
 # ================= 版式类命令清理 =================
 # 批量录入时模型常在每道题末尾补一个 \newpage（原本用于分隔题目），
@@ -429,7 +430,7 @@ def _replace_braced_command(text, command, formatter):
     return ''.join(out)
 
 
-def latex_to_markdown(content, show_title=True):
+def latex_to_markdown(content, show_title=True, source_dir=None):
     """简单的 LaTeX 转 Markdown 用于预览"""
     content = repair_problem_headers(content)
     # Compile untouched diagrams only after all prose conversions. Otherwise
@@ -445,12 +446,24 @@ def latex_to_markdown(content, show_title=True):
         diagrams.append((token, code, kwargs))
         return token
 
+    image_previews = []
+    image_prefix = diagram_prefix + 'IMAGE'
+
+    def protect_image(match):
+        from .image_assets import graphics_references
+        ref = graphics_references(match.group(0))[0]
+        token = f'{image_prefix}{len(image_previews)}END'
+        image_previews.append((token, image_preview_markdown(ref['path'], BASE_DIR, source_dir, content)))
+        return token
+
     for pattern in (
         r'\\begingroup(?:(?!\\endgroup)[\s\S])*?\\begin\{tikzpicture\}[\s\S]*?\\end\{tikzpicture\}(?:(?!\\endgroup)[\s\S])*?\\endgroup',
         r'\\begin\{tikzpicture\}[\s\S]*?\\end\{tikzpicture\}',
         r'\\begingroup(?:(?!\\endgroup)[\s\S])*?\\(?:draw|coordinate|node|fill|path|foreach)\b(?:(?!\\endgroup)[\s\S])*?\\endgroup',
     ):
         content = re.sub(pattern, lambda match: protect_diagram(match.group(0)), content)
+    # Protect external images before prose/layout regexes alter filenames/options.
+    content = GRAPHICS_RE.sub(protect_image, content)
     # 兼容历史数据：预览时也剔除残留的 \newpage 等分页命令
     content = strip_layout_commands(content)
     content = re.sub(r'(?m)(?<!\\)%[^\n]*', '', content)
@@ -757,6 +770,8 @@ def latex_to_markdown(content, show_title=True):
     for token, code, kwargs in diagrams:
         content = content.replace(token, _tikz_image_markdown(code, **kwargs).strip())
 
+    for token, preview in image_previews:
+        content = content.replace(token, preview)
     return content
 
 def generate_filename(year, p_type, name, number, subject):
@@ -799,6 +814,7 @@ def update_file_tags(old_fpath, new_tags_list):
     
     content = re.sub(r'\\begin\{problem\}\{(.*?)\}\{(.*?)\}\{(.*?)\}\{(.*?)\}\{(.*?)\}', replace_subj, content, count=1)
     
+    content = package_question_images(content, new_filename, new_save_dir, BASE_DIR, old_dir)
     final_content = extract_and_replace_tikz(content, new_filename, new_save_dir)
     
     atomic_write_text(new_fpath, final_content, backup=os.path.exists(new_fpath))
@@ -819,7 +835,7 @@ def update_file_tags(old_fpath, new_tags_list):
                 
     return True
 
-def extract_and_replace_tikz(content, filename, save_dir):
+def extract_and_replace_tikz(content, filename, save_dir, source_dir=None):
     r"""
     提取LaTeX内容中的TikZ代码块，保存为独立文件到“相关图”文件夹中。
     注意：修改后，主文件中不再替换为 \input{}，而是保留原始的 \begin{tikzpicture}...\end{tikzpicture} 代码，
@@ -828,6 +844,8 @@ def extract_and_replace_tikz(content, filename, save_dir):
     """
     if "相关图" in save_dir or "相关图" in filename:
         return content
+
+    content = package_question_images(content, filename, save_dir, BASE_DIR, source_dir)
 
     base_name = filename.replace('.tex', '')
     tikz_dir_name = f"{base_name} 相关图"

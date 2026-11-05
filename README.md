@@ -20,7 +20,7 @@ UtopiaPhyCyclus（乌托邦高中物理题库助手）是一个基于 Python、S
 
 ![UtopiaPhyCyclus Question Bank Assistant workflow](fig/utopia_phycyclus_workflow.png)
 
-从按章节/年份组织的 LaTeX 题目源文件出发，系统构建 CSV 元数据索引，在 Streamlit 工作台中完成检索、编辑、预览与智能组卷，并通过 Qwen3.8-Max 和 TikZ 渲染管线增强 OCR、打标签、解答生成和物理示意图预览能力，最终导出 LaTeX 试卷源文件与 PDF 讲义。
+从按章节/年份组织的 LaTeX 题目源文件出发，系统构建 SQLite 元数据与中文全文检索索引，在 Streamlit 工作台中完成检索、编辑、预览与智能组卷，并通过 Qwen3.8-Max 和 TikZ 渲染管线增强 OCR、打标签、解答生成和物理示意图预览能力，最终导出 LaTeX 试卷源文件与 PDF 讲义。
 
 ## ✨ 核心功能
 
@@ -45,7 +45,8 @@ UtopiaPhyCyclus（乌托邦高中物理题库助手）是一个基于 Python、S
 从题库中按条件筛选、抽样并生成试卷。
 
 - 支持题型、年份、板块、标签、难度与全文检索。
-- 支持可选的混合搜索与语义搜索；本地 SQLite 向量索引可随时重建，不替代 CSV 题库索引。
+- 侧边栏“题目查找”提供“精确查找”和“模糊查找”悬停子菜单。模糊查找在本地匹配正文、标签、知识点、物理方法、答案解析及来源信息，支持常见物理关联词、多关键词和近似词，可按相关度、首次录入时间或难度排序，并显示命中字段与分页结果，无需配置向量模型。
+- 支持可选的混合搜索与语义搜索；本地 SQLite 向量索引可随时重建，独立于 SQLite 题库主索引。
 - 支持按知识板块、题量与目标难度分布进行抽样。
 - 支持自然语言组卷需求润色，辅助形成命题意图。
 
@@ -64,6 +65,12 @@ UtopiaPhyCyclus（乌托邦高中物理题库助手）是一个基于 Python、S
 - 通过 `xelatex` 编译 TikZ 图形。
 - 使用 `PyMuPDF` 将编译结果转为 PNG 预览。
 - 基于文件修改时间缓存，减少重复渲染开销。
+
+题目也支持外部图片：在单题录入、TeX 录入或题目源码编辑中展开「🖼️ 插入外部图片」，上传 PNG/JPEG/WebP，选择题干末尾、解析末尾或源码中的 `% 插图位置`。已有 `\includegraphics` 文件名的源码可选择「关联源码中的同名图片」，或在 TeX 录入中指定本地资源目录。
+
+识别图片或 PDF 页面时，照片、复杂仪器读数图等不适合 TikZ 重绘的插图会自动定位并从原始分辨率裁剪为 PNG，直接在所属题干、选项、答案或解析中插入真实图片引用，无需再次上传。多图和跨页识别按输入页编号匹配；定位标记无效时自动重试一次，仍失败则保留识别草稿并提示，避免漏图入库。
+
+保存后，图片按文件名单独存放在 `<题目文件名> 相关图/`，正文原位保留 `\includegraphics[width=0.65\linewidth]{...}`，由编译器读取。不同内容的同名图片会另存；修改题目标签或组卷导出时会复制相关图片并更新引用，导出目录包含独立的 `images/`。也可以向插图矫正 Agent 上传图片并说「将这张原图插入题目」，Agent 可直接引用原图并执行编译和可选视觉审图。
 
 ### 🤖 物理插图矫正 AGENT · Harness v2
 
@@ -115,10 +122,10 @@ Harness v2 在「LLM 生成 + 编译重试」之上补齐了**确定性校验与
    ```
    配置 embedding 模型后，在“工具箱 → 语义搜索索引”中更新索引；留空时系统继续使用原有精确筛选。
 4. 如需使用 TikZ 几何图预览，请安装完整的 **$\LaTeX$ 编译环境**（例如 TeX Live），并确认 `xelatex` 已加入系统环境变量。项目会通过 `PyMuPDF` 将编译结果转为 PNG 预览。
-5. 首次启动时如果本地没有 `utils/题库索引表.csv`，程序会根据当前电脑上的 `chapters/` 自动生成；首次使用或批量导入题目后，也可以手动重建题库索引：
+5. 首次启动会建立 `utils/question_index.sqlite3`；已有 CSV 自动迁移且保留原文件，现有题目及 `.tex` 文件不作改动。日常保存使用单题增量更新。外部复制、删除或移动题目后，可在维护工具中同步，或运行：
 
    ```bash
-   python utils/init_csv_index.py
+   python utils/init_sqlite_index.py
    ```
 6. 双击运行 `启动乌托邦高中物理题库助手.bat`，或者在终端执行：
 
@@ -159,8 +166,8 @@ streamlit run utopia_phycyclus_app.py
 
 ## 🧹 仓库维护说明
 
-- `utils/题库索引表.csv` 是每台电脑独立生成的高速索引，不提交到 Git；题库内容变化后可运行 `python utils/init_csv_index.py` 刷新。
-- `utils/local_stats.sqlite3` 保存本机新增、修改和活跃度统计，不提交到 Git。首次建立索引只记录本地基线，不会把仓库历史题目算作当前用户的新增。
+- `utils/question_index.sqlite3` 是本机 SQLite 主索引，支持数据库分页、中文全文检索及单题事务更新，不提交到 Git。迁移确认后可清理旧 CSV；运行 `python utils/init_sqlite_index.py` 从 `.tex` 重建 SQLite 索引，不再自动生成 CSV。迁移与备份说明见 [SQLite 索引升级](docs/SQLite索引升级.md)。
+- 新增、修改和活跃度统计随题目变更增量记录在 SQLite 主索引。升级时迁移旧 `utils/local_stats.sqlite3` 的活动记录并保留旧库；已有题目不会被记作今日新增。
 - `utils/semantic_index.sqlite3` 是可选且可重建的语义索引，不应提交到 Git；题目保存、删除或重命名后，对应旧向量会自动失效。
 - 批量识别或同卷录入遇到已存在的同名题目时，默认保留旧文件并跳过新的识别结果；处理日志会明确标记为“跳过”。
 - `log.csv` 是批量导入脚本的运行日志输出；`old_app.py`、`question_bank_app000.py` 和 `SolaireEPDA-master/` 属于历史产物或外部参考内容。当前 `.gitignore` 已将同类文件排除，后续如需清理 Git 跟踪记录，建议单独开 PR 处理。

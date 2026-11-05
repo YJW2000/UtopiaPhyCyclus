@@ -88,12 +88,16 @@ def build_documents(rows):
     )) for row in rows)
 
 
-def _query_terms(query, documents):
-    vocabulary = {normalize(term) for group in RELATED_TERMS for term in group} | set(QUERY_WORDS)
+def metadata_terms(row):
+    return {normalize(term) for field in ("知识点", "物理方法", "标签", "知识板块")
+            for term in re.split(r"[\s,，、;；/|]+", str(row.get(field, "") or ""))
+            if len(normalize(term)) >= 2}
+
+
+def _query_terms(query, documents=(), vocabulary=None):
+    vocabulary = set(vocabulary or ()) | {normalize(term) for group in RELATED_TERMS for term in group} | set(QUERY_WORDS)
     for doc in documents:
-        for field in ("知识点", "物理方法", "标签", "知识板块"):
-            vocabulary.update(normalize(term) for term in re.split(
-                r"[\s,，、;；/|]+", str(doc.row.get(field, "") or "")) if len(normalize(term)) >= 2)
+        vocabulary.update(metadata_terms(doc.row))
     ordered = sorted(vocabulary, key=lambda word: (-len(word), word))
     terms = []
     # Common natural-language wrappers carry no subject information.
@@ -123,6 +127,7 @@ def _query_terms(query, documents):
 
 def _term_match(term, fields):
     related = _RELATED.get(term, ())
+    grams = _grams(term) if len(term) >= 3 else ()
     best, reason = 0.0, ""
     for field, value, weight in fields:
         strength, kind = 0.0, ""
@@ -131,7 +136,6 @@ def _term_match(term, fields):
         elif any(word in value for word in related):
             strength, kind = 0.55, "关联"
         elif len(term) >= 3:
-            grams = _grams(term)
             overlap = sum(gram in value for gram in grams)
             coverage = overlap / len(grams)
             if overlap >= 2 and coverage >= 0.6:
@@ -142,15 +146,16 @@ def _term_match(term, fields):
     return best, reason
 
 
-def search(documents, query):
+def search(documents, query, *, terms=None):
     """Return all matching rows; sorting and pagination never truncate recall."""
     query = str(query or "").strip()
     if not query or not normalize(query):
         return []
-    terms = _query_terms(query, documents)
+    terms = _query_terms(query, documents) if terms is None else terms
     if not terms:
         return []
     results = []
+    phrase = normalize(query)
     for doc in documents:
         matches = [_term_match(term, doc.fields) for term in terms]
         matched = [(score, reason) for score, reason in matches if score > 0]
@@ -158,7 +163,7 @@ def search(documents, query):
             continue
         coverage = len(matched) / len(terms)
         # Complete phrases and covering more query terms lead the ranking.
-        phrase_bonus = 6.0 if any(normalize(query) in value for _, value, _ in doc.fields) else 0.0
+        phrase_bonus = 6.0 if any(phrase in value for _, value, _ in doc.fields) else 0.0
         score = sum(value for value, _ in matched) * (0.5 + coverage) + phrase_bonus
         results.append({"row": doc.row, "score": score,
                         "reason": "；".join(reason for _, reason in matched)})

@@ -100,12 +100,14 @@ def create_question_file(
 
     exact_matches = [
         match
-        for match in find_duplicate_matches(content, similarity_threshold=0.96, max_results=5)
+        for match in find_duplicate_matches(content, similarity_threshold=0.96, max_results=5, exact_only=True)
         if match.get("kind") == "exact"
     ]
     if exact_matches and not allow_duplicate:
         raise QuestionDuplicateError(exact_matches)
 
+    from utils.image_assets import package_question_images
+    content = package_question_images(content, os.path.basename(file_path), os.path.dirname(file_path))
     atomic_write_text(file_path, content, backup=False)
     try:
         question_id = add_to_csv_index(
@@ -178,6 +180,7 @@ def find_duplicate_matches(
     rows: list[dict] | None = None,
     similarity_threshold: float = 0.88,
     max_results: int = 20,
+    exact_only: bool = False,
 ) -> list[dict]:
     """Return exact and highly similar existing questions for a candidate."""
     normalized = normalize_question_text(content)
@@ -187,16 +190,22 @@ def find_duplicate_matches(
     target_path = os.path.normcase(os.path.abspath(exclude_path)) if exclude_path else ""
     target_fingerprint = hashlib.sha256(normalized.encode("utf-8")).hexdigest()
     matches = []
-    for row in rows if rows is not None else read_csv_index():
+    if rows is None:
+        from utils.question_index import duplicate_candidates
+        rows = duplicate_candidates(normalized, similarity_threshold, exact_only=exact_only)
+    for row in rows:
         row_path = _row_path(row)
         if target_path and row_path and os.path.normcase(row_path) == target_path:
             continue
-        candidate = _row_stem(row)
+        candidate = row.get("_normalized_stem") if "_normalized_stem" in row else _row_stem(row)
         if not candidate:
             continue
         candidate_fingerprint = hashlib.sha256(candidate.encode("utf-8")).hexdigest()
         if candidate_fingerprint == target_fingerprint:
             matches.append(_match_payload(row, 1.0, "exact"))
+            continue
+
+        if exact_only:
             continue
 
         if not _can_reach_similarity(normalized, candidate, similarity_threshold):

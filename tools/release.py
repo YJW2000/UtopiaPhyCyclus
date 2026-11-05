@@ -28,6 +28,7 @@ FILES = [
     'ocr_prompt.txt', '启动乌托邦高中物理题库助手.bat', '启动乌托邦高中物理题库助手.py',
     '.streamlit/config.toml', 'docs/发行与安装.md', 'docs/harness_v2_contract.md',
     'docs/物理插图矫正AGENT_Harness强化说明.md',
+    'docs/SQLite索引升级.md',
     'fig/UtopiaPhyCyclus_logo.png', 'fig/UtopiaPhyCyclus_sisyphus_icon.ico',
     'fig/UtopiaPhyCyclus_sisyphus_icon.png', 'fig/utopia_phycyclus_workflow.png',
     'fig/buy-me-a-coffee.png',

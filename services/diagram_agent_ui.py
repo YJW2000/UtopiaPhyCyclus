@@ -2253,7 +2253,7 @@ def render_diagram_agent_dialog(
               </div>
               <div style="display:flex; align-items:center; gap:6px;">
                 <span style="background:{'#14532d' if has_diagram else '#361b04'}; color:{'#86efac' if has_diagram else '#fde68a'}; border:1px solid {'#22c55e' if has_diagram else '#d97706'}; padding:1.5px 7px; border-radius:10px; font-size:11px; font-weight:500;">
-                  {'🎨 已关联 TikZ' if has_diagram else '💡 对话全新生成'}
+                  {'🎨 已关联插图' if has_diagram else '💡 对话全新生成'}
                 </span>
               </div>
             </div>
@@ -2323,7 +2323,7 @@ def render_diagram_agent_dialog(
 
                         # 源码
                         if msg.tikz_code:
-                            with st.expander("💻 查看修正后的 TikZ 代码", expanded=False):
+                            with st.expander("💻 查看修正后的插图代码", expanded=False):
                                 st.code(msg.tikz_code, language="latex")
 
                             # 单步应用按键（质量门禁未通过时自动同步已暂停，仅保留手动应用）
@@ -2339,7 +2339,8 @@ def render_diagram_agent_dialog(
                                 help=btn_help,
                             ):
                                 latest_base = st.session_state.get(content_state_key, initial_content or "")
-                                updated = DiagramTools.apply_tikz_to_latex(latest_base, msg.tikz_code)
+                                updated = DiagramTools.apply_tikz_to_latex(latest_base, msg.tikz_code,
+                                                                         insert_new=bool(getattr(msg, 'insert_new', False)))
                                 if not on_apply_callback:
                                     st.session_state[content_state_key] = updated
                                 st.session_state[last_applied_tikz_key] = msg.tikz_code

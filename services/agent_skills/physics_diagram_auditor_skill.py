@@ -50,7 +50,7 @@ class PhysicsDiagramAuditorSkill(BaseDiagramSkill):
 你的输出会在编译前后被确定性校验器逐项验收，评分公式为 `100 - 20×错误数 - 6×警告数`，
 错误未清零即门禁失败。请按以下六类清单自检后再输出：
 
-1. 结构：恰好一个 \\begin{tikzpicture}...\\end{tikzpicture}；花括号、$、环境均配平；不夹带
+1. 结构：TikZ 使用一个 \\begin{tikzpicture}...\\end{tikzpicture}；也允许用 \\includegraphics 引用实际存在的外部图片，不强制重画照片与仪器读数图；花括号、$、环境均配平；不夹带
    \\documentclass/\\usepackage/\\begin{document}；不输出 Markdown 围栏。
 2. TikZ 语法：每条 \\draw/\\fill/\\filldraw/\\path/\\node/\\coordinate/\\clip 语句以 `;` 结束
    （跨行语句只在真正结束处补分号）；node 花括号闭合；具名坐标先 \\coordinate 定义后引用；
@@ -60,7 +60,7 @@ class PhysicsDiagramAuditorSkill(BaseDiagramSkill):
 4. 物理图元（按题干场景逐项核对）：
    - 受力分析：力箭头（-latex/->）+ 力符号标注（$mg$、$F_N$、$f$）；
    - 斜面：斜线 + 角度弧/角度标注，倾角与题干给定角度一致（误差 ≤ 8°）；
-   - 垂直纸面磁场：\\odot（向外）/ \\otimes（向里）；
+   - 垂直纸面磁场：独立 \\bullet（向外）/ 独立 \\times（向里），外面不加圈；
    - 光路：光线箭头 + 虚线法线 + 入射/折射角弧；
    - 电路：闭合回路，导线连接处加实心结点（\\fill (x,y) circle (1.5pt);）；
    - 弹簧：decorations.pathmorphing 的 coil；滑轮：圆 + 与圆相切的绳段；
@@ -96,7 +96,7 @@ class PhysicsDiagramAuditorSkill(BaseDiagramSkill):
         element_rules = (
             (("受力", "支持力", "摩擦力", "拉力", "重力"), "验收：至少画出受力箭头，并为每个力加 node 标注（如 $mg$、$F_N$、$f$）"),
             (("斜面", "倾角"), "验收：斜面斜线 + 角度弧/角度标注齐全"),
-            (("磁场", "洛伦兹", "安培力"), "验收：垂直纸面磁场用 \\odot/\\otimes 标注方向"),
+            (("磁场", "洛伦兹", "安培力"), "验收：垂直纸面磁场用无圈 \\bullet/\\times 标注方向"),
             (("光线", "入射", "反射", "折射"), "验收：光线方向箭头 + 虚线法线 + 角度弧"),
             (("电路", "电阻", "电源", "电流表", "电压表"), "验收：闭合回路，元件用基本图元，连接处加实心结点"),
             (("弹簧", "劲度系数"), "验收：弹簧用 coil 装饰绘制"),
