@@ -35,6 +35,7 @@ FILES = [
     'tools/release.py', 'tools/portable_entry.py', 'tools/package_entry.py',
     'tools/UtopiaPhyCyclus.spec', 'tools/fetch_release_licenses.py',
     'tools/verify_release.py',
+    'tools/slim_portable.py', 'docs/便携版体积优化.md',
     'tools/bundle_runtimes.py', 'diagnostics/jfk.wav', 'diagnostics/README.md',
     'docs/Windows兼容性与测试.md', 'tools/windows_sandbox_test.ps1',
     'tools/check_portable_dlls.py',
@@ -311,6 +312,12 @@ def assemble():
     build(skip_frozen=True)
 
 
+def slim():
+    """Create a smaller ZIP by separating optional reference PDFs only."""
+    from slim_portable import build as build_slim
+    build_slim(DIST / f'UtopiaPhyCyclus-{VERSION}-windows-x64.zip', ROOT / f'dist/{VERSION}-slim')
+
+
 def audit():
     private = private_hashes()
     n = audit_tree(SOURCE, private)
@@ -355,5 +362,5 @@ def audit():
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('command', choices=['prepare', 'build', 'assemble', 'audit'])
+    parser.add_argument('command', choices=['prepare', 'build', 'assemble', 'audit', 'slim'])
     globals()[parser.parse_args().command]()

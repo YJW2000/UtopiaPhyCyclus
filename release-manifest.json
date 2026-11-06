@@ -58,9 +58,14 @@
       "bytes": 3371
     },
     {
+      "path": "docs/便携版体积优化.md",
+      "sha256": "e7a246937d7759faed58b432872f9abc4039e07b587d439118824d627dfdcfda",
+      "bytes": 1866
+    },
+    {
       "path": "docs/发行与安装.md",
-      "sha256": "76fc3727ca2511765e8225a3284a81b55464c72f770dc94a253ee79dfe610b1e",
-      "bytes": 4290
+      "sha256": "a8de005debefc5ae1a791b917abaa22b6a97f1796d80c18d536547c488d144ea",
+      "bytes": 4951
     },
     {
       "path": "docs/物理插图矫正AGENT_Harness强化说明.md",
@@ -874,8 +879,13 @@
     },
     {
       "path": "tools/release.py",
-      "sha256": "cc9cf6b98103b16dfef6d17af31e9b98acb4f8046b3c1f32548d66ae716f4225",
-      "bytes": 18911
+      "sha256": "05034db62d688fdfadffdbe6078f0fa3aa919811b426707e099116401e5c19d7",
+      "bytes": 19220
+    },
+    {
+      "path": "tools/slim_portable.py",
+      "sha256": "ce93047f48d95b91cf338af1d0195488932b2cb764328020fa65d3711b36452b",
+      "bytes": 10111
     },
     {
       "path": "tools/UtopiaPhyCyclus.spec",
