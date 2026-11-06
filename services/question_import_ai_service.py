@@ -4,6 +4,7 @@ import re
 
 from services.ai_service import post_chat_completion, extract_json_obj_from_text
 from services.tex_import_service import TexQuestion, _header, _mask_comments
+from services.question_metadata import normalize_question_metadata
 
 
 def _request_json(config, instruction, source, timeout=45):
@@ -27,6 +28,7 @@ def classify_question(content, subjects, config):
     data = _request_json(config,
         '你是高中物理教研专家。为这一道题分类，主板块在前，只能从候选板块选择。'
         '提取具体知识点、物理方法、自由标签，难度0到6。禁止改写题干。'
+        '自由标签不使用“AI原创”；一星题目的物理方法必须为空数组。'
         '输出 {"subjects":["板块"],"knowledge_points":["知识点"],'
         '"physics_methods":["方法"],"tags":["标签"],"difficulty":3}。'
         '\n候选板块：' + '，'.join(subjects), content)
@@ -41,9 +43,12 @@ def classify_question(content, subjects, config):
         difficulty = min(6, max(0, float(data.get('difficulty', 0))))
     except (ValueError, TypeError):
         difficulty = 0
+    metadata = normalize_question_metadata({
+        '难度星级': str(difficulty), '标签': '，'.join(tags(data.get('tags', []))),
+        '物理方法': '，'.join(tags(data.get('physics_methods', []))),
+    })
     return dict(subject='，'.join(selected), knowledge_points='，'.join(tags(data.get('knowledge_points', []))),
-                physics_methods='，'.join(tags(data.get('physics_methods', []))),
-                tags='，'.join(tags(data.get('tags', []))), difficulty=str(difficulty))
+                physics_methods=metadata['物理方法'], tags=metadata['标签'], difficulty=str(difficulty))
 
 
 def split_question_with_ai(question, expected_count, start_number, config):

@@ -65,6 +65,8 @@ def inject_meta_data(content, meta_dict):
     """
     将 meta_dict 转换为注释块并注入到内容头部
     """
+    from services.question_metadata import normalize_question_metadata
+    meta_dict = normalize_question_metadata(meta_dict)
     _, clean_content = parse_meta_data(content)
     
     meta_str = "% === Begin Label Data ===\n"

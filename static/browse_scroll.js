@@ -21,7 +21,7 @@
   try{storage=host.localStorage;}catch(_){}
   let records={};
   try{records=JSON.parse(storage?.getItem(config.key)||'{}');if(!records||typeof records!=='object'||Array.isArray(records))records={};}catch(_){records={};}
-  let saved=records[config.context], restoring=!!saved, stopped=false, timer=0, frame=0, finishTimer=0;
+  let saved=records[config.context], restoring=!!saved&&!host.__mcQuestionFocus?.alive(), stopped=false, timer=0, frame=0, finishTimer=0;
   let observer=null, resize=null, lifecycle=null, lastRestored=null;
   const alive=()=>!stopped && main.isConnected && !!main.querySelector('.mc-global-browse-bookmark');
   function save(preferred){
@@ -96,5 +96,5 @@
     scheduleRestore();
     finishTimer=host.setTimeout(()=>{restore();if(!lastRestored && anchors().length)scrollRoot().scrollTop=0;stopRestore();save();},2500);
   }else save();
-  host.__mcBrowseScroll={context:config.context,key:config.key,alive,cleanup};
+  host.__mcBrowseScroll={context:config.context,key:config.key,alive,cleanup,stopRestore};
 })();

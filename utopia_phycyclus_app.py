@@ -2045,6 +2045,11 @@ def save_modified_tex_file(file_path, new_content):
     save_dir = os.path.dirname(file_path)
     filename = os.path.basename(file_path)
 
+    from services.question_metadata import normalize_question_metadata
+    metadata, _ = parse_meta_data(new_content)
+    if normalize_question_metadata(metadata) != metadata:
+        new_content = inject_meta_data(new_content, metadata)
+
     # 提取并生成独立文件副本，但 final_content 仍包含原生 TikZ
     final_content = extract_and_replace_tikz(new_content, filename, save_dir)
 
@@ -6876,7 +6881,84 @@ def _question_action_state_key(key_prefix, fhash):
     return f"{key_prefix}_pending_question_action_{fhash}"
 
 
+def _keep_renamed_question_selected(old_path, new_path):
+    """Follow the edited question by path, rather than an obsolete list index."""
+    parts = os.path.basename(new_path).removesuffix(".tex").split("-")
+    if len(parts) < 5:
+        return
+    year, paper_type, paper, _, subjects = parts[:5]
+    subject = subjects.split("，")[0]
+    updates = {}
+    if st.session_state.get("browse_mode") == "按试卷浏览" and st.session_state.get("paper_view_mode") == "单题选择模式":
+        updates.update(paper_year=year, paper_name=paper)
+        selected_type = st.session_state.get("paper_type", "全部类型")
+        if selected_type != "全部类型":
+            updates["paper_type"] = paper_type
+            questions = get_questions_by_paper_and_type(year, paper, paper_type)
+        else:
+            questions = get_questions_by_paper(year, paper)
+        updates[f"selected_q_idx_{year}_{paper}"] = next(
+            (i for i, question in enumerate(questions) if _norm_abs_path(question["path"]) == _norm_abs_path(new_path)), 0
+        )
+    elif st.session_state.get("browse_mode") == "按知识板块浏览":
+        old_subject = st.session_state.get("browse_subject")
+        old_year = st.session_state.get(f"browse_year_{old_subject}")
+        scope = "all" if old_year == "显示所有年份" else old_year
+        selected = st.session_state.get(f"browse_file_select_{old_subject}_{scope}", "")
+        if selected in (os.path.basename(old_path), f"{os.path.basename(old_path).split('-')[0]}年 - {os.path.basename(old_path)}"):
+            updates["browse_subject"] = subject
+            updates[f"browse_year_{subject}"] = year
+            updates[f"browse_file_select_{subject}_{year}"] = os.path.basename(new_path)
+    if updates:
+        st.session_state["browse_pending_selection"] = updates
+
+
+def _apply_pending_browse_selection():
+    # Parent selectors may already be mounted when a fragment saves metadata.
+    # Apply the new selection at the start of the next full page render.
+    st.session_state.update(st.session_state.pop("browse_pending_selection", {}))
+
+
+def _save_browse_metadata_from_widgets(key_prefix, fhash, fpath, rename_paths_key=None):
+    parts = os.path.basename(fpath).removesuffix(".tex").split("-")
+    if len(parts) < 5:
+        raise ValueError("文件名格式不支持修改")
+    year, paper_type, paper, number, subject = parts[:5]
+    fields = [st.session_state.get(f"{key_prefix}_meta_{name}_{fhash}", default)
+              for name, default in zip(("year", "type", "paper", "num"), (year, paper_type, paper, number))]
+    subjects = st.session_state.get(f"{key_prefix}_tag_select_{fhash}", [subject])
+    subject_text = "，".join(subjects) if isinstance(subjects, list) else str(subjects or subject)
+    question_type = require_question_type(st.session_state.get(f"{key_prefix}_question_type_{fhash}"))
+    result = apply_meta_rename_and_update(fpath, *(str(value) for value in fields), subject_text)
+    new_path = result[0] if isinstance(result, tuple) else result
+    if new_path != fpath:
+        _keep_renamed_question_selected(fpath, new_path)
+        if rename_paths_key:
+            st.session_state[rename_paths_key] = [new_path if path == fpath else path
+                                                 for path in st.session_state.get(rename_paths_key, [])]
+        st.session_state.setdefault("browse_resume_meta_paths", []).append(_norm_abs_path(new_path))
+        st.session_state["browse_meta_full_rerun"] = True
+        _request_question_scroll_restore(new_path)
+    update_question_meta_fields(new_path, {
+        "标签": _free_tag_editor_value(key_prefix, fhash),
+        "知识点": st.session_state.get(f"{key_prefix}_knowledge_points_{fhash}", ""),
+        "物理方法": st.session_state.get(f"{key_prefix}_physics_methods_{fhash}", ""),
+        "题型": question_type,
+    })
+    # Save before widgets are rendered: refresh normalized values
+    # without unmounting the form or moving the current viewport.
+    metadata, _ = parse_meta_data(read_question_text(new_path))
+    items_key = _free_tag_items_key(key_prefix, fhash)
+    st.session_state[items_key] = _split_tag_values(metadata.get("标签", ""))
+    st.session_state[f"{key_prefix}_physics_methods_{fhash}"] = metadata.get("物理方法", "")
+    st.toast("文件信息已保存，可继续修改", icon="✅")
+
+
 def _set_pending_question_action(key_prefix, fhash, action, fpath=""):
+    tag_edit_key = f"{key_prefix}_tag_edit_mode_{_question_key('tag', fpath)}"
+    if action == "edit_meta" and st.session_state.get(tag_edit_key):
+        st.session_state[_question_action_state_key(key_prefix, fhash)] = action
+        return
     if action == 'save_tex' and fpath:
         # Widget callbacks run before rendering. Save once, then the automatic
         # fragment rerun reads the new file, without an obsolete intermediate render.
@@ -6921,30 +7003,14 @@ def _render_question_scroll_anchor(fpath: str, fhash: str, question_id=None):
         f'<span id="{anchor_id}" data-mc-browse-question="{stable_id}" style="display:block;scroll-margin-top:96px"></span>',
         unsafe_allow_html=True,
     )
+
+
+def _restore_question_scroll_after_render(fpath: str, fhash: str):
     if st.session_state.get(BROWSE_SCROLL_RESTORE_KEY) != _norm_abs_path(fpath):
         return
-
     st.session_state.pop(BROWSE_SCROLL_RESTORE_KEY, None)
-    components.html(
-        f"""
-        <script>
-        (() => {{
-            const doc = window.parent.document;
-            const restore = () => {{
-                const target = doc.getElementById({json.dumps(anchor_id)});
-                const preview = doc.getElementById({json.dumps('browse-question-preview-' + fhash)});
-                const card = target?.closest('[data-testid="stVerticalBlockBorderWrapper"]');
-                if (target) (card || preview || target).scrollIntoView({{behavior: "auto", block: "center"}});
-            }};
-            restore();
-            window.parent.requestAnimationFrame(restore);
-            window.parent.setTimeout(restore, 160);
-            window.parent.setTimeout(restore, 500);
-        }})();
-        </script>
-        """,
-        height=0,
-    )
+    from services.browse_scroll import render_question_focus
+    render_question_focus(fhash)
 
 
 def _free_tag_items_key(key_prefix: str, fhash: str) -> str:
@@ -7029,12 +7095,27 @@ def _render_native_question_actions(key_prefix, fhash, fpath, is_tag_editing, is
 
 @st.fragment
 def render_browse_question_editor_card(q_label, content, fpath, key_prefix, paper_type_scope=None, extra_html_label="", rename_paths_key=None, prepared_assets=None, interactive_difficulty=True):
+    fhash = _question_key("meta", fpath)
+    pending_key = _question_action_state_key(key_prefix, fhash)
+    tag_edit_key = f"{key_prefix}_tag_edit_mode_{_question_key('tag', fpath)}"
+    if st.session_state.get(pending_key) == "edit_meta" and st.session_state.get(tag_edit_key):
+        st.session_state.pop(pending_key, None)
+        try:
+            _save_browse_metadata_from_widgets(key_prefix, fhash, fpath, rename_paths_key)
+        except Exception as error:
+            st.toast(f"保存未完成，编辑内容已保留：{error}", icon="❌")
+    if st.session_state.pop("browse_meta_full_rerun", False):
+        st.rerun()
     if not os.path.isfile(fpath):
         st.info("题目已移动或删除，请刷新列表。")
         return
     # Fragment arguments persist across local reruns; check the live file token.
     prepared_assets = load_question_editor_assets(fpath)
     content = prepared_assets['content']
+    resume_paths = st.session_state.get("browse_resume_meta_paths", [])
+    if _norm_abs_path(fpath) in resume_paths:
+        st.session_state[f"{key_prefix}_tag_edit_mode_{_question_key('tag', fpath)}"] = True
+        resume_paths.remove(_norm_abs_path(fpath))
     with st.container(border=True):
         _render_browse_question_editor_card_body(q_label, content, fpath, key_prefix, paper_type_scope,
             extra_html_label, rename_paths_key, prepared_assets, interactive_difficulty)
@@ -7102,49 +7183,9 @@ def _render_browse_question_editor_card_body(q_label, content, fpath, key_prefix
                 st.rerun()
 
         if action == "edit_meta":
-            if is_tag_editing:
-                base = os.path.basename(fpath).replace(".tex", "")
-                parts = base.split("-")
-                if len(parts) >= 5:
-                    old_year, old_ptype, old_pname, old_pnum, old_subj = parts[0], parts[1], parts[2], parts[3], parts[4]
-                    new_year = st.session_state.get(f"{key_prefix}_meta_year_{fhash}", old_year)
-                    new_type = st.session_state.get(f"{key_prefix}_meta_type_{fhash}", old_ptype)
-                    new_name = st.session_state.get(f"{key_prefix}_meta_paper_{fhash}", old_pname)
-                    new_num = st.session_state.get(f"{key_prefix}_meta_num_{fhash}", old_pnum)
-                    new_subjects = st.session_state.get(f"{key_prefix}_tag_select_{fhash}", [old_subj])
-                    new_subject_str = "，".join(new_subjects) if isinstance(new_subjects, list) else str(new_subjects or old_subj)
-                    new_custom_tags = _free_tag_editor_value(key_prefix, fhash)
-                    new_knowledge_points = st.session_state.get(f"{key_prefix}_knowledge_points_{fhash}", "")
-                    new_physics_methods = st.session_state.get(f"{key_prefix}_physics_methods_{fhash}", "")
-                    try:
-                        new_question_type = require_question_type(st.session_state.get(f"{key_prefix}_question_type_{fhash}"))
-                        rename_result = apply_meta_rename_and_update(fpath, str(new_year), str(new_type), str(new_name), str(new_num), new_subject_str)
-                        new_path = rename_result[0] if isinstance(rename_result, tuple) else rename_result
-                        update_question_meta_fields(new_path, {
-                            "标签": new_custom_tags,
-                            "知识点": new_knowledge_points,
-                            "物理方法": new_physics_methods,
-                            "题型": new_question_type,
-                        })
-                        if rename_paths_key and new_path:
-                            old_list = st.session_state.get(rename_paths_key) or []
-                            st.session_state[rename_paths_key] = [new_path if p == fpath else p for p in old_list]
-                        if new_path and new_path != fpath:
-                            new_text_key = f"{key_prefix}_edit_{_question_key('text', new_path)}"
-                            st.session_state[new_text_key] = st.session_state.get(text_area_key, current_content)
-                        _clear_free_tag_editor(key_prefix, fhash)
-                        st.session_state[tag_edit_key] = False
-                        _request_question_scroll_restore(new_path)
-                        st.toast("修改成功！", icon="✅")
-                        st.rerun()
-                    except Exception as e:
-                        st.error(f"修改失败: {e}")
-                else:
-                    st.error("文件名格式不支持修改")
-            else:
-                st.session_state[tag_edit_key] = True
-                _request_question_scroll_restore(fpath)
-                st.rerun()
+            st.session_state[tag_edit_key] = True
+            _request_question_scroll_restore(fpath)
+            st.rerun()
 
         if action == "ai_generate":
             problem_tex = _extract_problem_env(current_content)
@@ -7201,11 +7242,16 @@ def _render_browse_question_editor_card_body(q_label, content, fpath, key_prefix
                 key=f"{key_prefix}_knowledge_points_{fhash}",
                 help="使用中英文逗号分隔。",
             )
+            from services.question_metadata import is_one_star
+            one_star = is_one_star(current_label_meta.get("难度星级"))
+            if one_star:
+                st.session_state[f"{key_prefix}_physics_methods_{fhash}"] = ""
             st.text_input(
                 "物理方法",
-                value=current_label_meta.get("物理方法", ""),
+                value="" if one_star else current_label_meta.get("物理方法", ""),
                 key=f"{key_prefix}_physics_methods_{fhash}",
-                help="使用中英文逗号分隔。",
+                disabled=one_star,
+                help="一星题目不填写物理方法。" if one_star else "使用中英文逗号分隔。",
             )
 
         render_ai_solution_image_ocr_section(fpath, key_prefix="ai_solution_v1", compact=True)
@@ -7250,6 +7296,8 @@ def _render_browse_question_editor_card_body(q_label, content, fpath, key_prefix
             initial_content=current_content,
             on_apply_callback=_on_browse_diagram_apply,
         )
+
+    _restore_question_scroll_after_render(fpath, fhash)
 
 
 NORTHEAST_PHYSICS_CHOICE_SECTION = (
@@ -7843,6 +7891,7 @@ def _valid_browse_choice(key, options):
 
 
 def page_browse(is_exam_mode=False, is_delete_mode=False, paper_type_scope=None, page_title=None):
+    _apply_pending_browse_selection()
     ordinary = not is_exam_mode and not is_delete_mode and paper_type_scope is None
     if ordinary:
         from services.browse_preferences import prepare_browse_view

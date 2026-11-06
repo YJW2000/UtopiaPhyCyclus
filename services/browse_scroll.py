@@ -8,6 +8,11 @@ import streamlit.components.v1 as components
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def render_question_focus(question_hash):
+    script = (ROOT / "static" / "question_focus.js").read_text(encoding="utf-8")
+    components.html('<script>' + script.replace('__MC_QUESTION_HASH__', json.dumps(question_hash)) + '</script>', height=0)
+
+
 def render_scroll_bookmark(state):
     mode = state.get("browse_mode", "")
     # Only include the current view's controls, not previously visited hidden views.

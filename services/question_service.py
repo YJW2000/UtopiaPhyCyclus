@@ -91,12 +91,15 @@ def create_question_file(
         raise FileExistsError(file_path)
 
     from services.question_type_service import require_question_type
-    from utils.latex_ops import parse_meta_data, strip_layout_commands
+    from utils.latex_ops import inject_meta_data, parse_meta_data, strip_layout_commands
+    from services.question_metadata import normalize_question_metadata
 
     # 批量录入时模型常给每道题补 \newpage，入库前统一清掉，避免残留在题目正文
     content = strip_layout_commands(content)
     meta, _ = parse_meta_data(content)
     require_question_type(meta.get("题型"))
+    if normalize_question_metadata(meta) != meta:
+        content = inject_meta_data(content, meta)
 
     exact_matches = [
         match

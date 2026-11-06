@@ -644,8 +644,8 @@
     },
     {
       "path": "services/browse_scroll.py",
-      "sha256": "a6d5c2b12896382a9efa5092c01220ed35824c428a991b0b2f1f9922d87c3634",
-      "bytes": 1852
+      "sha256": "5fb00c0c64b25613c3fb306839c7c39606e35fd1f6dfb08f98000ca8a67dadab",
+      "bytes": 2101
     },
     {
       "path": "services/diagram_agent.py",
@@ -719,13 +719,18 @@
     },
     {
       "path": "services/question_import_ai_service.py",
-      "sha256": "9a6741bd6c60d2aaf29ab95ceb7bacf28467b6f6bed9595884e79ec6ac28b722",
-      "bytes": 5381
+      "sha256": "e8002de9470c547be2bcd4e378b0049a83576f02c5a3a7caf4fd2ed7d54df715",
+      "bytes": 5702
+    },
+    {
+      "path": "services/question_metadata.py",
+      "sha256": "37865f1d1f0867588ad1e674980ccaf484d8cc83582dbee0f5b7c9661b34ea15",
+      "bytes": 691
     },
     {
       "path": "services/question_service.py",
-      "sha256": "9e3c38f918ad9c5e5ceb65ff709d43aaacd9f2f966565f608e7c12ce50c3249e",
-      "bytes": 10092
+      "sha256": "be16aa49085dca8aa1b9ae21cfd16a1cf8aeb4785082e2c4c00dad1f0178131e",
+      "bytes": 10281
     },
     {
       "path": "services/question_type_service.py",
@@ -779,8 +784,8 @@
     },
     {
       "path": "static/browse_scroll.js",
-      "sha256": "29fc827fdab29c4c871979874b7349b1105b70a5570953bc59b09d14cf49de52",
-      "bytes": 5664
+      "sha256": "fe2eb378d6aa5a5a4cd5ba628ed2bfcb54a26b58f2bfbe7b224d216a8fe2076d",
+      "bytes": 5710
     },
     {
       "path": "static/echarts-5.5.0.min.js",
@@ -796,6 +801,11 @@
       "path": "static/favicon.png",
       "sha256": "9127a959697642eacf3b80ce69b1c3c67635d77e3c8808667da4a39cea128202",
       "bytes": 2739
+    },
+    {
+      "path": "static/question_focus.js",
+      "sha256": "e5d9120a2d51b3b5d1680b9a8809991877398d376421842cfad2dc2e25aff580",
+      "bytes": 2104
     },
     {
       "path": "static/sidebar.webp",
@@ -984,8 +994,8 @@
     },
     {
       "path": "utils/latex_ops.py",
-      "sha256": "e9a33580f44d25291cc343e4d9949f58b9a839dd3fa7fd766a85d7da738720d9",
-      "bytes": 37273
+      "sha256": "f3b0c7b90a7fd42defd00a19dc4c9ebbbe7dbaacc4bfeecc6fabcb92b78eaed7",
+      "bytes": 37399
     },
     {
       "path": "utils/local_stats.py",
@@ -1054,8 +1064,8 @@
     },
     {
       "path": "utopia_phycyclus_app.py",
-      "sha256": "70fd0a924d1c0a1a1d0554365b00140e1a28439fc347ea4300705486eb694105",
-      "bytes": 725526
+      "sha256": "16de516f7db801e33e60d60c5b4b2cdc092fda69f3d4368f336e7310703d5e52",
+      "bytes": 728136
     },
     {
       "path": "UtopiaPhyCyclus_book.cls",
