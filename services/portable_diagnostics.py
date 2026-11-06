@@ -6,8 +6,45 @@ from pathlib import Path
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
 import wave
+
+
+def _sqlite_check(work: Path) -> None:
+    """Exercise the frozen SQLite/FTS DLL with disposable, non-question markers."""
+    import csv
+    from utils import question_index as index
+    from utils.index_schema import CSV_HEADERS
+    with tempfile.TemporaryDirectory(prefix='sqlite-probe-', dir=work) as folder:
+        csv_path = str(Path(folder, 'index.csv'))
+        row = dict.fromkeys(CSV_HEADERS, '')
+        row.update({'题目ID': '1', '文件名称': 'portable-index-probe',
+                    '相对文件路径': 'portable-index-probe.tex', '试卷类型': 'M',
+                    '题干': 'portableindexprobebefore'})
+        with open(csv_path, 'w', encoding='utf-8-sig', newline='') as handle:
+            writer = csv.DictWriter(handle, fieldnames=CSV_HEADERS)
+            writer.writeheader()
+            writer.writerow(row)
+        assert index.browse_page(csv_path=csv_path)['total'] == 1
+        # Reproduce the early detail=none configuration and verify its repair.
+        with index.connection(csv_path) as conn, conn:
+            conn.execute('DROP TABLE question_fts')
+            conn.execute("CREATE VIRTUAL TABLE question_fts USING fts5(fuzzy_tokens,stem_tokens,content='questions',content_rowid='rowid',detail=none)")
+            conn.execute("INSERT INTO question_fts(question_fts) VALUES('rebuild')")
+            conn.execute("UPDATE index_meta SET value='1' WHERE key='schema_version'")
+        index._ready.clear()
+        assert len(index.fuzzy_search('portableindexprobebefore', csv_path=csv_path)) == 1
+        row['题干'] = 'portableindexprobeupdated'
+        index.put_row(row, csv_path=csv_path)
+        assert len(index.exact_rows([('题目内容', row['题干'])], csv_path=csv_path)) == 1
+        assert len(index.fuzzy_search(row['题干'], csv_path=csv_path)) == 1
+        assert not index.exact_rows([('题目内容', 'portableindexprobebefore')], csv_path=csv_path)
+        with index.connection(csv_path) as conn:
+            assert conn.execute('PRAGMA integrity_check').fetchone()[0] == 'ok'
+            conn.execute("INSERT INTO question_fts(question_fts,rank) VALUES('integrity-check',1)")
+        index.delete_row(row['相对文件路径'], csv_path=csv_path)
+        assert index.read_rows(csv_path=csv_path) == []
 
 
 def run(root: Path) -> dict:
@@ -23,6 +60,9 @@ def run(root: Path) -> dict:
         from PIL import Image
         report['checks']['python_dependencies'] = {
             'ok': True, 'streamlit': streamlit.__version__, 'pymupdf': fitz.VersionBind}
+        _sqlite_check(work)
+        report['checks']['sqlite_index'] = {'ok': True, 'fts5': True, 'legacy_fts_repair': True}
+        print('PASS: SQLite pagination, save, search and FTS migration', flush=True)
         assert 'xelatex' in tools and 'node' in tools and 'whisper_model' in tools, 'Bundled runtime missing'
         documents = [('libraries', r'''\documentclass{ctexart}
 \usepackage{tikz,pgfplots,circuitikz,siunitx}

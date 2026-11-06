@@ -1,5 +1,5 @@
 {
-  "version": "1.1.2",
+  "version": "1.2.0",
   "empty_bank": true,
   "files": [
     {
@@ -14,8 +14,8 @@
     },
     {
       "path": "CHANGELOG.md",
-      "sha256": "fc87dc78c6818c183ab58854eb82ccb12237b22e9a49bd7f3d9afe61ad714083",
-      "bytes": 2181
+      "sha256": "ef2322817f4106881be5adc1983ad91074998c6e9ab3089826390ee5b180ef04",
+      "bytes": 2826
     },
     {
       "path": "chapters/README.md",
@@ -59,8 +59,8 @@
     },
     {
       "path": "docs/发行与安装.md",
-      "sha256": "c1dca061ea320c31ea50715a59d90d17c1cb1883a2532feb76ce17f59308fd25",
-      "bytes": 3977
+      "sha256": "76fc3727ca2511765e8225a3284a81b55464c72f770dc94a253ee79dfe610b1e",
+      "bytes": 4290
     },
     {
       "path": "docs/物理插图矫正AGENT_Harness强化说明.md",
@@ -534,7 +534,7 @@
     },
     {
       "path": "README.md",
-      "sha256": "add209bc94a676d30d03b8a854efc39acd34a8a3415eb032a5638c110d77a6dc",
+      "sha256": "94f5944fd484b61e1c9bdac9e20c925ee4ef68e3f993924b89fa2efc234fb66c",
       "bytes": 13280
     },
     {
@@ -699,8 +699,8 @@
     },
     {
       "path": "services/portable_diagnostics.py",
-      "sha256": "05ac63c658d676f4e742520783ec3a049aa8ef53d4c64a510a3c4701d49982e4",
-      "bytes": 4148
+      "sha256": "7f4e738e35998ec27bbe6056d3e1b76a7d903e4d70923e50e7d7666b3ed6c936",
+      "bytes": 6651
     },
     {
       "path": "services/portable_runtime.py",
@@ -1054,7 +1054,7 @@
     },
     {
       "path": "VERSION",
-      "sha256": "8456accd9a842531ca2aa6832c731ed07597335b35bbdb470044c5365e8fdc82",
+      "sha256": "a64708b010e2bcf628154ddc205ed49688a6347ef93a66a42492430f63f021b1",
       "bytes": 7
     },
     {
