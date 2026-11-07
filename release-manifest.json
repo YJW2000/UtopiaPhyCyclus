@@ -644,8 +644,8 @@
     },
     {
       "path": "services/browse_scroll.py",
-      "sha256": "5fb00c0c64b25613c3fb306839c7c39606e35fd1f6dfb08f98000ca8a67dadab",
-      "bytes": 2101
+      "sha256": "8de00d7e832c299833fbb6882d3eb0fed9d77b3dd6ace87fa2f848369edc2781",
+      "bytes": 2431
     },
     {
       "path": "services/diagram_agent.py",
@@ -664,8 +664,8 @@
     },
     {
       "path": "services/editor_layout.py",
-      "sha256": "641f106814d78e287b06c3807df4786907c7bff211d80c19103ef281b654d236",
-      "bytes": 446
+      "sha256": "2b837cdb2cd52842791626317618429f5a7159ff5af6bc8aa6f506dd4cc52e05",
+      "bytes": 525
     },
     {
       "path": "services/file_service.py",
@@ -801,6 +801,11 @@
       "path": "static/favicon.png",
       "sha256": "9127a959697642eacf3b80ce69b1c3c67635d77e3c8808667da4a39cea128202",
       "bytes": 2739
+    },
+    {
+      "path": "static/metadata_scroll.js",
+      "sha256": "0634bdba55ace69495f7e43959fb1ef934201341b92ef88a1a1f80ba18f5df79",
+      "bytes": 4097
     },
     {
       "path": "static/question_focus.js",
@@ -1064,8 +1069,8 @@
     },
     {
       "path": "utopia_phycyclus_app.py",
-      "sha256": "16de516f7db801e33e60d60c5b4b2cdc092fda69f3d4368f336e7310703d5e52",
-      "bytes": 728136
+      "sha256": "74a35367648a2fe403172d1118be494ab42b37a0055c1e29b78b1966596c11d7",
+      "bytes": 730852
     },
     {
       "path": "UtopiaPhyCyclus_book.cls",

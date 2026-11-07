@@ -15,10 +15,10 @@ import streamlit as st
 import utopia_phycyclus_app as app
 app._apply_pending_browse_selection()
 root = Path(st.session_state['fixture_root'])
-path = next(root.rglob('*.tex'))
+path = Path(st.session_state.setdefault('original_fixture_path', str(next(root.rglob('*.tex')))))
 st.session_state['current_path'] = str(path)
 with patch.object(app, 'CHAPTERS_DIR', str(root)), patch.object(app, 'update_csv_index_for_edit'), patch('utils.csv_ops.update_csv_index_for_edit'), patch.object(app, 'record_operation'), patch.object(app, '_invalidate_semantic_for_file'), patch.object(app, 'render_ai_solution_panel'), patch.object(app, 'render_ai_solution_image_ocr_section'):
-    app.render_browse_question_editor_card(path.stem, path.read_text(encoding='utf-8'), str(path), 'metadata_test')
+    app.render_browse_question_editor_card(path.stem, path.read_text(encoding='utf-8') if path.exists() else '', str(path), 'metadata_test')
 '''
 
 
@@ -82,13 +82,22 @@ class MetadataTests(unittest.TestCase):
             at.run()
             key = app._question_key('meta', str(path))
             at.button(key=f'metadata_test_edit_meta_{key}').click().run()
+            self.assertNotIn(app.BROWSE_SCROLL_RESTORE_KEY, at.session_state.filtered_state)
+            markdown = [element.value for element in at.markdown]
+            self.assertGreater(markdown.index('#### 文件信息'), next(i for i, value in enumerate(markdown)
+                               if 'mc-question-actions-grid-anchor' in value))
             methods = at.text_input(key=f'metadata_test_physics_methods_{key}')
             self.assertTrue(methods.disabled)
+            readonly_key = 'metadata_test_edit_' + app._question_key('text', str(path)) + '_readonly'
+            source_widget_id = at.text_area(key=readonly_key).proto.id
             for points in ('第一次修改', '第二次修改'):
                 at.text_input(key=f'metadata_test_knowledge_points_{key}').set_value(points).run()
-                at.button(key=f'metadata_test_edit_meta_{key}').click().run()
+                button_key = f'metadata_test_edit_meta_{key}' if points == '第一次修改' else f'metadata_test_save_metadata_bottom_{key}'
+                at.button(key=button_key).click().run()
                 self.assertFalse(at.exception)
                 self.assertEqual(at.text_input(key=f'metadata_test_knowledge_points_{key}').value, points)
+                self.assertEqual(at.text_area(key=readonly_key).proto.id, source_widget_id)
+                self.assertIn('% 知识点: ' + points, at.text_area(key=readonly_key).value)
                 self.assertIn('保存文件信息', at.button(key=f'metadata_test_edit_meta_{key}').label)
                 self.assertEqual(parse_meta_data(path.read_text(encoding='utf-8'))[0]['知识点'], points)
             at.text_input(key=f'metadata_test_meta_paper_{key}').set_value('重命名卷').run()

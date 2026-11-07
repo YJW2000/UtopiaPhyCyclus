@@ -6932,13 +6932,14 @@ def _save_browse_metadata_from_widgets(key_prefix, fhash, fpath, rename_paths_ke
     result = apply_meta_rename_and_update(fpath, *(str(value) for value in fields), subject_text)
     new_path = result[0] if isinstance(result, tuple) else result
     if new_path != fpath:
+        st.session_state.setdefault("browse_renamed_paths", {})[_norm_abs_path(fpath)] = new_path
+        st.session_state.setdefault("browse_editor_prefixes", {})[_norm_abs_path(new_path)] = key_prefix
         _keep_renamed_question_selected(fpath, new_path)
         if rename_paths_key:
             st.session_state[rename_paths_key] = [new_path if path == fpath else path
                                                  for path in st.session_state.get(rename_paths_key, [])]
         st.session_state.setdefault("browse_resume_meta_paths", []).append(_norm_abs_path(new_path))
         st.session_state["browse_meta_full_rerun"] = True
-        _request_question_scroll_restore(new_path)
     update_question_meta_fields(new_path, {
         "标签": _free_tag_editor_value(key_prefix, fhash),
         "知识点": st.session_state.get(f"{key_prefix}_knowledge_points_{fhash}", ""),
@@ -6955,8 +6956,7 @@ def _save_browse_metadata_from_widgets(key_prefix, fhash, fpath, rename_paths_ke
 
 
 def _set_pending_question_action(key_prefix, fhash, action, fpath=""):
-    tag_edit_key = f"{key_prefix}_tag_edit_mode_{_question_key('tag', fpath)}"
-    if action == "edit_meta" and st.session_state.get(tag_edit_key):
+    if action == "edit_meta":
         st.session_state[_question_action_state_key(key_prefix, fhash)] = action
         return
     if action == 'save_tex' and fpath:
@@ -7093,17 +7093,83 @@ def _render_native_question_actions(key_prefix, fhash, fpath, is_tag_editing, is
     return action
 
 
-@st.fragment
+def _render_browse_metadata_fields(fpath, key_prefix, fhash, content, prepared_assets, paper_type_scope):
+    base = os.path.basename(fpath).replace(".tex", "")
+    parts = base.split("-")
+    cur_year = parts[0] if len(parts) >= 5 else ""
+    cur_type = parts[1] if len(parts) >= 5 else "G"
+    cur_paper = parts[2] if len(parts) >= 5 else ""
+    cur_num = parts[3] if len(parts) >= 5 else ""
+    cur_subjects = (parts[4] if len(parts) >= 5 else "").split("，")
+    valid_tags = [t for t in cur_subjects if t in SUBJECTS] or [SUBJECTS[0]]
+    current_label_meta = prepared_assets.get("meta") or _cached_question_meta(content)
+    type_opts = _editable_paper_type_options(paper_type_scope)
+    st.text_input("年份", value=str(cur_year), key=f"{key_prefix}_meta_year_{fhash}")
+    if cur_type not in type_opts:
+        cur_type = type_opts[0]
+    st.selectbox("试卷类别", options=type_opts, index=type_opts.index(cur_type), format_func=lambda x: f"{x} ({PAPER_TYPES[x]})", key=f"{key_prefix}_meta_type_{fhash}")
+    st.text_input("试卷名称", value=str(cur_paper), key=f"{key_prefix}_meta_paper_{fhash}")
+    st.text_input("题号", value=str(cur_num), key=f"{key_prefix}_meta_num_{fhash}")
+    st.multiselect("知识板块 (首个为主)", options=SUBJECTS, default=valid_tags, key=f"{key_prefix}_tag_select_{fhash}")
+    st.selectbox("题型（必选）", QUESTION_TYPES, index=QUESTION_TYPES.index(infer_question_type(content, "，".join(cur_subjects))),
+                 key=f"{key_prefix}_question_type_{fhash}")
+    _render_free_tag_editor(key_prefix, fhash, current_label_meta.get("标签", ""), fpath)
+    st.text_input(
+        "知识点",
+        value=current_label_meta.get("知识点", ""),
+        key=f"{key_prefix}_knowledge_points_{fhash}",
+        help="使用中英文逗号分隔。",
+    )
+    from services.question_metadata import is_one_star
+    one_star = is_one_star(current_label_meta.get("难度星级"))
+    if one_star:
+        st.session_state[f"{key_prefix}_physics_methods_{fhash}"] = ""
+    st.text_input(
+        "物理方法",
+        value="" if one_star else current_label_meta.get("物理方法", ""),
+        key=f"{key_prefix}_physics_methods_{fhash}",
+        disabled=one_star,
+        help="一星题目不填写物理方法。" if one_star else "使用中英文逗号分隔。",
+    )
+
+
 def render_browse_question_editor_card(q_label, content, fpath, key_prefix, paper_type_scope=None, extra_html_label="", rename_paths_key=None, prepared_assets=None, interactive_difficulty=True):
+    # Give each question its own fragment identity. Streamlit 1.37 otherwise
+    # retains the first closure's arguments when a different question occupies
+    # the same page slot, so the next edit can reopen the previous question.
+    def render_current_question():
+        return _render_browse_question_editor_fragment(q_label, content, fpath, key_prefix,
+            paper_type_scope, extra_html_label, rename_paths_key, prepared_assets, interactive_difficulty)
+
+    render_current_question.__qualname__ = "browse_question_" + _question_key("fragment", f"{key_prefix}:{fpath}")
+    return st.fragment(render_current_question)()
+
+
+def _render_browse_question_editor_fragment(q_label, content, fpath, key_prefix, paper_type_scope=None, extra_html_label="", rename_paths_key=None, prepared_assets=None, interactive_difficulty=True):
+    # Streamlit can dispatch a later event to the pre-rename fragment closure.
+    # Follow its current path and keep the editor namespace consistent with the
+    # newly rendered card instead of losing the question or its in-progress fields.
+    renamed = st.session_state.get("browse_renamed_paths", {})
+    visited = set()
+    while not os.path.isfile(fpath) and _norm_abs_path(fpath) in renamed and _norm_abs_path(fpath) not in visited:
+        visited.add(_norm_abs_path(fpath))
+        fpath = renamed[_norm_abs_path(fpath)]
+        q_label = format_question_title(os.path.basename(fpath))
+    key_prefix = st.session_state.get("browse_editor_prefixes", {}).get(_norm_abs_path(fpath), key_prefix)
     fhash = _question_key("meta", fpath)
     pending_key = _question_action_state_key(key_prefix, fhash)
     tag_edit_key = f"{key_prefix}_tag_edit_mode_{_question_key('tag', fpath)}"
-    if st.session_state.get(pending_key) == "edit_meta" and st.session_state.get(tag_edit_key):
+    if st.session_state.get(pending_key) == "edit_meta":
         st.session_state.pop(pending_key, None)
-        try:
-            _save_browse_metadata_from_widgets(key_prefix, fhash, fpath, rename_paths_key)
-        except Exception as error:
-            st.toast(f"保存未完成，编辑内容已保留：{error}", icon="❌")
+        revision_key = f"{key_prefix}_metadata_revision_{fhash}"
+        st.session_state[revision_key] = st.session_state.get(revision_key, 0) + 1
+        if st.session_state.get(tag_edit_key):
+            try:
+                _save_browse_metadata_from_widgets(key_prefix, fhash, fpath, rename_paths_key)
+            except Exception as error:
+                st.toast(f"保存未完成，编辑内容已保留：{error}", icon="❌")
+        else:
+            st.session_state[tag_edit_key] = True
     if st.session_state.pop("browse_meta_full_rerun", False):
         st.rerun()
     if not os.path.isfile(fpath):
@@ -7163,7 +7229,13 @@ def _render_browse_question_editor_card_body(q_label, content, fpath, key_prefix
             render_question_image_upload(text_area_key, f'{key_prefix}_{fhash}', APP_ROOT)
             current_content = st.text_area("源码", height=est_height, key=text_area_key)
         else:
-            st.text_area("源码", value=content, height=est_height, disabled=True, key=f"{text_area_key}_readonly")
+            # A changing default value gives Streamlit a new widget identity.
+            # Keep the textarea node (and its synchronized preview height) alive
+            # when metadata is saved, so the form below it does not jump.
+            readonly_key = f"{text_area_key}_readonly"
+            st.session_state[readonly_key] = content
+            readonly_height = st.session_state.setdefault(f"{readonly_key}_height", est_height)
+            st.text_area("源码", height=readonly_height, disabled=True, key=readonly_key)
             current_content = content
 
         if action == "save_tex":
@@ -7181,11 +7253,6 @@ def _render_browse_question_editor_card_body(q_label, content, fpath, key_prefix
             except st.errors.StreamlitAPIException:
                 # AppTest/full-script invocation has no active fragment rerun scope.
                 st.rerun()
-
-        if action == "edit_meta":
-            st.session_state[tag_edit_key] = True
-            _request_question_scroll_restore(fpath)
-            st.rerun()
 
         if action == "ai_generate":
             problem_tex = _extract_problem_env(current_content)
@@ -7215,45 +7282,6 @@ def _render_browse_question_editor_card_body(q_label, content, fpath, key_prefix
             else:
                 confirm_delete_question_dialog(fpath, q_label, fhash)
 
-        if is_tag_editing:
-            base = os.path.basename(fpath).replace(".tex", "")
-            parts = base.split("-")
-            cur_year = parts[0] if len(parts) >= 5 else ""
-            cur_type = parts[1] if len(parts) >= 5 else "G"
-            cur_paper = parts[2] if len(parts) >= 5 else ""
-            cur_num = parts[3] if len(parts) >= 5 else ""
-            cur_subjects = (parts[4] if len(parts) >= 5 else "").split("，")
-            valid_tags = [t for t in cur_subjects if t in SUBJECTS] or [SUBJECTS[0]]
-            current_label_meta = prepared_assets.get("meta") or _cached_question_meta(content)
-            type_opts = _editable_paper_type_options(paper_type_scope)
-            st.text_input("年份", value=str(cur_year), key=f"{key_prefix}_meta_year_{fhash}")
-            if cur_type not in type_opts:
-                cur_type = type_opts[0]
-            st.selectbox("试卷类别", options=type_opts, index=type_opts.index(cur_type), format_func=lambda x: f"{x} ({PAPER_TYPES[x]})", key=f"{key_prefix}_meta_type_{fhash}")
-            st.text_input("试卷名称", value=str(cur_paper), key=f"{key_prefix}_meta_paper_{fhash}")
-            st.text_input("题号", value=str(cur_num), key=f"{key_prefix}_meta_num_{fhash}")
-            st.multiselect("知识板块 (首个为主)", options=SUBJECTS, default=valid_tags, key=f"{key_prefix}_tag_select_{fhash}")
-            st.selectbox("题型（必选）", QUESTION_TYPES, index=QUESTION_TYPES.index(infer_question_type(content, "，".join(cur_subjects))),
-                         key=f"{key_prefix}_question_type_{fhash}")
-            _render_free_tag_editor(key_prefix, fhash, current_label_meta.get("标签", ""), fpath)
-            st.text_input(
-                "知识点",
-                value=current_label_meta.get("知识点", ""),
-                key=f"{key_prefix}_knowledge_points_{fhash}",
-                help="使用中英文逗号分隔。",
-            )
-            from services.question_metadata import is_one_star
-            one_star = is_one_star(current_label_meta.get("难度星级"))
-            if one_star:
-                st.session_state[f"{key_prefix}_physics_methods_{fhash}"] = ""
-            st.text_input(
-                "物理方法",
-                value="" if one_star else current_label_meta.get("物理方法", ""),
-                key=f"{key_prefix}_physics_methods_{fhash}",
-                disabled=one_star,
-                help="一星题目不填写物理方法。" if one_star else "使用中英文逗号分隔。",
-            )
-
         render_ai_solution_image_ocr_section(fpath, key_prefix="ai_solution_v1", compact=True)
 
     with c_preview:
@@ -7268,9 +7296,19 @@ def _render_browse_question_editor_card_body(q_label, content, fpath, key_prefix
             st.error(f"渲染错误: {e}")
 
     from services.editor_layout import render_editor_height_sync
-    render_editor_height_sync(fhash)
+    render_editor_height_sync(fhash, is_tex_editing)
 
     _render_native_question_actions(key_prefix, fhash, fpath, is_tag_editing, is_tex_editing)
+
+    if is_tag_editing:
+        metadata_column, _ = st.columns([0.95, 1.05], gap="large")
+        with metadata_column:
+            st.markdown(f'<span id="browse-question-metadata-{fhash}"></span>', unsafe_allow_html=True)
+            st.markdown("#### 文件信息")
+            _render_browse_metadata_fields(fpath, key_prefix, fhash, content, prepared_assets, paper_type_scope)
+            st.button("✅ 保存并继续修改", key=f"{key_prefix}_save_metadata_bottom_{fhash}",
+                      type="primary", use_container_width=True, on_click=_set_pending_question_action,
+                      args=(key_prefix, fhash, "edit_meta", fpath))
 
     render_ai_solution_panel(fpath, q_label, key_prefix="ai_solution_v1")
 
@@ -7297,6 +7335,8 @@ def _render_browse_question_editor_card_body(q_label, content, fpath, key_prefix
             on_apply_callback=_on_browse_diagram_apply,
         )
 
+    from services.browse_scroll import render_metadata_scroll_lock
+    render_metadata_scroll_lock(fhash, st.session_state.get(f"{key_prefix}_metadata_revision_{fhash}", 0))
     _restore_question_scroll_after_render(fpath, fhash)
 
 
