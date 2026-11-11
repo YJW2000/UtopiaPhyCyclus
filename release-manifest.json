@@ -1019,8 +1019,8 @@
     },
     {
       "path": "utils/latex_ops.py",
-      "sha256": "f3b0c7b90a7fd42defd00a19dc4c9ebbbe7dbaacc4bfeecc6fabcb92b78eaed7",
-      "bytes": 37399
+      "sha256": "7ee8360dedcc29f69b081290894c9aa72d2302861ebd53445345734805ccbcfa",
+      "bytes": 37776
     },
     {
       "path": "utils/local_stats.py",

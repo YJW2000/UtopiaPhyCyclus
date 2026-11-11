@@ -163,6 +163,24 @@ class PreviewLayoutCleanupTests(unittest.TestCase):
         # 文本段仍渲染为可点击阅读的填空线
         self.assertIn('<u>&nbsp;', markdown)
 
+    def test_qquad_blank_outside_math_does_not_leak_latex_source(self):
+        """选择题括号中的 ``\\qquad`` 应显示为空白，公式内则保持原命令。"""
+        source = (r'\textbf{磁场与磁感线}\par'
+                  r'（1）下列说法中，正确的是（\qquad）。（6 分）'
+                  r'公式 $a\qquad b$。')
+        markdown = self.render(source)
+        prose = re.sub(r'\$[^$\n]*\$', ' ', markdown)
+        self.assertNotIn(r'\qquad', prose)
+        self.assertNotIn(r'\quad', prose)
+        self.assertIn('（\u3000\u3000）', markdown)
+        self.assertIn(r'$a\qquad b$', markdown)
+
+    def test_starred_hspace_and_enspace_are_previewed_as_spacing(self):
+        markdown = self.render(r'甲\hspace*{1cm}乙\enspace 丙')
+        self.assertNotIn(r'\hspace', markdown)
+        self.assertNotIn(r'\enspace', markdown)
+        self.assertIn('甲\u3000乙\u2002 丙', markdown)
+
     def test_ai_paper_wrappers_paragraph_zihao_and_unknown_envs_are_cleaned(self):
         """AI 专题卷的 paragraph / zihao / methodbox / trapbox / 自定义盒子不能漏成源码。"""
         source = r'''

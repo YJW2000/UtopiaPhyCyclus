@@ -338,9 +338,13 @@ def _replace_spacing_outside_math(s):
                 segment,
             )
             segment = re.sub(r'\\par\b[ \t]*', '\n\n', segment)
-            segment = re.sub(r'\\hspace\{.*?\}', "\u3000", segment)
-            segment = segment.replace(r'\quad', "\u3000")
-            segment = segment.replace(r'\hfill', "\u3000")
+            segment = re.sub(r'\\hspace\*?\s*\{[^{}]*\}', "\u3000", segment)
+            # 必须先替换较长的 \qquad；它表示两个 \quad。只处理数学环境外的
+            # 版式空白，公式中的同名命令仍保留给 KaTeX。
+            segment = re.sub(r'\\qquad(?![A-Za-z@])', "\u3000\u3000", segment)
+            segment = re.sub(r'\\quad(?![A-Za-z@])', "\u3000", segment)
+            segment = re.sub(r'\\(?:enspace|enskip)(?![A-Za-z@])', "\u2002", segment)
+            segment = re.sub(r'\\hfill(?![A-Za-z@])', "\u3000", segment)
         out.append(segment)
     return "".join(out)
 
