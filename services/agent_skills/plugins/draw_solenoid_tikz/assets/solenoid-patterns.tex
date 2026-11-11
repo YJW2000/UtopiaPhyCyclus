@@ -1,0 +1,88 @@
+% 依赖：\usepackage{tikz} 与 \usetikzlibrary{arrows.meta}
+% 示例一：水平铁芯；M 为 6 匝，P 为 5 匝，仅画原图可见线。
+\begin{tikzpicture}[scale=0.84,>=Stealth,
+  ln/.style={line width=0.65pt},
+  arrt/.style={-{Stealth[length=1.8mm,width=1.3mm]},line width=0.6pt}]
+  \draw[ln,fill=white] (0,2.3) rectangle (8.4,3.1);
+
+  % M：每匝顶弧右端接正面斜线；前五匝斜线下端接底弧。
+  \foreach \i in {0,...,5}{
+    \draw[ln] ({1.15+0.60*\i-0.14},3.1)
+      arc[start angle=180,end angle=0,x radius=0.14,y radius=0.13];
+    \draw[ln] ({1.15+0.60*\i+0.14},3.1)--({1.15+0.60*\i+0.32},2.3);
+  }
+  \foreach \i in {0,...,4}{
+    \draw[ln] ({1.15+0.60*\i+0.32},2.3)
+      arc[start angle=180,end angle=360,x radius=0.14,y radius=0.13];
+  }
+
+  % P：绕向与 M 相同。
+  \foreach \i in {0,...,4}{
+    \draw[ln] ({5.45+0.53*\i-0.14},3.1)
+      arc[start angle=180,end angle=0,x radius=0.14,y radius=0.13];
+    \draw[ln] ({5.45+0.53*\i+0.14},3.1)--({5.45+0.53*\i+0.32},2.3);
+  }
+  \foreach \i in {0,...,3}{
+    \draw[ln] ({5.45+0.53*\i+0.32},2.3)
+      arc[start angle=180,end angle=360,x radius=0.14,y radius=0.13];
+  }
+  \node[above] at (2.65,3.30) {$M$};
+  \node[above] at (6.51,3.30) {$P$};
+
+  % 最后一根正面斜线的下端分别是 (4.47,2.3) 和 (7.89,2.3)。
+  \draw[ln] (0.85,2.3)--(0.85,0.85)--(1.75,0.85);
+  \draw[ln] (4.47,2.3)--(4.47,0.85)--(3.30,0.85);
+  \draw[ln] (1.75,0.50)--(1.75,1.20);
+  \draw[line width=1.8pt] (1.91,0.67)--(1.91,1.03);
+  \draw[ln] (1.91,0.85)--(2.75,0.85);
+  \draw[ln,fill=white] (2.75,0.85) circle (0.055);
+  \draw[ln] (2.78,0.88)--(3.15,1.12);
+
+  \draw[ln] (5.15,2.3)--(5.15,0.85)--(6.23,0.85);
+  \draw[ln] (7.89,2.3)--(7.89,0.85)--(6.77,0.85);
+  \draw[ln,fill=white] (6.50,0.85) circle (0.27);
+  \draw[arrt] (6.50,0.67)--(6.50,1.03);
+  \node[below left,font=\small] at (6.27,0.85) {$a$};
+  \node[below right,font=\small] at (6.74,0.85) {$b$};
+  \node[below] at (6.50,0.34) {电流表};
+\end{tikzpicture}
+
+\par\vspace{1em}
+
+% 示例二：竖直螺线管；四匝，仅画原图可见线。
+\begin{tikzpicture}[scale=1.0,>=Stealth,
+  ln/.style={line width=0.65pt},
+  arrt/.style={-{Stealth[length=1.8mm,width=1.3mm]},line width=0.6pt},
+  lbl/.style={fill=white,inner sep=1pt}]
+  \draw[ln] (-1.55,0.10)--(2.35,0.10)--(3.15,-1.00)--(-0.75,-1.00)--cycle;
+  \draw[ln] (0.55,-0.48) ellipse (1.00 and 0.30);
+  \node[left,lbl] at (-0.42,-0.48) {$a$};
+
+  \fill[white] (0,0.35) rectangle (1.0,3.00);
+  \draw[ln] (0,0.35)--(0,3.00);
+  \draw[ln] (1.0,0.35)--(1.0,3.00);
+  \draw[ln] (0.5,3.00) ellipse (0.50 and 0.15);
+  \draw[ln] (0,0.35) arc[start angle=180,end angle=360,x radius=0.5,y radius=0.15];
+
+  % 四条正面横弧与四个左侧上回弧。
+  \foreach \y in {2.50,1.95,1.40,0.85}{
+    \draw[ln] (0,\y) .. controls (0.25,\y-0.16) and (0.75,\y-0.20) .. (1.0,\y-0.05);
+    \draw[ln] (0,\y) .. controls (-0.22,\y+0.02) and (-0.22,\y+0.16) .. (0,\y+0.20);
+  }
+  % 仅前三匝画右侧下连弧。
+  \foreach \y in {2.50,1.95,1.40}{
+    \draw[ln] (1.0,\y-0.05) .. controls (1.22,\y-0.07) and (1.22,\y-0.20) .. (1.0,\y-0.25);
+  }
+  \node[left,lbl] at (-0.25,1.65) {$b$};
+
+  \draw[ln] (1.0,3.00)--(3.45,3.00)--(3.45,2.55);
+  \draw[ln,fill=white] (2.88,1.95) rectangle (3.16,3.18);
+  \draw[arrt] (3.45,2.55)--(3.18,2.55);
+  \node[right,lbl] at (3.48,2.40) {$P$};
+
+  % 上短极板为负极，下长极板为正极；最下方横弧右端为 (1.00,0.80)。
+  \draw[ln] (3.02,1.95)--(3.02,1.72);
+  \draw[ln] (2.89,1.72)--(3.15,1.72);
+  \draw[line width=1.5pt] (2.78,1.57)--(3.26,1.57);
+  \draw[ln] (1.00,0.80)--(3.02,0.80)--(3.02,1.57);
+\end{tikzpicture}

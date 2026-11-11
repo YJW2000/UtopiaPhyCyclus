@@ -40,6 +40,8 @@ FILES = [
     'docs/Windows兼容性与测试.md', 'tools/windows_sandbox_test.ps1',
     'tools/check_portable_dlls.py',
     'tools/clean_windows_guest.py', 'tools/clean_windows_guest.ps1',
+    'services/agent_skills/plugins/draw_solenoid_tikz/SKILL.md',
+    'services/agent_skills/plugins/draw_solenoid_tikz/assets/solenoid-patterns.tex',
 ]
 TREES = {
     'services': {'.py', '.mjs', '.json'},

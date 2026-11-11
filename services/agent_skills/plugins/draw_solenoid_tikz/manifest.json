@@ -1,0 +1,8 @@
+{
+  "name": "draw-solenoid-tikz",
+  "version": "1.0.0",
+  "entry": "skill.py",
+  "class": "SolenoidTikzSkill",
+  "enabled": true,
+  "description": "按教材原图绘制水平铁芯线圈、竖直通电螺线管及其电源、滑动变阻器和接头。"
+}

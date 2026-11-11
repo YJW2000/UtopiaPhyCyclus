@@ -534,8 +534,8 @@
     },
     {
       "path": "ocr_prompt.txt",
-      "sha256": "f78b6a40e5e30de45c80a15caed2c4f0e84f6ff0903c782026842d5ee8dcfcd5",
-      "bytes": 11085
+      "sha256": "b345d900afaa2b9d9aa95fa1a7a532736d709f1de81c6b232762d0aaf99c0d7e",
+      "bytes": 12678
     },
     {
       "path": "README.md",
@@ -601,6 +601,26 @@
       "path": "services/agent_skills/plugin_loader.py",
       "sha256": "ba9d427a831373df4ce092ceea33a3a034c0a0ff8e5ed51a5646d568e0190d28",
       "bytes": 5303
+    },
+    {
+      "path": "services/agent_skills/plugins/draw_solenoid_tikz/SKILL.md",
+      "sha256": "c01671b2a27e1dd5dfc41e233f7f3125667e2e8e6e1bb266870de27af01c78d6",
+      "bytes": 4670
+    },
+    {
+      "path": "services/agent_skills/plugins/draw_solenoid_tikz/assets/solenoid-patterns.tex",
+      "sha256": "f93390f906dd09048fa9d690b5597ad78f9987806125b143cfc3c37697fda871",
+      "bytes": 3621
+    },
+    {
+      "path": "services/agent_skills/plugins/draw_solenoid_tikz/manifest.json",
+      "sha256": "d93a16f8c3c3e1f8533bfe158f480e86cb8a21ea66ff0aff0229f2ab9dad7a6a",
+      "bytes": 257
+    },
+    {
+      "path": "services/agent_skills/plugins/draw_solenoid_tikz/skill.py",
+      "sha256": "845afddab0c081c40b5b96936b4f92c3e72008e3ce740abbdfbb59b82b2c398b",
+      "bytes": 4618
     },
     {
       "path": "services/agent_skills/plugins/tex_diagnostics/manifest.json",
@@ -894,8 +914,8 @@
     },
     {
       "path": "tools/release.py",
-      "sha256": "05034db62d688fdfadffdbe6078f0fa3aa919811b426707e099116401e5c19d7",
-      "bytes": 19220
+      "sha256": "6851b359a364275e833bc68bc3f98edafaabf0f23b3339a67fae77653b3dcee0",
+      "bytes": 19370
     },
     {
       "path": "tools/slim_portable.py",
