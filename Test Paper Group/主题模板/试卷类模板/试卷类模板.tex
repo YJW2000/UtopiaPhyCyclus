@@ -1,7 +1,7 @@
 % Utopia Yuan 东北高考物理试卷
 % 结构依据 2025 年黑吉辽蒙高考物理卷：15 题，100 分，75 分钟。
 \let\stop\empty
-\documentclass{exam-zh}
+\documentclass[11pt]{exam-zh}
 
 \usepackage{mathtools}
 \usepackage{siunitx}
@@ -11,6 +11,7 @@
 \usepackage{caption}
 \usepackage{lastpage}
 \usepackage{fancyhdr}
+\usepackage{enumitem}
 \usepackage{tikz}
 \usepackage{tkz-euclide}
 \usepackage{pgfplots}
@@ -64,22 +65,148 @@
 \title{Utopia Yuan 东北高考物理模拟试卷}
 \subject{物理}
 
+
+% ============================================================================
+% Claude 温暖编辑风。保持内嵌，导出文件无需额外的主题文件或私人字体路径。
+% 参考：暖米白纸底 / 陶土橙 / 暖炭黑 / 鼠尾草绿，11pt 宋体正文。
+% ============================================================================
+\usepackage{fontspec}
+\usepackage{colortbl,longtable}
+\usepackage{tcolorbox}
+\tcbuselibrary{skins,breakable}
+\definecolor{warmpaper}{RGB}{253,251,247}
+\definecolor{warmcream}{RGB}{246,242,234}
+\definecolor{warmborder}{RGB}{226,219,206}
+\definecolor{terracotta}{RGB}{217,119,87}
+\definecolor{deepterra}{RGB}{176,84,54}
+\definecolor{charcoal}{RGB}{38,36,34}
+\definecolor{mutedink}{RGB}{115,108,100}
+\definecolor{sagegreen}{RGB}{84,126,95}
+\definecolor{sagebg}{RGB}{241,246,242}
+\definecolor{honeygold}{RGB}{198,138,52}
+\definecolor{honeybg}{RGB}{253,247,236}
+\definecolor{rowalt}{RGB}{250,248,243}
+\pagecolor{warmpaper}
+\color{charcoal}
+
+% 安装了参考字体时还原原稿；其他电脑使用 TeX Live 自带字体回退。
+\newcommand{\utopiasetfonts}{%
+  \IfFontExistsTF{Anthropic Serif Web Text}{%
+    \setmainfont{Anthropic Serif Web Text}[
+      BoldFont={Anthropic Serif Web Text},BoldFeatures={FakeBold=1.5},
+      ItalicFont={Anthropic Serif Web Text}]
+  }{\setmainfont{TeX Gyre Pagella}}
+  \IfFontExistsTF{NotoSerifSC-VF.ttf}{%
+    \setCJKmainfont{NotoSerifSC-VF.ttf}[
+      BoldFont={NotoSerifSC-VF.ttf},BoldFeatures={FakeBold=1.2},
+      ItalicFont={NotoSerifSC-VF.ttf}]
+    \setCJKfamilyfont{songti}{NotoSerifSC-VF.ttf}
+  }{\IfFontExistsTF{Source Han Serif SC}{%
+    \setCJKmainfont{Source Han Serif SC}
+    \setCJKfamilyfont{songti}{Source Han Serif SC}
+  }{%
+    \setCJKmainfont{FandolSong-Regular}[BoldFont=FandolSong-Bold]
+    \setCJKfamilyfont{songti}{FandolSong-Regular}[BoldFont=FandolSong-Bold]
+  }}
+  \renewcommand{\songti}{\CJKfamily{songti}}
+}
+% exam-zh 在导言区结束时设置字体，所以统一在其后应用正文的参考字体。
+\AtBeginDocument{\utopiasetfonts\normalfont\color{charcoal}}
+\geometry{top=1.8cm,bottom=1.8cm,left=1.8cm,right=1.8cm,headheight=22pt,headsep=12pt}
+\setlength{\parindent}{2em}
+\setlength{\parskip}{4pt plus 1pt}
+\linespread{1.32}
+\raggedbottom
+
+\tcbset{utopia warm/.style={
+  enhanced,breakable,colback=warmcream,colframe=warmborder,
+  borderline west={3.2pt}{0pt}{terracotta},boxrule=0.5pt,arc=5pt,
+  top=9pt,bottom=9pt,left=12pt,right=11pt,
+  before skip=8pt,after skip=8pt,coltitle=charcoal,
+  fonttitle=\bfseries,attach title to upper={},after title={\par\vspace{4pt}}
+}}
+\newtcolorbox{warmcard}[2][terracotta]{utopia warm,
+  borderline west={3.2pt}{0pt}{#1},
+  title={\textcolor{#1}{\small$\bullet$}\hspace{0.5em}#2}}
+\newtcolorbox{sagecard}[1]{utopia warm,colback=sagebg,
+  borderline west={3.2pt}{0pt}{sagegreen},
+  title={\textcolor{sagegreen}{\small$\bullet$}\hspace{0.5em}#1}}
+\newtcolorbox{honeycard}[1]{utopia warm,colback=honeybg,
+  borderline west={3.2pt}{0pt}{honeygold},
+  title={\textcolor{honeygold}{\small$\bullet$}\hspace{0.5em}#1}}
+
+\newcommand{\utopiatitle}[3]{%
+  \begin{tcolorbox}[enhanced,colback=warmcream,colframe=warmborder,
+    borderline north={3pt}{0pt}{terracotta},boxrule=0.5pt,arc=6pt,
+    top=14pt,bottom=12pt,left=16pt,right=16pt,after skip=10pt]
+    {\LARGE\bfseries\color{charcoal}#1\par}
+    \vspace{5pt}{\small\color{mutedink}#2\par}
+    \vspace{8pt}{\color{warmborder}\hrule height 0.5pt}
+    \vspace{8pt}{\small\color{mutedink}#3\par}
+  \end{tcolorbox}%
+}
+\newcommand{\utopiaheadingmark}{%
+  \textcolor{terracotta}{\rule[-2pt]{3.5pt}{14pt}}\hspace{6pt}}
+\newcommand{\utopiaheadingrule}{%
+  \par\nobreak\vspace{3pt}{\color{warmborder}\hrule height 0.6pt}}
+\newcommand{\warmsection}[2]{%
+  \par\addvspace{10pt}\noindent\utopiaheadingmark
+  {\large\bfseries #1}\hspace{0.4em}{\small\color{mutedink}#2}%
+  \utopiaheadingrule\nobreak\vspace{6pt}}
+
+\newcommand{\utopiapagestyle}{%
+  \fancyhf{}
+  \fancyhead[L]{\scriptsize\color{mutedink}Utopia Yuan}
+  \fancyhead[R]{\scriptsize\color{mutedink}\utopiaedition}
+  \fancyfoot[C]{\scriptsize\color{mutedink}—\ \thepage\ —}
+  \renewcommand{\headrulewidth}{0.4pt}
+  \renewcommand{\footrulewidth}{0pt}
+  \renewcommand{\headrule}{\hbox to\headwidth{%
+    \color{warmborder}\leaders\hrule height\headrulewidth\hfill}}%
+}
+\fancypagestyle{plain}{\utopiapagestyle}
+\fancypagestyle{cp}{\utopiapagestyle}
+% 在 exam-zh 的导言末尾重设 plain 样式之后再应用，确保首页与后续页一致。
+\AtBeginDocument{\fancypagestyle{plain}{\utopiapagestyle}\pagestyle{fancy}\utopiapagestyle}
+\providecommand{\dd}{\mathop{}\!\mathrm{d}}
+\providecommand{\e}{\mathrm{e}}
+\providecommand{\iu}{\mathrm{i}}
+\providecommand{\degree}{^\circ}
+\providecommand{\vect}[1]{\boldsymbol{#1}}
+% 磁场方向沿用用户约定：向里用 $\times$，向外用 $\bullet$，不加外圈。
+
+\newcommand{\utopiaedition}{物理试卷}
+\ctexset{section={
+  format=\large\bfseries\color{charcoal}\utopiaheadingmark,
+  aftertitle=\utopiaheadingrule,beforeskip=12pt,afterskip=8pt}}
+\makeatletter
+\renewcommand{\maketitle}{%
+  \utopiatitle{\@title}{高中物理 $\cdot$ 东北高考模拟}{%
+    \textbf{100 分 / 75 分钟}\quad 15 题\quad 共\pageref{LastPage}页\par
+    \vspace{5pt}姓名：\underline{\hspace{5em}}\quad
+    班级：\underline{\hspace{5em}}\quad 准考证号：\underline{\hspace{6em}}}}
+\makeatother
+\RenewDocumentEnvironment{answer}{ O{答案} O{} O{} +b }{%
+  \begin{sagecard}{#1}#4\end{sagecard}}{}
+\RenewDocumentEnvironment{solutions}{ O{解析} O{} O{} +b }{%
+  \begin{warmcard}{#1}#4\end{warmcard}}{}
+\RenewDocumentEnvironment{solution}{ O{解析} O{} O{} +b }{%
+  \begin{warmcard}{#1}#4\end{warmcard}}{}
+
 \begin{document}
-\secret
 \maketitle
 \thispagestyle{plain}
 
-\begin{center}
-  \small 本试卷共 \pageref{LastPage} 页，15 题。全卷满分 100 分，考试用时 75 分钟。
-\end{center}
 
-\begin{notice}
-  \item 答题前，考生先将自己的姓名、准考证号填写清楚，并将条形码准确粘贴在指定区域内。
-  \item 选择题使用 2B 铅笔填涂；非选择题使用 0.5 毫米黑色字迹签字笔书写。
-  \item 按题号顺序在答题卡对应区域内作答，超出答题区域书写的答案无效。
-  \item 作图可先用铅笔画出，确定后用黑色字迹签字笔描清楚。
-  \item 保持答题卡清洁，不要折叠、弄破、弄皱，不得使用涂改液、修正带或刮纸刀。
-\end{notice}
+\begin{honeycard}{作答须知}
+\begin{enumerate}[leftmargin=1.5em,itemsep=2pt,topsep=0pt]
+  \item 答题前填写姓名、班级和准考证号，在答题卡指定区域粘贴条形码。
+  \item 选择题用 2B 铅笔填涂；非选择题用 0.5 毫米黑色签字笔作答。
+  \item 按题号在答题卡对应区域内作答，作图完成后用黑色签字笔描清。
+  \item 保持答题卡整洁，超出答题区域的答案无效。
+\end{enumerate}
+\end{honeycard}
+
 
 % 以下两个空节是组卷程序的插入锚点，生成时会被实际题目覆盖。
 \section{选择题：本题共 10 小题，共 46 分。第 1～7 题为单项选择题，每题 4 分；第 8～10 题为多项选择题，每题 6 分。}

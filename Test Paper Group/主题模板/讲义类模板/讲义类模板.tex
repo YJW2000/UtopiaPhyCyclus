@@ -1,4 +1,4 @@
-\documentclass[12pt,UTF-8,a4paper,openany]{ctexbook}
+\documentclass[11pt,UTF-8,a4paper,openany]{ctexbook}
 
 %----------------------------------------------------------------------------------
 %  基本配置与宏包加载 (Basic Configuration & Packages)
@@ -753,29 +753,165 @@ IfNoValueTF={#3}{}{#3}
 
 % ==================================================
 
+
+% ============================================================================
+% Claude 温暖编辑风。保持内嵌，导出文件无需额外的主题文件或私人字体路径。
+% 参考：暖米白纸底 / 陶土橙 / 暖炭黑 / 鼠尾草绿，11pt 宋体正文。
+% ============================================================================
+\usepackage{fontspec}
+\usepackage{colortbl,longtable}
+\usepackage{tcolorbox}
+\tcbuselibrary{skins,breakable}
+\definecolor{warmpaper}{RGB}{253,251,247}
+\definecolor{warmcream}{RGB}{246,242,234}
+\definecolor{warmborder}{RGB}{226,219,206}
+\definecolor{terracotta}{RGB}{217,119,87}
+\definecolor{deepterra}{RGB}{176,84,54}
+\definecolor{charcoal}{RGB}{38,36,34}
+\definecolor{mutedink}{RGB}{115,108,100}
+\definecolor{sagegreen}{RGB}{84,126,95}
+\definecolor{sagebg}{RGB}{241,246,242}
+\definecolor{honeygold}{RGB}{198,138,52}
+\definecolor{honeybg}{RGB}{253,247,236}
+\definecolor{rowalt}{RGB}{250,248,243}
+\pagecolor{warmpaper}
+\color{charcoal}
+
+% 安装了参考字体时还原原稿；其他电脑使用 TeX Live 自带字体回退。
+\newcommand{\utopiasetfonts}{%
+  \IfFontExistsTF{Anthropic Serif Web Text}{%
+    \setmainfont{Anthropic Serif Web Text}[
+      BoldFont={Anthropic Serif Web Text},BoldFeatures={FakeBold=1.5},
+      ItalicFont={Anthropic Serif Web Text}]
+  }{\setmainfont{TeX Gyre Pagella}}
+  \IfFontExistsTF{NotoSerifSC-VF.ttf}{%
+    \setCJKmainfont{NotoSerifSC-VF.ttf}[
+      BoldFont={NotoSerifSC-VF.ttf},BoldFeatures={FakeBold=1.2},
+      ItalicFont={NotoSerifSC-VF.ttf}]
+    \setCJKfamilyfont{songti}{NotoSerifSC-VF.ttf}
+  }{\IfFontExistsTF{Source Han Serif SC}{%
+    \setCJKmainfont{Source Han Serif SC}
+    \setCJKfamilyfont{songti}{Source Han Serif SC}
+  }{%
+    \setCJKmainfont{FandolSong-Regular}[BoldFont=FandolSong-Bold]
+    \setCJKfamilyfont{songti}{FandolSong-Regular}[BoldFont=FandolSong-Bold]
+  }}
+  \renewcommand{\songti}{\CJKfamily{songti}}
+}
+% exam-zh 在导言区结束时设置字体，所以统一在其后应用正文的参考字体。
+\AtBeginDocument{\utopiasetfonts\normalfont\color{charcoal}}
+\geometry{top=1.8cm,bottom=1.8cm,left=1.8cm,right=1.8cm,headheight=22pt,headsep=12pt}
+\setlength{\parindent}{2em}
+\setlength{\parskip}{4pt plus 1pt}
+\linespread{1.32}
+\raggedbottom
+
+\tcbset{utopia warm/.style={
+  enhanced,breakable,colback=warmcream,colframe=warmborder,
+  borderline west={3.2pt}{0pt}{terracotta},boxrule=0.5pt,arc=5pt,
+  top=9pt,bottom=9pt,left=12pt,right=11pt,
+  before skip=8pt,after skip=8pt,coltitle=charcoal,
+  fonttitle=\bfseries,attach title to upper={},after title={\par\vspace{4pt}}
+}}
+\newtcolorbox{warmcard}[2][terracotta]{utopia warm,
+  borderline west={3.2pt}{0pt}{#1},
+  title={\textcolor{#1}{\small$\bullet$}\hspace{0.5em}#2}}
+\newtcolorbox{sagecard}[1]{utopia warm,colback=sagebg,
+  borderline west={3.2pt}{0pt}{sagegreen},
+  title={\textcolor{sagegreen}{\small$\bullet$}\hspace{0.5em}#1}}
+\newtcolorbox{honeycard}[1]{utopia warm,colback=honeybg,
+  borderline west={3.2pt}{0pt}{honeygold},
+  title={\textcolor{honeygold}{\small$\bullet$}\hspace{0.5em}#1}}
+
+\newcommand{\utopiatitle}[3]{%
+  \begin{tcolorbox}[enhanced,colback=warmcream,colframe=warmborder,
+    borderline north={3pt}{0pt}{terracotta},boxrule=0.5pt,arc=6pt,
+    top=14pt,bottom=12pt,left=16pt,right=16pt,after skip=10pt]
+    {\LARGE\bfseries\color{charcoal}#1\par}
+    \vspace{5pt}{\small\color{mutedink}#2\par}
+    \vspace{8pt}{\color{warmborder}\hrule height 0.5pt}
+    \vspace{8pt}{\small\color{mutedink}#3\par}
+  \end{tcolorbox}%
+}
+\newcommand{\utopiaheadingmark}{%
+  \textcolor{terracotta}{\rule[-2pt]{3.5pt}{14pt}}\hspace{6pt}}
+\newcommand{\utopiaheadingrule}{%
+  \par\nobreak\vspace{3pt}{\color{warmborder}\hrule height 0.6pt}}
+\newcommand{\warmsection}[2]{%
+  \par\addvspace{10pt}\noindent\utopiaheadingmark
+  {\large\bfseries #1}\hspace{0.4em}{\small\color{mutedink}#2}%
+  \utopiaheadingrule\nobreak\vspace{6pt}}
+
+\newcommand{\utopiapagestyle}{%
+  \fancyhf{}
+  \fancyhead[L]{\scriptsize\color{mutedink}Utopia Yuan}
+  \fancyhead[R]{\scriptsize\color{mutedink}\utopiaedition}
+  \fancyfoot[C]{\scriptsize\color{mutedink}—\ \thepage\ —}
+  \renewcommand{\headrulewidth}{0.4pt}
+  \renewcommand{\footrulewidth}{0pt}
+  \renewcommand{\headrule}{\hbox to\headwidth{%
+    \color{warmborder}\leaders\hrule height\headrulewidth\hfill}}%
+}
+\fancypagestyle{plain}{\utopiapagestyle}
+\fancypagestyle{cp}{\utopiapagestyle}
+% 在 exam-zh 的导言末尾重设 plain 样式之后再应用，确保首页与后续页一致。
+\AtBeginDocument{\fancypagestyle{plain}{\utopiapagestyle}\pagestyle{fancy}\utopiapagestyle}
+\providecommand{\dd}{\mathop{}\!\mathrm{d}}
+\providecommand{\e}{\mathrm{e}}
+\providecommand{\iu}{\mathrm{i}}
+\providecommand{\degree}{^\circ}
+\providecommand{\vect}[1]{\boldsymbol{#1}}
+% 磁场方向沿用用户约定：向里用 $\times$，向外用 $\bullet$，不加外圈。
+
+\newcommand{\utopiaedition}{物理讲义}
+
+% 将原有题库命令映射到同一套温暖色板，保留环境与答案显示模式。
+\colorlet{structure}{deepterra}
+\colorlet{STRUCTURE}{deepterra}
+\colorlet{main}{sagegreen}
+\colorlet{second}{honeygold}
+\colorlet{third}{terracotta}
+\colorlet{fourth}{deepterra}
+\colorlet{lanjiacu}{deepterra}
+\colorlet{rouhelanse}{deepterra}
+\colorlet{guihongse}{mutedink}
+\hypersetup{linkcolor=deepterra,citecolor=sagegreen,urlcolor=deepterra}
+\titleformat{\section}
+  {\normalfont\large\bfseries\color{charcoal}}
+  {\utopiaheadingmark\thesection}{0.5em}{}[\utopiaheadingrule]
+\titleformat{\subsection}
+  {\normalfont\normalsize\bfseries\color{deepterra}}
+  {\thesubsection}{0.5em}{}
+\titleformat{\subsubsection}
+  {\normalfont\normalsize\bfseries\color{charcoal}}
+  {\thesubsubsection}{0.5em}{}
+\titlespacing*{\section}{0pt}{12pt}{8pt}
+\titlespacing*{\subsection}{0pt}{9pt}{4pt}
+\settasks{label=\Alph*.,label-width=2em}
+\renewcommand{\paren}[1][]{%
+  \unskip\nobreak\hfill\allowbreak\mbox{(\hspace{1em}#1\hspace{1em})}}
+\renewtcolorbox{lanbox}{utopia warm}
+\renewenvironment{remark}[1][注：]{%
+  \begin{honeycard}{#1}\songti}{\end{honeycard}}
+\renewenvironment{analysis}[1][【分析】]{%
+  \par\noindent{\color{deepterra}\bfseries #1}\,\songti}{\par}
+\mdfdefinestyle{wavy}{linecolor=warmborder,linewidth=0.5pt,
+  backgroundcolor=warmcream,tikzsetting={draw=warmborder,line width=0.5pt}}
+
+\newcommand{\mytitle}{}
+% 讲义连续排版，避免题头后出现仅有标题的空白封面。
+\titleclass{\chapter}{straight}
+\titleformat{\chapter}[hang]
+  {\normalfont\LARGE\bfseries\color{charcoal}}
+  {\textcolor{terracotta}{第\chinese{chapter}章}}{0.6em}{}[\utopiaheadingrule]
+\titlespacing*{\chapter}{0pt}{0pt}{14pt}
+
 \begin{document}
+\renewcommand{\mytitle}{Utopia Yuan 高中物理讲义}
+\utopiatitle{\mytitle}{高中物理 $\cdot$ 物理讲义}{梳理概念与方法，结合例题理解物理过程。}
 
-% --------------------------------------------------
-% [备用] 封面与目录导入
-% 若未来需要使用封面和目录，请取消注释以下代码：
-% --------------------------------------------------
-% \thispagestyle{nohf} 
-% \includepdf[pages=1,fitpaper=true]{cover/cover.pdf} 
-% 
-% %\cleardoublepage  % 确保下一页从奇数页开始 
-% % 添加超链接选项以避免PDF字符串中的令牌错误 
-% 
-% \thispagestyle{nohf} 
-% \clearpage 
-% \tableofcontents 
-% \thispagestyle{nohf} 
-% \newpage 
-% 
-% \setcounter{page}{1} 
-% --------------------------------------------------
-
-% 组卷程序从下面的章节标题开始插入内容；此处不预置任何学科示例题。
-\chapter{Utopia Yuan 高中物理讲义}
-\section{物理专题}
+% 组卷程序从下面的章节标题插入内容。
+\chapter{物理专题}
+\section{概念与方法}
 
 \end{document}
