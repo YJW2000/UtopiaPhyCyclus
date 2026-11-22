@@ -8,6 +8,7 @@ import type { ClipboardImage } from './bridge'
 import type { EditorDocument } from './editorContract'
 
 const Editor = lazy(() => import('./Editor'))
+const ArchitectureGuide = lazy(() => import('./ArchitectureGuide'))
 const pages = {
   stats: ['📊', '数据统计'],
   entry: ['📝', '图片识别'],
@@ -92,6 +93,7 @@ export default function App() {
   const routeGeneration = useRef(0),
     imageGeneration = useRef<number | null>(null),
     fileInput = useRef<HTMLInputElement>(null)
+  const mainScroll = useRef<HTMLDivElement>(null)
   const [paste, setPaste] = useState(''),
     [recentLoading, setRecentLoading] = useState(false)
   function theme(p: Prefs) {
@@ -157,6 +159,7 @@ export default function App() {
     setLegacyPending(false)
     setBusy('')
     setError('')
+    mainScroll.current?.scrollTo(0, 0)
     if (next === 'stats') void summaryLoad()
   }
   const work = useCallback(async (label: string, op: () => Promise<void>) => {
@@ -370,7 +373,7 @@ export default function App() {
         )}
         {!editing && (
           <div className="workspace-body">
-            <div className={'main-scroll' + (legacy ? ' embedded' : '')}>
+            <div ref={mainScroll} className={'main-scroll' + (legacy ? ' embedded' : '')}>
               {legacy ? (
                 <>
                   <div className="advanced-bar">
@@ -641,25 +644,29 @@ export default function App() {
                       </section>
                     </>
                   )}
-                  {(page === 'intro' || page === 'manual') && (
+                  {page === 'intro' && (
+                    <Suspense fallback={<p role="status">正在载入教程…</p>}>
+                      <ArchitectureGuide
+                        navigate={navigate}
+                        demo={demo}
+                        openClassic={() => openLegacy('intro')}
+                        classicPending={legacyPending}
+                      />
+                    </Suspense>
+                  )}
+                  {page === 'manual' && (
                     <>
                       <h1>{pages[page].join(' ')}</h1>
                       <section className="mc-card">
-                        <h2>
-                          {page === 'intro'
-                            ? '题库与工作文稿'
-                            : '从原卷到可编辑题目'}
-                        </h2>
+                        <h2>从原卷到可编辑题目</h2>
                         <p>
-                          {page === 'intro'
-                            ? '题库保存在本机文件夹。工作文稿保留独立的源码、排版结果和对话，确认入库后即可检索、选题和组卷。'
-                            : '在 PDF 录入打开文件，选择要重建的页码。框选题干或图像并在右侧提出修改，检查排版后的候选版本，再应用修改。'}
+                          在 PDF 录入打开文件，选择要重建的页码。框选题干或图像并在右侧提出修改，检查排版后的候选版本，再应用修改。
                         </p>
                         <button onClick={demo}>打开演示题</button>
                       </section>
                     </>
                   )}
-                  {page !== 'settings' && (
+                  {page !== 'settings' && page !== 'intro' && (
                     <button
                       className="advanced-link"
                       disabled={legacyPending || imageBusy}
@@ -675,10 +682,9 @@ export default function App() {
                               pdf: '逐题审阅与批量入库',
                               browse: '打开完整题库管理',
                               search: '打开高级检索',
-                              intro: '阅读项目架构介绍',
                               manual: '阅读完整规范指南',
                               stats: '查看详细统计',
-                            } as Record<string, string>
+                            }
                           )[page]}{' '}
                       ↗
                     </button>
