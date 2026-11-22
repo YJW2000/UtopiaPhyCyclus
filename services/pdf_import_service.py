@@ -1,7 +1,7 @@
 """Transcribe a PDF into bank questions and publish their original illustrations."""
 from __future__ import annotations
 
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass, field
 import json
 import math
@@ -35,6 +35,8 @@ _PAGE_SCHEMA = _record({
 _FIGURE = re.compile(r'\[\[FIG:([A-Za-z0-9_-]{1,40})\]\]')
 _BAD_HEADER = re.compile(r'[{}\\%#$&^~_\x00-\x1f<>:"/|*?]')
 _HEADER_TRANSLATION = str.maketrans({char: chr(ord(char) + 0xFEE0) for char in '{}\\%#$&^~_<>:"/|*?'})
+_BANK_TITLE = re.compile(r'【\s*(?P<year>[0-9]{4})(?:\s+|~{1,2})(?P<paper>[^{}【】。！？；]+?)\s*】')
+_QUESTION_LABELS = frozenset(('选择题', '单选题', '多选题', '单项选择题', '多项选择题', '实验题', '计算题', '解答题', '填空题'))
 _EXTERNAL = set('documentclass usepackage RequirePackage includegraphics input include openin openout '
                 'newread newwrite write read immediate catcode csname directlua special shipout '
                 'IfFileExists InputIfFileExists lstinputlisting inputminted verbatiminput '
@@ -43,19 +45,24 @@ _EXTERNAL = set('documentclass usepackage RequirePackage includegraphics input i
 
 
 @contextmanager
-def _open_pdf(data):
+def _open_pdf(data, lock=None):
     if not isinstance(data, bytes) or not data:
         raise ValueError('PDF 文件为空，请重新上传。')
     try:
-        document = pymupdf.open(stream=data, filetype='pdf')
+        with lock or nullcontext():
+            document = pymupdf.open(stream=data, filetype='pdf')
     except (pymupdf.FileDataError, RuntimeError) as error:
         raise ValueError('无法读取 PDF 文件，请检查文件是否完整。') from error
-    with document:
-        if document.needs_pass:
-            raise ValueError('PDF 已加密，请上传解密后的副本。')
-        if not len(document):
-            raise ValueError('PDF 没有可读取的页面。')
+    try:
+        with lock or nullcontext():
+            if document.needs_pass:
+                raise ValueError('PDF 已加密，请上传解密后的副本。')
+            if not len(document):
+                raise ValueError('PDF 没有可读取的页面。')
         yield document
+    finally:
+        with lock or nullcontext():
+            document.close()
 
 
 def inspect_pdf(pdf: bytes) -> int:
@@ -161,6 +168,29 @@ def _defaults(values):
     return fields
 
 
+def _read_bank_title(stem, number, fields):
+    year, paper = fields['year'], fields['paper']
+    if year != '待填写' or not stem:
+        return year, paper, stem
+    first_line, _, remaining = stem[0].partition('\n')
+    line = first_line.strip()
+    if line.startswith(r'\textbf{') and line.endswith('}'):
+        line = line[len(r'\textbf{'):-1].strip()
+    title = _BANK_TITLE.fullmatch(line)
+    if title is None or not (remaining.strip() or any(stem[1:])):
+        return year, paper, stem
+    name = title['paper'].strip()
+    printed = re.fullmatch(r'(.+?)[，,]\s*([0-9]+)', name)
+    if printed:
+        if not number.isascii() or not number.isdecimal() or int(printed[2]) != int(number):
+            return year, paper, stem
+        name = printed[1].strip()
+    if not name or name in _QUESTION_LABELS or _BAD_HEADER.search(name):
+        return year, paper, stem
+    body = [remaining, *stem[1:]] if remaining.strip() else stem[1:]
+    return title['year'], name, body
+
+
 def _assemble(questions, fields):
     if not questions:
         raise ValueError('所选范围内没有识别到题目或答案。')
@@ -178,9 +208,10 @@ def _assemble(questions, fields):
         number = question.number or next_number
         reserved.add(number)
         next_number = str(int(number) + 1) if number.isdecimal() else str(index + 1)
+        year, paper, stem = _read_bank_title(question.stem, number, fields)
         header = r'\begin{problem}' + ''.join('{%s}' % v for v in
-                    (fields['year'], fields['paper_type'], fields['paper'], number, fields['subject']))
-        parts = [header, *question.stem, r'\end{problem}']
+                    (year, fields['paper_type'], paper, number, fields['subject']))
+        parts = [header, *stem, r'\end{problem}']
         if question.answer:
             parts.extend([r'\begin{answer}', *question.answer, r'\end{answer}'])
         if question.solutions:
@@ -195,38 +226,51 @@ def _assemble(questions, fields):
     return joined
 
 
-def import_pdf(pdf: bytes, *, resource_dir, defaults=None, first_page=1, last_page=None, on_progress=None) -> str:
+def import_pdf(pdf: bytes, *, resource_dir, defaults=None, first_page=1, last_page=None, on_progress=None,
+               pages=None, pdf_lock=None) -> str:
     """Import an inclusive page range. Publish assets only after every page succeeds.
 
     on_progress receives the original 1-based page number and the number selected.
     Each returned includegraphics path resolves relative to resource_dir.
     """
     fields = _defaults(defaults)
-    with _open_pdf(pdf) as document:
-        stop = len(document) if last_page is None else last_page
-        if type(first_page) is not int or type(stop) is not int or not (1 <= first_page <= stop <= len(document)):
-            raise ValueError(f'页码范围无效，请选择 1 至 {len(document)} 页。')
+    with _open_pdf(pdf, pdf_lock) as document:
+        with pdf_lock or nullcontext():
+            page_count = len(document)
+        if pages is None:
+            stop = page_count if last_page is None else last_page
+            if type(first_page) is not int or type(stop) is not int or not (1 <= first_page <= stop <= page_count):
+                raise ValueError(f'页码范围无效，请选择 1 至 {page_count} 页。')
+            page_numbers = range(first_page, stop + 1)
+        else:
+            if not isinstance(pages, list) or not pages or any(type(page) is not int or not 1 <= page <= page_count for page in pages):
+                raise ValueError(f'页码范围无效，请选择 1 至 {page_count} 页。')
+            page_numbers = sorted(set(pages))
         root = Path(resource_dir).resolve()
         root.mkdir(parents=True, exist_ok=True)
         asset_folder = 'pdf-images-' + uuid.uuid4().hex[:16]
         questions, previous = {}, {}
         with tempfile.TemporaryDirectory(prefix='.pdf-import-', dir=root) as stage:
             images = Path(stage) / asset_folder
-            for number in range(first_page, stop + 1):
+            for number in page_numbers:
                 if on_progress:
-                    on_progress(number, stop - first_page + 1)
+                    on_progress(number, len(page_numbers))
                 try:
-                    page = document[number - 1]
-                    scale = min(2.5, 2400 / max(page.rect.width, page.rect.height))
-                    bitmap = page.get_pixmap(matrix=pymupdf.Matrix(scale, scale), colorspace=pymupdf.csRGB, alpha=False)
-                    prompt = _prompt(questions, previous, page.get_text('text', sort=True), number)
-                    result = run_local_codex_json(prompt, _PAGE_SCHEMA, [bitmap.tobytes('png')])
+                    with pdf_lock or nullcontext():
+                        page = document[number - 1]
+                        scale = min(2.5, 2400 / max(page.rect.width, page.rect.height))
+                        bitmap = page.get_pixmap(matrix=pymupdf.Matrix(scale, scale), colorspace=pymupdf.csRGB, alpha=False)
+                        native_text = page.get_text('text', sort=True)
+                        png = bitmap.tobytes('png')
+                    prompt = _prompt(questions, previous, native_text, number)
+                    result = run_local_codex_json(prompt, _PAGE_SCHEMA, [png])
                     fragments, rects = _page_fragments(result)
                     graphics = {}
                     for i, (ident, rect) in enumerate(rects.items(), 1):
                         name = f'p{number}-fig{i}.png'
                         images.mkdir(exist_ok=True)
-                        (images / name).write_bytes(crop_pdf_region(pdf, number, rect))
+                        with pdf_lock or nullcontext():
+                            (images / name).write_bytes(crop_pdf_region(pdf, number, rect))
                         fraction = rect[2] - rect[0]
                         graphics[ident] = r'\includegraphics[width=%.3f\linewidth]{%s/%s}' % (
                             fraction, asset_folder, name)

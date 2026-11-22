@@ -10,6 +10,7 @@ from contextlib import contextmanager
 import time
 import uuid
 
+from services.local_process import run
 from services.tex_import_service import parse_tex_questions
 from services.pdf_selection_edit import build_source_map
 from utils.tex_log_tools import extract_tex_errors, summarize_tex_log
@@ -250,7 +251,7 @@ def _tex_relative_path(path: Path, base: Path) -> str:
 
 def compile_tex_preview(source: str, project_dir: str, defaults: dict,
                         engine: str = 'xelatex', resource_dir: str = '', timeout: int = 45,
-                        *, editor_source: str | None = None) -> dict:
+                        *, editor_source: str | None = None, cache_dir=None, search_dirs=()) -> dict:
     executable = shutil.which(engine)
     if engine not in ('xelatex', 'lualatex', 'pdflatex') or not executable:
         return dict(ok=False, error=f'未找到本地 {engine} 编译器，请检查 TeX Live / MiKTeX 的 PATH。', log='')
@@ -264,7 +265,7 @@ def compile_tex_preview(source: str, project_dir: str, defaults: dict,
         # Inverse search uses the editor's image path spelling. Compilers get
         # the actual working-directory-relative filenames below.
         original_document = document
-        cache = Path(project_dir) / '.tikz_cache' / 'tex-entry'
+        cache = Path(cache_dir).resolve() if cache_dir else Path(project_dir) / '.tikz_cache' / 'tex-entry'
         cache.mkdir(parents=True, exist_ok=True)
         # 每次编译独占唯一目录（旧 PDF 不可能误判成功）。这里**不用** tempfile.TemporaryDirectory：
         # 它以 POSIX mode 0o700 建目录，在受限 token / 特殊 ACL 环境（如本机 DSH 沙箱）下
@@ -280,14 +281,25 @@ def compile_tex_preview(source: str, project_dir: str, defaults: dict,
             for ref in reversed(graphics_references(document)):
                 try:
                     image = resolve_image(ref['path'], project_dir, work_dir, source)
+                except FileNotFoundError:
+                    image = None
+                    for path in search_dirs:
+                        try:
+                            image = resolve_image(ref['path'], path, work_dir, source)
+                            break
+                        except FileNotFoundError:
+                            continue
+                    if image is None:
+                        continue  # Let TeX produce its normal actionable missing-file log.
                 except (OSError, ValueError):
-                    continue  # Let TeX produce its normal actionable missing-file log.
+                    continue
                 filename = _tex_relative_path(image, compiler_dir)
                 document = document[:ref['path_start']] + filename + document[ref['path_end']:]
             tex = directory / 'preview.tex'
             tex.write_text(document, encoding='utf-8')
             env = os.environ.copy()
             search = ['.', _tex_relative_path(work_dir, compiler_dir),
+                      *(_tex_relative_path(Path(path).resolve(), compiler_dir) for path in search_dirs),
                       _tex_relative_path(Path(project_dir).resolve(), compiler_dir), env.get('TEXINPUTS', '')]
             env['TEXINPUTS'] = os.pathsep.join(search)
             # 根因修复（2026-10-20，与 utils.tikz_ops 同一根因）：xdvipdfmx 用
@@ -309,7 +321,7 @@ def compile_tex_preview(source: str, project_dir: str, defaults: dict,
                 except OSError:
                     pass
             for _ in range(2):
-                completed = subprocess.run(
+                completed = run(
                     [executable, '-no-shell-escape', '-interaction=nonstopmode',
                      '-halt-on-error', '-file-line-error', '-synctex=1',
                      '-output-directory=' + _tex_relative_path(directory, compiler_dir), _tex_relative_path(tex, compiler_dir)],

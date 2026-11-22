@@ -71,6 +71,9 @@ def normalize_chat_completions_url(base_url: str) -> str:
 
 
 def post_chat_completion(base_url: str, headers: dict, payload: dict, timeout):
+    if base_url == 'local://codex':
+        from services.desktop_model import legacy_completion
+        return legacy_completion(payload, timeout), base_url
     import requests
 
     url = normalize_chat_completions_url(base_url)

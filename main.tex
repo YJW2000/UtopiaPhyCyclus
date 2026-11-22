@@ -1,0 +1,154 @@
+\documentclass[12pt,UTF-8]{UtopiaPhyCyclus_book}
+
+% ==================================================
+% 答案显示模式设置
+% 0: 正常显示答案 (Show Answer)
+% 1: 隐藏答案但保留篇幅空白 (Phantom Space)
+% 2: 隐藏答案并保留固定空白 (Fixed Space)
+% 3: 完全隐藏答案不留白 (No Space)
+\def\solutionmode{0} %在此处修改数字即可切换模式
+
+\NewDocumentEnvironment{solutions}{ O{【答案】} O{} O{} +b }{%
+  \ifcase\solutionmode\relax
+    % Mode 0: 正常显示
+    \par\noindent{\textcolor{main}{\bfseries \if\relax\detokenize{#1}\relax 【答案】\else #1\fi}}\,%
+    #4%
+    \par\vspace{\baselineskip}%
+  \or
+    % Mode 1: 留白篇幅长度
+    \par\noindent{\textcolor{main}{\bfseries \if\relax\detokenize{#1}\relax 【答案】\else #1\fi}}\,%
+    \phantom{%
+      \parbox[t]{\linewidth}{%
+         \renewenvironment{figure}[1][]{\center\captionsetup{type=figure}}{\endcenter}%
+         \renewenvironment{table}[1][]{\center\captionsetup{type=table}}{\endcenter}%
+         #4%
+      }%
+    }%
+    \par\vspace{\baselineskip}%
+  \or
+    % Mode 2: 留白固定长度 (默认 5cm，可按需调整)
+    \par\noindent{\textcolor{main}{\bfseries \if\relax\detokenize{#1}\relax 【答案】\else #1\fi}}\,%
+    \vspace*{5cm}%
+    \par\vspace{\baselineskip}%
+  \or
+    % Mode 3: 不留白 (什么都不显示)
+    % Do nothing
+  \fi
+}{}
+
+\NewDocumentEnvironment{answer}{ O{【答案】} O{} O{} +b }{%
+  \ifcase\solutionmode\relax
+    % Mode 0: 正常显示
+    \par\noindent{\textcolor{main}{\bfseries \if\relax\detokenize{#1}\relax 【答案】\else #1\fi}}\,%
+    #4%
+    \par\vspace{\baselineskip}%
+  \or
+    % Mode 1: 不留白 (什么都不显示)
+  \fi
+}{}
+
+% ==================================================
+
+
+% ==================================================
+% 自动替换 \left( \right) 为 ( ) 和 \left[ \right] 为 [ ]
+% 保持其他 delimiter 的 \left \right 行为不变
+% ==================================================
+\let\oldleft\left
+\let\oldright\right
+\def\left#1{%
+  \ifx#1(\mathopen{(}\else
+  \ifx#1[\mathopen{[}\else
+  \oldleft#1\fi\fi}
+\def\right#1{%
+  \ifx#1)\mathclose{)}\else
+  \ifx#1]\mathclose{]}\else
+  \oldright#1\fi\fi}
+
+% 标题设置
+
+\title{高中物理思维体系}
+\author{槿灵兮}
+\date{\today}
+
+\begin{document}
+
+
+
+\thispagestyle{nohf}
+\includepdf[pages=1,fitpaper=true]{cover/cover.pdf}
+
+%\cleardoublepage  % 确保下一页从奇数页开始
+% 添加超链接选项以避免PDF字符串中的令牌错误
+
+
+\thispagestyle{nohf}
+\clearpage
+\tableofcontents
+\thispagestyle{nohf}
+\newpage
+
+\setcounter{page}{1}
+
+
+\chapter{运动的描述}
+\input{chapters/运动的描述/content_运动的描述}
+
+\chapter{匀变速直线运动}
+\input{chapters/匀变速直线运动/content_匀变速直线运动}
+
+\chapter{平衡力学}
+\input{chapters/平衡力学/content_平衡力学}
+
+\chapter{牛顿运动定律}
+\input{chapters/牛顿运动定律/content_牛顿运动定律}
+
+\chapter{曲线运动}
+\input{chapters/曲线运动/content_曲线运动}
+
+\chapter{万有引力与航天}
+\input{chapters/万有引力与航天/content_万有引力与航天}
+
+\chapter{功与能量}
+\input{chapters/功与能量/content_功与能量}
+
+\chapter{动量}
+\input{chapters/动量/content_动量}
+
+\chapter{电场}
+\input{chapters/电场/content_电场}
+
+\chapter{电路}
+\input{chapters/电路/content_电路}
+
+\chapter{磁场运动}
+\input{chapters/磁场运动/content_磁场运动}
+
+\chapter{电磁感应}
+\input{chapters/电磁感应/content_电磁感应}
+
+\chapter{交流电}
+\input{chapters/交流电/content_交流电}
+
+\chapter{机械振动与机械波}
+\input{chapters/机械振动与机械波/content_机械振动与机械波}
+
+\chapter{光学}
+\input{chapters/光学/content_光学}
+
+\chapter{热学}
+\input{chapters/热学/content_热学}
+
+\chapter{近代物理}
+\input{chapters/近代物理/content_近代物理}
+
+\chapter{电学实验}
+\input{chapters/电学实验/content_电学实验}
+
+\chapter{力学试验}
+\input{chapters/力学试验/content_力学试验}
+
+\chapter{选修实验}
+\input{chapters/选修实验/content_选修实验}
+
+\end{document}

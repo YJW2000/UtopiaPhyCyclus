@@ -120,6 +120,30 @@ class PdfImportTests(unittest.TestCase):
         self.assertEqual([q.number for q in parsed], ['14', '15'])
         self.assertEqual(parsed[0].paper, '试卷＿1＆2')
 
+    def test_bank_title_from_first_ocr_line_replaces_unknown_defaults_only(self):
+        results = page(
+            fragment('q1', 'stem', r'\textbf{【2026 力与运动】}' + '\n光滑水平面上有一辆车。', '1'),
+            fragment('q2', 'stem', r'\textbf{【2025~~期中试卷，2】}', '2'),
+            fragment('q2', 'stem', '求下一时刻的速度。'),
+            fragment('q3', 'stem', r'\textbf{【单项选择题】}' + '\n请选择正确结论。', '3'),
+            fragment('q4', 'stem', r'\textbf{【2026 力与运动，9】}' + '\n阅读给出的引文。', '4'),
+        )
+        with patch('services.pdf_import_service.run_local_codex_json', return_value=results):
+            source = import_pdf(self.pdf, resource_dir=self.assets, first_page=2, last_page=2)
+            explicit = import_pdf(self.pdf, resource_dir=self.assets, first_page=2, last_page=2,
+                                  defaults={'year': '2024', 'paper': '手填卷名'})
+        parsed = parse_tex_questions(source, 'paper.tex', {})
+        self.assertEqual([(item.year, item.paper) for item in parsed],
+                         [('2026', '力与运动'), ('2025', '期中试卷'), ('待填写', 'PDF导入'), ('待填写', 'PDF导入')])
+        self.assertIn('光滑水平面上有一辆车。', parsed[0].content)
+        self.assertIn('求下一时刻的速度。', parsed[1].content)
+        self.assertNotIn('【2026 力与运动】', parsed[0].content)
+        self.assertNotIn('【2025~~期中试卷，2】', parsed[1].content)
+        self.assertIn('【单项选择题】', parsed[2].content)
+        self.assertIn('【2026 力与运动，9】', parsed[3].content)
+        self.assertIn(r'\begin{problem}{2024}{M}{手填卷名}{1}{未分类}', explicit)
+        self.assertIn('【2026 力与运动】', explicit)
+
     def test_invalid_defaults_precede_any_agent_call_and_numbers_cannot_collide(self):
         with patch('services.pdf_import_service.run_local_codex_json') as agent, self.assertRaises(ValueError):
             import_pdf(self.pdf, resource_dir=self.assets, defaults={'paper': 'two\nlines'})

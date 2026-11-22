@@ -10,7 +10,8 @@ from contextlib import closing
 from utils.core_config import BASE_DIR
 
 
-OPERATION_LOG_PATH = os.path.join(BASE_DIR, "utils", "operation_log.sqlite3")
+OPERATION_LOG_PATH = os.path.join(os.environ.get("UTOPIA_DESKTOP_LIBRARY") or BASE_DIR,
+                                  "utils", "operation_log.sqlite3")
 
 
 def _connect() -> sqlite3.Connection:

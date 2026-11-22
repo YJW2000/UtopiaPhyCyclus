@@ -215,10 +215,10 @@ def _iter_latex_preview_segments(s):
         if s.startswith("$$", i):
             math_start = i + 2
             math_end_token = "$$"
-        elif s.startswith(r"\[", i):
+        elif s.startswith(r"\[", i) and (i == 0 or s[i - 1] != "\\"):
             math_start = i + 2
             math_end_token = r"\]"
-        elif s.startswith(r"\(", i):
+        elif s.startswith(r"\(", i) and (i == 0 or s[i - 1] != "\\"):
             math_start = i + 2
             math_end_token = r"\)"
         elif s[i] == "$" and (i == 0 or s[i - 1] != "\\"):
@@ -227,6 +227,8 @@ def _iter_latex_preview_segments(s):
 
         if math_start is not None:
             end = s.find(math_end_token, math_start)
+            while end > 0 and s[end - 1] == "\\":
+                end = s.find(math_end_token, end + len(math_end_token))
             if end == -1:
                 yield "math", s[i:]
                 return
@@ -290,7 +292,18 @@ def _meter_html(meter, index):
 
 
 def _replace_circled_for_preview(s):
+    def replace_textcircled(segment, in_math):
+        def format_number(inner):
+            inner = re.sub(
+                r'\\(?:tiny|scriptsize|footnotesize|small|normalsize)(?![A-Za-z@])\s*',
+                '', inner,
+            )
+            value = _circled_text_value(inner)
+            return r'\text{' + value + '}' if in_math else value
+        return _replace_braced_command(segment, 'textcircled', format_number)
+
     def replace_math(segment):
+        segment = replace_textcircled(segment, True)
         segment = re.sub(
             r'\\circled([AV])\{([^{}]*)\}',
             lambda m: r'\text{' + m.group(1) + r'}_{' + m.group(2).strip() + '}',
@@ -312,6 +325,7 @@ def _replace_circled_for_preview(s):
         if kind == "math":
             out.append(replace_math(segment))
         elif kind == "text":
+            segment = replace_textcircled(segment, False)
             segment = re.sub(
                 r'\\circled([AV])\{([^{}]*)\}',
                 lambda m: _meter_html(m.group(1), m.group(2)),
@@ -359,6 +373,9 @@ def _strip_preview_layout_wrappers(s):
     文字（用户反馈「题目中残留 tex 代码」）。这里只剥离版式壳，保留正文与图片。
     """
     s = s or ""
+    # 局部字号/公式间距分组只影响纸面排版；数学段已在入口隔离。
+    s = re.sub(r'\\(?:begingroup|endgroup)(?![A-Za-z@])\s*', '', s)
+    s = re.sub(r'\\(?:setlength|addtolength)\s*\{[^{}]*\}\s*\{[^{}]*\}\s*', '', s)
     # figure 浮动体：环境壳与位置参数
     s = re.sub(r'\\begin\{figure\*?\}(?:\[[^\]]*\])?', '\n\n', s)
     s = re.sub(r'\\end\{figure\*?\}', '\n\n', s)
@@ -436,6 +453,73 @@ def _replace_braced_command(text, command, formatter):
     return ''.join(out)
 
 
+def _split_preview_align_rows(body):
+    r"""Split only outer alignment rows; keep matrix/aligned line breaks intact."""
+    rows, start, cursor, depth, environments = [], 0, 0, 0, 0
+    while cursor < len(body):
+        env = re.match(r'\\(begin|end)\{[^{}]+\}', body[cursor:])
+        if env:
+            environments += 1 if env.group(1) == 'begin' else -1
+            cursor += env.end()
+            continue
+        if body.startswith(r'\\', cursor) and depth == 0 and environments == 0:
+            rows.append(body[start:cursor].strip())
+            cursor += 2
+            spacing = re.match(r'\s*\[[^\]]*\]', body[cursor:])
+            if spacing:
+                cursor += spacing.end()
+            start = cursor
+            continue
+        if body[cursor] == '\\':
+            cursor += 2
+            continue
+        if body[cursor] == '{':
+            depth += 1
+        elif body[cursor] == '}':
+            depth -= 1
+        cursor += 1
+    rows.append(body[start:].strip())
+    return [row for row in rows if row]
+
+
+def _normalize_preview_math_environments(content):
+    r"""Make display environments recognizable before any prose conversion.
+
+    KaTeX accepts tags only in display math, and at most one per display.
+    Split tagged align rows into displays, moving their tag outside aligned.
+    Nested math environments remain intact (including their & and \\).
+    """
+    def display(body):
+        return '\n\n$$\n' + body.strip() + '\n$$\n\n'
+
+    def convert(match):
+        name, body = match.group(1), match.group(2)
+        if name.rstrip('*') == 'equation':
+            return display(body)
+        if not re.search(r'\\tag\*?\s*\{', body):
+            return display(r'\begin{aligned}' + '\n' + body.strip() + '\n' + r'\end{aligned}')
+        displays = []
+        for row in _split_preview_align_rows(body):
+            tags = []
+            row = re.sub(r'\\(tag\*?)\s+\{', r'\\\1{', row)
+            for command in ('tag*', 'tag'):
+                def save_tag(inner, command=command):
+                    tags.append('\\' + command + '{' + inner + '}')
+                    return ''
+                row = _replace_braced_command(row, command, save_tag)
+            row = re.sub(r'\\(?:notag|nonumber)(?![A-Za-z@])', '', row).strip()
+            displays.append(display(
+                r'\begin{aligned}' + '\n' + row + '\n' + r'\end{aligned}'
+                + ('\n' + '\n'.join(tags) if tags else '')
+            ))
+        return ''.join(displays)
+
+    return re.sub(
+        r'\\begin\{(equation\*?|align\*?)\}([\s\S]*?)\\end\{\1\}',
+        convert, content,
+    )
+
+
 def latex_to_markdown(content, show_title=True, source_dir=None):
     """简单的 LaTeX 转 Markdown 用于预览"""
     content = repair_problem_headers(content)
@@ -473,6 +557,32 @@ def latex_to_markdown(content, show_title=True, source_dir=None):
     # 兼容历史数据：预览时也剔除残留的 \newpage 等分页命令
     content = strip_layout_commands(content)
     content = re.sub(r'(?m)(?<!\\)%[^\n]*', '', content)
+    # 隔离公式必须早于字号、强调、下划线、换行和未知环境清理。
+    # 否则 equation 内的 aligned/\\/boxed 会被当成正文改写，导致 KaTeX 红字。
+    content = _normalize_preview_math_environments(content)
+    math_previews = []
+    math_prefix = 'MCMATHPREVIEWTOKEN'
+    while math_prefix in content:
+        math_prefix += 'X'
+    protected_content = []
+    for kind, segment in _iter_latex_preview_segments(content):
+        if kind != 'math':
+            protected_content.append(segment)
+            continue
+        display = segment.startswith(('$$', r'\['))
+        delimiter_width = 2 if display or segment.startswith(r'\(') else 1
+        end_token = {r'\[': r'\]', r'\(': r'\)'}.get(segment[:2], '$' * delimiter_width)
+        if len(segment) >= 2 * delimiter_width and segment.endswith(end_token):
+            body = segment[delimiter_width:-delimiter_width].strip()
+            rendered = ('$$\n' + body + '\n$$') if display else ('$' + body + '$')
+        else:
+            # 尚在编辑中的未闭合公式也必须保留每个字符。
+            rendered = segment
+        rendered = _replace_circled_for_preview(rendered)
+        token = f'{math_prefix}{len(math_previews)}END'
+        math_previews.append((token, rendered))
+        protected_content.append('\n\n' + token + '\n\n' if display else token)
+    content = ''.join(protected_content)
     content = re.sub(r'\\noindent\b\s*', '', content)
     content = re.sub(r'\\textbf\{([^{}]*)\}', r'**\1**', content)
     content = re.sub(r"(?<!\$)\$([^$\n]*?)\$(?!\$)", lambda m: "$" + m.group(1).strip() + "$", content)
@@ -697,19 +807,6 @@ def latex_to_markdown(content, show_title=True, source_dir=None):
     content = _replace_list_env(content, 'enumerate', _enumerate_to_markdown)
     content = _replace_list_env(content, 'itemize', _itemize_to_markdown)
     
-    def replace_align(match):
-        content_inner = match.group(1)
-        content_inner = content_inner.replace('&', '')
-        lines = content_inner.split(r'\\')
-        formatted_lines = []
-        for line in lines:
-            line = line.strip()
-            if line:
-                formatted_lines.append(f"$\n{line}\n$")
-        return '\n\n'.join(formatted_lines) + '\n'
-
-    content = re.sub(r'\\begin\{align\*?\}(.*?)\\end\{align\*?\}', replace_align, content, flags=re.DOTALL)
-
     content = re.sub(r'\\\[(.*?)\\\]', r'$$\n\1\n$$', content, flags=re.DOTALL)
     content = re.sub(r'\\\((.*?)\\\)', r'$\1$', content, flags=re.DOTALL)
     content = _replace_latex_linebreaks_outside_math(content)
@@ -759,12 +856,7 @@ def latex_to_markdown(content, show_title=True, source_dir=None):
     content = re.sub(r"[ \t]*\$\$[ \t]*", "$$", content)
     content = re.sub(r"(?<!\n)\$\$", r"\n$$", content)
     content = re.sub(r"\$\$(?!\n)", r"$$\n", content)
-    # 兜底：公式环境与未知自定义环境不能把 TeX 源码漏进预览
-    content = re.sub(
-        r'\\begin\{equation\*?\}([\s\S]*?)\\end\{equation\*?\}',
-        lambda m: '$$\n' + m.group(1).strip() + '\n$$',
-        content,
-    )
+    # 未知正文环境去壳；公式已隔离，不会误删 aligned/cases/matrix。
     content = re.sub(r'\\begin\{[A-Za-z@*]+\}(?:\[[^\]]*\])?', '\n\n', content)
     content = re.sub(r'\\end\{[A-Za-z@*]+\}', '\n\n', content)
     content = re.sub(r'\\item\s*', '\n- ', content)
@@ -773,6 +865,8 @@ def latex_to_markdown(content, show_title=True, source_dir=None):
     # 版式命令（\hfill 等）可能留下只有全角空格的行，预览中不应显示
     content = re.sub(r"(?m)^[\u3000\s]+$", "", content)
     content = re.sub(r"\n{3,}", "\n\n", content)
+    for token, preview in math_previews:
+        content = content.replace(token, preview)
     for token, code, kwargs in diagrams:
         content = content.replace(token, _tikz_image_markdown(code, **kwargs).strip())
 
@@ -841,7 +935,7 @@ def update_file_tags(old_fpath, new_tags_list):
                 
     return True
 
-def extract_and_replace_tikz(content, filename, save_dir, source_dir=None):
+def extract_and_replace_tikz(content, filename, save_dir, source_dir=None, *, project_dir=BASE_DIR):
     r"""
     提取LaTeX内容中的TikZ代码块，保存为独立文件到“相关图”文件夹中。
     注意：修改后，主文件中不再替换为 \input{}，而是保留原始的 \begin{tikzpicture}...\end{tikzpicture} 代码，
@@ -851,7 +945,7 @@ def extract_and_replace_tikz(content, filename, save_dir, source_dir=None):
     if "相关图" in save_dir or "相关图" in filename:
         return content
 
-    content = package_question_images(content, filename, save_dir, BASE_DIR, source_dir)
+    content = package_question_images(content, filename, save_dir, project_dir, source_dir)
 
     base_name = filename.replace('.tex', '')
     tikz_dir_name = f"{base_name} 相关图"
@@ -880,7 +974,7 @@ def extract_and_replace_tikz(content, filename, save_dir, source_dir=None):
                 rel_path = m_path.group(1)
                 if not rel_path.endswith('.tex'):
                     rel_path += '.tex'
-                abs_path = os.path.join(BASE_DIR, rel_path)
+                abs_path = os.path.join(project_dir, rel_path)
                 if os.path.exists(abs_path):
                     with open(abs_path, 'r', encoding='utf-8') as f:
                         tikz_code = f.read()

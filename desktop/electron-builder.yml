@@ -1,0 +1,39 @@
+appId: io.github.yjw2000.utopiaphycyclus.desktop.preview
+productName: 乌托邦高中物理题库助手桌面预览版
+executableName: UtopiaPhyCyclusDesktop
+directories:
+  output: ../dist/desktop-preview/installer
+files:
+  - dist/**/*
+  - main.cjs
+  - preload.cjs
+  - THIRD_PARTY_NOTICES.txt
+extraResources:
+  - from: ../.release-work/desktop-preview/app-backend
+    to: app-backend
+  - from: ../.release-work/desktop-preview/python
+    to: python
+  - from: ../.release-work/desktop-preview/runtimes
+    to: runtimes
+  - from: ../.release-work/desktop-preview/runtime-manifest.json
+    to: runtime-manifest.json
+  - from: ../fig/UtopiaPhyCyclus_sisyphus_icon.ico
+    to: UtopiaPhyCyclus.ico
+win:
+  target: nsis
+  icon: ../static/UtopiaPhyCyclus-desktop.ico
+  artifactName: UtopiaPhyCyclus-Desktop-Preview-${version}-windows-${arch}.${ext}
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  differentialPackage: false
+  createDesktopShortcut: always
+  createStartMenuShortcut: true
+  shortcutName: 乌托邦高中物理题库助手（桌面预览版）
+  uninstallDisplayName: 乌托邦高中物理题库助手（桌面预览版）
+  installerIcon: ../static/UtopiaPhyCyclus-desktop.ico
+  uninstallerIcon: ../static/UtopiaPhyCyclus-desktop.ico
+  installerLanguages:
+    - zh_CN
+  runAfterFinish: true

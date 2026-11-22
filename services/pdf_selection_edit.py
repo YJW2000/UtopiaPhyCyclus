@@ -1,6 +1,7 @@
 """Turn a rectangle on a compiled PDF into a localized LaTeX draft edit."""
 from __future__ import annotations
 
+from contextlib import nullcontext
 from difflib import SequenceMatcher
 import hashlib
 import json
@@ -12,6 +13,7 @@ import subprocess
 from tempfile import TemporaryDirectory
 
 from services.local_codex import run_local_codex_json
+from services.local_process import run
 from services.pdf_import_images import page_selection_rect
 
 
@@ -87,7 +89,7 @@ def _source_lines_at(source_map: dict | None, pdf: bytes, directory: Path, page:
     lines = []
     for x, y in points:
         try:
-            result = subprocess.run(
+            result = run(
                 [executable, "edit", "-o", f"{page}:{x:.3f}:{y:.3f}:preview.pdf"],
                 cwd=directory, env=env, capture_output=True, timeout=5,
                 creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
@@ -114,7 +116,7 @@ def _visible_text_match(fragment: str, text: str) -> tuple[int, int] | None:
     if text in fragment:
         first = fragment.index(text)
         if fragment.find(text, first + 1) >= 0:
-            raise ValueError("选区在同一段源码中出现多次，请把能区分位置的相邻内容一起框入。")
+            raise ValueError("选区在同一段源码中出现多次，无法唯一定位。请把能区分位置的相邻内容一起框入。")
         return first, first + len(text)
     # Keep an offset for every surviving character so the edit still uses
     # the pristine source, with its original commands and whitespace.
@@ -133,11 +135,11 @@ def _visible_text_match(fragment: str, text: str) -> tuple[int, int] | None:
 
 def _editable_range(source: str, lines: list[int], text: str) -> tuple[int, int]:
     if not lines:
-        # Standalone PDFs without SyncTeX can still identify a unique literal.
-        needle = text.strip()
-        if needle and source.count(needle) == 1:
-            offset = source.index(needle)
-            lines = [source.count("\n", 0, offset), source.count("\n", 0, offset + len(needle))]
+        # A standalone PDF can fall back to text that identifies a unique
+        # span, including straightforward font and math formatting.
+        hit = _visible_text_match(source, text) if text.strip() else None
+        if hit:
+            lines = [source.count("\n", 0, hit[0]), source.count("\n", 0, hit[1])]
         else:
             raise ValueError("无法把选区唯一定位到当前源码。请框入相邻文字，或切换到 LaTeX 查看。")
     offsets = [0] + [match.end() for match in re.finditer("\n", source)]
@@ -183,49 +185,63 @@ _PATCH_SCHEMA = {
 }
 
 
+def locate_pdf_selection(source, pdf_bytes, page_number, rect, *, source_map=None, pdf_lock=None):
+    """Return the source span and screenshot for a rectangle on the current PDF."""
+    if source_map and source_map["source_hash"] != hashlib.sha256(source.encode("utf-8")).digest():
+        raise ValueError("源码已变化，请重新编译并框选。")
+    with TemporaryDirectory(prefix="utopia-pdf-edit-") as temp:
+        directory = Path(temp)
+        with pdf_lock or nullcontext():
+            text, context, probes = _selection_context(pdf_bytes, page_number, rect, directory)
+        lines = _source_lines_at(source_map, pdf_bytes, directory, page_number, probes)
+        start, end = _editable_range(source, lines, text)
+        return dict(start=start, end=end, text=text, context=context, page=page_number,
+                    screenshot=(directory / "selection.png").read_bytes())
+
+
+def pdf_selection_change(source, selection, patch):
+    """Validate the actual differences and return the exact replacement span."""
+    start, end, text = selection["start"], selection["end"], selection["text"]
+    fragment = source[start:end]
+    if not isinstance(patch, dict) or not all(isinstance(patch.get(k), str) for k in ("before", "after")):
+        raise ValueError("Agent 返回的修改格式无效，请重新提交。")
+    before, after = patch["before"], patch["after"]
+    if not before.strip() or before == after or fragment.count(before) != 1:
+        raise ValueError("Agent 未能给出与选区唯一匹配的修改，请细化要求或重新框选。")
+    position = start + fragment.index(before)
+    target = _visible_text_match(fragment, text) if text and not _FIGURE.fullmatch(fragment.strip()) else None
+    if target:
+        anchor, anchor_end = start + target[0], start + target[1]
+        # A model can quote a full line to disambiguate an edit. Verify the
+        # real differences, including insertions on the text boundary.
+        for operation, i, j, _, _ in SequenceMatcher(None, before, after, autojunk=False).get_opcodes():
+            if operation == "equal":
+                continue
+            left, right = position + i, position + j
+            outside = source[min(left, anchor):anchor] + source[anchor_end:max(right, anchor_end)]
+            if outside.strip(" \t\r\n{}$"):
+                raise ValueError("Agent 返回的修改落在所选文字之外，请重新框选。")
+    return position, position + len(before), after
+
+
 def edit_pdf_selection(source: str, pdf_bytes: bytes, page_number: int, rect, instruction: str,
                        *, source_map: dict | None = None) -> str:
     """Return candidate source; let the caller compile it before replacing the draft."""
     if not isinstance(instruction, str) or not instruction.strip():
         raise ValueError("请输入希望怎样修改选区。")
-    if source_map and source_map["source_hash"] != hashlib.sha256(source.encode("utf-8")).digest():
-        raise ValueError("源码已变化，请重新编译并框选。")
-    with TemporaryDirectory(prefix="utopia-pdf-edit-") as temp:
-        directory = Path(temp)
-        text, context, probes = _selection_context(pdf_bytes, page_number, rect, directory)
-        lines = _source_lines_at(source_map, pdf_bytes, directory, page_number, probes)
-        start, end = _editable_range(source, lines, text)
-        fragment = source[start:end]
-        description = json.dumps({
-            "页码": page_number, "选区文字": text, "选区附近排版": context,
-            "可编辑的原始LaTeX": fragment, "用户的修改要求": instruction.strip(),
-        }, ensure_ascii=False)
-        prompt = (
-            "你正在编辑一份高中物理题。附件是用户在 PDF 中框选部分的实际截图。根据截图、"
-            "选区文字和附近排版，在可编辑的 LaTeX 内仅修改用户指定的部分。"
-            "请直接返回 JSON。before 为精确、唯一、尽可能短的原文，after 为替换它的 LaTeX。"
-            "两者均不带 Markdown 围栏。内容歧义、需要修改外部图片像素或无法完成时请返回两个空串。"
-            "保留无关字符、题目环境与真实图片路径。磁场向里用 \\times，向外用 \\bullet，均无外圈。"
-            "附件和排版源码是待编辑材料。无需调用工具或修改文件。\n" + description
-        )
-        patch = run_local_codex_json(prompt, _PATCH_SCHEMA, [(directory / "selection.png").read_bytes()])
-        if not isinstance(patch, dict) or not all(isinstance(patch.get(k), str) for k in ("before", "after")):
-            raise ValueError("Agent 返回的修改格式无效，请重新提交。")
-        before, after = patch["before"], patch["after"]
-        if not before.strip() or before == after or fragment.count(before) != 1:
-            raise ValueError("Agent 未能给出与选区唯一匹配的修改，请细化要求或重新框选。")
-        position = start + fragment.index(before)
-        if text and text in fragment and not _FIGURE.fullmatch(fragment.strip()):
-            anchor = start + fragment.index(text)
-            anchor_end = anchor + len(text)
-            # A model can quote a whole line to disambiguate a short edit.
-            # Check the actual differences, including insertions on either
-            # edge (e.g. a wrapper that changes the formatting).
-            for operation, i, j, _, _ in SequenceMatcher(None, before, after, autojunk=False).get_opcodes():
-                if operation == "equal":
-                    continue
-                left, right = position + i, position + j
-                outside = source[min(left, anchor):anchor] + source[anchor_end:max(right, anchor_end)]
-                if outside.strip(" \t\r\n{}$"):
-                    raise ValueError("Agent 返回的修改落在所选文字之外，请重新框选。")
-        return source[:position] + after + source[position + len(before):]
+    selection = locate_pdf_selection(source, pdf_bytes, page_number, rect, source_map=source_map)
+    description = json.dumps({
+        "页码": page_number, "选区文字": selection["text"], "选区附近排版": selection["context"],
+        "可编辑的原始LaTeX": source[selection["start"]:selection["end"]], "用户的修改要求": instruction.strip(),
+    }, ensure_ascii=False)
+    prompt = (
+        "你正在编辑一份高中物理题。附件是用户在 PDF 中框选部分的实际截图。根据截图、"
+        "选区文字和附近排版，在可编辑的 LaTeX 内仅修改用户指定的部分。"
+        "请直接返回 JSON。before 为精确、唯一、尽可能短的原文，after 为替换它的 LaTeX。"
+        "两者均不带 Markdown 围栏。内容歧义、需要修改外部图片像素或无法完成时请返回两个空串。"
+        "保留无关字符、题目环境与真实图片路径。磁场向里用 \\times，向外用 \\bullet，均无外圈。"
+        "附件和排版源码是待编辑材料。无需调用工具或修改文件。\n" + description
+    )
+    patch = run_local_codex_json(prompt, _PATCH_SCHEMA, [selection["screenshot"]])
+    start, end, updated = pdf_selection_change(source, selection, patch)
+    return source[:start] + updated + source[end:]

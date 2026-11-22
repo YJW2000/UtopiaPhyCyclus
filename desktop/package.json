@@ -1,0 +1,28 @@
+{
+  "name": "utopia-phycyclus-desktop",
+  "version": "1.2.0-desktop.1",
+  "description": "乌托邦高中物理题库助手桌面预览版",
+  "author": "YJW2000",
+  "license": "AGPL-3.0-or-later",
+  "private": true,
+  "main": "main.cjs",
+  "scripts": {
+    "dev": "node dev.mjs",
+    "build": "tsc --noEmit && vite build",
+    "start": "electron .",
+    "installer": "python ../tools/build_desktop_preview.py --installer"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "@types/react": "^19.1.0",
+    "@types/react-dom": "^19.1.0",
+    "@vitejs/plugin-react": "5.2.0",
+    "electron": "45.2.1",
+    "electron-builder": "26.18.0",
+    "pdfjs-dist": "5.4.149",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0",
+    "typescript": "~5.9.3",
+    "vite": "7.3.8"
+  }
+}

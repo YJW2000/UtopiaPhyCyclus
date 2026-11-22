@@ -75,6 +75,18 @@ def repair_problem_headers(text: str) -> str:
     return text
 
 
+def replace_parsed_problem_header(source: str, fields) -> str:
+    """Update the header of a problem returned by parse_tex_questions."""
+    marker = re.search(r'\\begin\{problem\}', _mask_comments(source))
+    if marker is None:
+        raise ValueError('题目缺少 problem 环境。')
+    existing, end = _header(source, marker.end())
+    if not existing:
+        raise ValueError('题目缺少完整的 problem 参数。')
+    replacement = ''.join('{' + value + '}' for value in fields)
+    return source[:marker.end()] + replacement + source[end:]
+
+
 def numbered_question_boundaries(text: str) -> list[tuple[int, str]]:
     """Find top-level numbered headings, never option/subquestion environments."""
     pattern = re.compile(

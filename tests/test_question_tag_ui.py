@@ -13,8 +13,10 @@ st.session_state['result'] = app._free_tag_editor_value('test', 'chips')
 '''
 
 ENTRY_SCRIPT = '''
+from unittest.mock import patch
 import utopia_phycyclus_app as app
-app.page_entry()
+with patch.object(app, '_assess_batch_question', side_effect=lambda question, **_: question):
+    app.page_entry()
 '''
 
 CARD_SCRIPT = '''

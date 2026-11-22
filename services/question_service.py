@@ -83,6 +83,9 @@ def create_question_file(
     question_number: str,
     subject: str,
     allow_duplicate: bool = False,
+    *,
+    resource_dir=None,
+    project_dir=None,
 ) -> str:
     """Create a question file and index row as one guarded operation."""
     if not file_path:
@@ -109,8 +112,14 @@ def create_question_file(
     if exact_matches and not allow_duplicate:
         raise QuestionDuplicateError(exact_matches)
 
-    from utils.image_assets import package_question_images
-    content = package_question_images(content, os.path.basename(file_path), os.path.dirname(file_path))
+    if project_dir is not None:
+        from utils.latex_ops import extract_and_replace_tikz
+        content = extract_and_replace_tikz(content, os.path.basename(file_path), os.path.dirname(file_path),
+                                           source_dir=resource_dir, project_dir=project_dir)
+    else:
+        from utils.image_assets import package_question_images
+        content = package_question_images(content, os.path.basename(file_path), os.path.dirname(file_path),
+                                          source_dir=resource_dir)
     atomic_write_text(file_path, content, backup=False)
     try:
         question_id = add_to_csv_index(

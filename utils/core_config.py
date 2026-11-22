@@ -2,11 +2,12 @@ import os
 from dotenv import load_dotenv
 
 # ================= 配置与常量 =================
-BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+BASE_DIR = os.getenv('UTOPIA_LEGACY_ROOT') or os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 # Only read this application's configuration, never a parent directory's .env.
 load_dotenv(os.path.join(BASE_DIR, ".env"))
-CHAPTERS_DIR = os.path.join(BASE_DIR, "chapters")
-CSV_INDEX_PATH = os.path.join(BASE_DIR, "utils", "题库索引表.csv")
+_library = os.getenv('UTOPIA_DESKTOP_LIBRARY') or BASE_DIR
+CHAPTERS_DIR = os.path.join(_library, "chapters")
+CSV_INDEX_PATH = os.path.join(_library, "utils", "题库索引表.csv")
 
 # AI 配置
 AI_API_KEY = os.getenv("AI_API_KEY")

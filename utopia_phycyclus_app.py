@@ -64,9 +64,9 @@ def _question_key(prefix: str, fpath: str) -> str:
     return hashlib.md5(f"{prefix}:{fpath}".encode("utf-8", errors="ignore")).hexdigest()[:12]
 
 
-APP_ROOT = os.path.dirname(os.path.abspath(__file__))
+APP_ROOT = os.getenv("UTOPIA_LEGACY_ROOT") or os.path.dirname(os.path.abspath(__file__))
 load_dotenv(os.path.join(APP_ROOT, ".env"))
-ensure_log_csv(APP_ROOT)
+ensure_log_csv(os.getenv("UTOPIA_DESKTOP_LIBRARY") or APP_ROOT)
 
 from utils.core_config import *
 from utils.file_ops import *
@@ -783,9 +783,9 @@ AI_ENV_WRITE_ORDER = (
 )
 
 def _root_env_path() -> str:
-    return os.path.join(APP_ROOT, ".env")
+    return os.path.join(os.getenv("UTOPIA_DESKTOP_LIBRARY") or APP_ROOT, ".env")
 
-def _read_root_ai_env_config() -> dict:
+def _read_root_ai_env_config(*, provider=True) -> dict:
     env_path = _root_env_path()
     file_exists = os.path.exists(env_path)
     raw = {}
@@ -801,6 +801,11 @@ def _read_root_ai_env_config() -> dict:
             values[key] = raw.get(key, default)
         else:
             values[key] = os.getenv(key, default)
+    if provider and os.environ.get("UTOPIA_DESKTOP_STATE"):
+        from services.desktop_model import read_settings
+        if read_settings().get("provider") != "api":
+            values.update(AI_BASE_URL="local://codex", AI_API_KEY="desktop-session",
+                          AI_MODEL_NAME="codex", AI_SOLVER_MODEL_NAME="codex")
     return values
 
 def _format_env_value(value: str) -> str:
@@ -925,7 +930,7 @@ def page_api_settings():
     with _c_api_hint:
         st.caption("修改后点「保存配置」写入根目录 .env / ocr_prompt.txt，当前会话立即生效。")
     env_path = _root_env_path()
-    config = _read_root_ai_env_config()
+    config = _read_root_ai_env_config(provider=False)
     ocr_prompt_value, prompt_file_exists = _read_ocr_prompt_for_settings(config)
     env_state = "已读取根目录 .env" if os.path.exists(env_path) else "未找到 .env，保存时会自动创建"
     prompt_state = "已读取根目录 ocr_prompt.txt" if prompt_file_exists else "未找到 ocr_prompt.txt，保存时会自动创建"
@@ -1244,7 +1249,8 @@ def replace_problem_header(tex: str, new_year: str, new_type: str, new_name: str
         s2 = re.sub(r"\\begin\{problem\}", lambda _m: new_header, s, count=1)
     return s2
 
-def apply_meta_rename_and_update(old_path: str, new_year: str, new_type: str, new_name: str, new_num: str, new_subject_str: str):
+def apply_meta_rename_and_update(old_path: str, new_year: str, new_type: str, new_name: str, new_num: str,
+                                 new_subject_str: str, *, edited_content=None):
     old_path = old_path or ""
     if not old_path or not os.path.exists(old_path):
         raise FileNotFoundError(old_path)
@@ -1261,13 +1267,16 @@ def apply_meta_rename_and_update(old_path: str, new_year: str, new_type: str, ne
     new_filename = generate_filename(new_year, new_type, new_name, new_num, new_subject_str)
     new_path = os.path.join(target_dir, new_filename)
 
-    with open(old_path, "r", encoding="utf-8") as f:
-        old_content = f.read()
-
-    new_content = replace_problem_header(old_content, str(new_year), new_type, new_name, new_num, new_subject_str)
     same_path = os.path.normcase(os.path.abspath(new_path)) == os.path.normcase(os.path.abspath(old_path))
     if not same_path and os.path.exists(new_path):
         raise FileExistsError(f"目标题目文件已存在：{new_path}")
+    if edited_content is None:
+        with open(old_path, "r", encoding="utf-8") as f:
+            edited_content = f.read()
+    else:
+        edited_content = extract_and_replace_tikz(edited_content, new_filename, target_dir,
+                                                  source_dir=os.path.dirname(old_path))
+    new_content = replace_problem_header(edited_content, str(new_year), new_type, new_name, new_num, new_subject_str)
 
     backup_path = ""
     if same_path:
@@ -2728,7 +2737,7 @@ def ocr_image_to_latex(images=None, max_image_size: int = 1600, max_tokens: int 
         max_tokens: 本次 OCR 请求允许返回的最大 token 数。
     """
     # 动态加载 .env 配置，支持热更新
-    load_dotenv(_root_env_path(), override=True)
+    os.environ.update({k: str(v) for k, v in _read_root_ai_env_config().items() if k.startswith("AI_")})
 
     api_key = os.getenv("AI_API_KEY")
     base_url = os.getenv("AI_BASE_URL", "https://api.openai.com/v1")
@@ -2789,7 +2798,7 @@ def ocr_image_to_latex(images=None, max_image_size: int = 1600, max_tokens: int 
 
             for crop_attempt in range(2):
                 try:
-                    response = requests.post(url, headers=headers, json=payload, timeout=180)
+                    response, _ = post_chat_completion(base_url, headers, payload, timeout=180)
                 except requests.exceptions.Timeout:
                     return "❌ 请求超时 (180s)，请检查网络或稍后重试。"
                 except requests.exceptions.RequestException as req_err:
@@ -2851,7 +2860,7 @@ def render_pdf_pages_to_images(pdf_bytes: bytes, page_numbers, dpi: int = 160):
         return [], f"PDF 页面渲染失败：{e}"
 
 def ocr_solution_images_to_answer_solutions(images=None) -> dict:
-    load_dotenv(_root_env_path(), override=True)
+    os.environ.update({k: str(v) for k, v in _read_root_ai_env_config().items() if k.startswith("AI_")})
     api_key = os.getenv("AI_API_KEY")
     base_url = os.getenv("AI_BASE_URL", "https://api.openai.com/v1")
     model_name = os.getenv("AI_MODEL_NAME", AI_ENV_DEFAULTS["AI_MODEL_NAME"])
@@ -2925,6 +2934,49 @@ def call_ai_for_tags(content: str) -> dict:
         return result
     except Exception as exc:
         return {'error': str(exc)}
+
+
+def _assess_batch_question(question, *, force=False, source_dir=None):
+    from services.batch_assessment_service import assess_batch_question
+    return assess_batch_question(
+        question, SUBJECTS, _read_root_ai_env_config(), project_dir=APP_ROOT, source_dir=source_dir,
+        cache=st.session_state.setdefault('batch_assessment_cache', {}), force=force,
+    )
+
+
+def _mark_batch_overrides(question, fields):
+    from services.batch_assessment_service import mark_manual_fields
+    return mark_manual_fields(question, fields)
+
+
+def _render_batch_assessment(content):
+    from services.batch_assessment_service import MANUAL, assessment_detail
+    meta, clean = _parse_question_meta(content)
+    result = assessment_detail(meta)
+    if not result:
+        return
+    fields = extract_problem_header_fields(clean) or {}
+    subject = fields.get('subject_str') or '未分类'
+    stars = f"{meta['难度星级']} 星" if meta.get('难度星级') else '待评'
+    status = result['status']
+    if '难度星级' in meta.get(MANUAL, '').split('，') or meta.get('难度星级', '') != result['difficulty']:
+        status = f"教师修改（算法{status}）"
+    modules = subject.split('，')
+    st.write(f"{stars} · {status}　主板块：{modules[0]}" +
+             ('　次板块：' + '、'.join(modules[1:]) if len(modules) > 1 else ''))
+    st.caption('知识点：' + (meta.get('知识点') or '待确认'))
+    st.caption('评分依据：' + result.get('reason', ''))
+    rows = []
+    for part in result['parts']:
+        columns = [part.get(key, '') for key in ('label', 'K', 'S', 'C', 'N', 'stars', 'reason')]
+        rows.append('<tr>' + ''.join('<td>' + html.escape(str(v)) + '</td>' for v in columns) + '</tr>')
+    if rows:
+        # Native details also works inside the TeX review's Streamlit expander.
+        st.markdown('<details><summary>查看各小问评分（四项各 0–4 分）</summary><table><thead><tr>'
+                    '<th>小问</th><th>知识点数量分</th><th>步骤复杂度</th><th>知识耦合度</th>'
+                    '<th>模型新颖度</th><th>建议星级</th><th>依据</th></tr></thead><tbody>'
+                    + ''.join(rows) + '</tbody></table></details>', unsafe_allow_html=True)
+
 
 def _extract_json_obj_from_text(text: str):
     return extract_json_obj_from_text(text)
@@ -3349,7 +3401,7 @@ def _normalize_cloze_generated_tex(text: str) -> str:
 
 def call_ai_for_cloze_question(source_tex: str, cloze_type: str) -> dict:
     """Generate an editable student cloze version plus its answer and completed solution."""
-    load_dotenv(_root_env_path(), override=True)
+    os.environ.update({k: str(v) for k, v in _read_root_ai_env_config().items() if k.startswith("AI_")})
     api_key = os.getenv("AI_API_KEY")
     base_url = os.getenv("AI_BASE_URL")
     model_name = os.getenv("AI_SOLVER_MODEL_NAME") or os.getenv("AI_MODEL_NAME")
@@ -3589,7 +3641,7 @@ def render_cloze_source_picker():
             st.rerun()
 
 def call_ai_for_answer_solutions(problem_tex: str, fast: bool = True) -> dict:
-    load_dotenv(_root_env_path(), override=True)
+    os.environ.update({k: str(v) for k, v in _read_root_ai_env_config().items() if k.startswith("AI_")})
     api_key = os.getenv("AI_API_KEY")
     base_url = os.getenv("AI_BASE_URL")
     model_name = os.getenv("AI_SOLVER_MODEL_NAME") or "qwen3.6-flash"
@@ -3684,12 +3736,40 @@ def _update_csv_index_for_content_change(fpath: str, new_content: str):
     if len(parts) >= 5:
         update_csv_index_for_edit(fpath, fpath, new_content, parts[0], parts[1], parts[2], parts[3], parts[4])
 
+
+def _save_and_index_content_edit(fpath, content):
+    """Re-evaluate new batch entries when their answers or solutions are edited later."""
+    from services.batch_assessment_service import VERSION
+    from services.tex_import_service import TexQuestion
+    meta, clean = parse_meta_data(content)
+    if meta.get(VERSION):
+        fields = extract_problem_header_fields(clean)
+        if not fields:
+            raise ValueError('评分所需的题目信息不完整，请检查 problem 题头。')
+        question = TexQuestion(content, fields['year'], fields['p_type'], fields['paper'],
+                               fields['number'], fields['subject_str'])
+        scored = _assess_batch_question(question, source_dir=os.path.dirname(fpath))
+        stored_subject = os.path.basename(fpath).removesuffix('.tex').rsplit('-', 1)[-1]
+        if scored.subject != stored_subject:
+            new_path, final = apply_meta_rename_and_update(
+                fpath, scored.year, scored.paper_type, scored.paper, scored.number, scored.subject,
+                edited_content=scored.content)
+            st.session_state.setdefault('browse_renamed_paths', {})[_norm_abs_path(fpath)] = new_path
+            if 'recent_saved_paths' in st.session_state:
+                st.session_state['recent_saved_paths'] = [new_path if p == fpath else p for p in st.session_state['recent_saved_paths']]
+            _keep_renamed_question_selected(fpath, new_path)
+            return new_path, final
+        content = scored.content
+    final = save_modified_tex_file(fpath, content)
+    _update_csv_index_for_content_change(fpath, final)
+    return fpath, final
+
+
 def _save_tex_from_widget(fpath: str, widget_key: str, edit_mode_key: str = "", toast_msg: str = "文件已保存！"):
     raw = st.session_state.get(widget_key, "")
     if not _duplicate_save_confirmation(fpath, raw, scope=widget_key):
         return False
-    final_content = save_modified_tex_file(fpath, raw)
-    _update_csv_index_for_content_change(fpath, final_content)
+    fpath, final_content = _save_and_index_content_edit(fpath, raw)
     _clear_advanced_search_result_cache()
     if edit_mode_key:
         st.session_state[edit_mode_key] = False
@@ -3718,8 +3798,7 @@ def _apply_generated_answer_solutions_to_file(fpath: str, new_answer: str, new_s
     else:
         raise ValueError("invalid mode")
 
-    final_content = save_modified_tex_file(fpath, updated)
-    _update_csv_index_for_content_change(fpath, final_content)
+    _, final_content = _save_and_index_content_edit(fpath, updated)
     _clear_advanced_search_result_cache()
     clear_statistics_cache()
     return final_content
@@ -4455,9 +4534,21 @@ def _tex_merge_ai_draft():
 
 
 def _tex_workspace_questions(source, filename, defaults, mode):
-    from utils.image_assets import package_question_images
-    source = package_question_images(source, filename, os.path.join(APP_ROOT, '.runtime', 'tex-import-images'),
-                                     APP_ROOT, st.session_state.get('tex_workspace_resource_dir', BASE_DIR))
+    from utils.image_assets import graphics_references, package_question_images, resolve_image
+    resource_dir = st.session_state.get('tex_workspace_resource_dir', BASE_DIR)
+    try:
+        source = package_question_images(source, filename, os.path.join(APP_ROOT, '.runtime', 'tex-import-images'),
+                                         APP_ROOT, resource_dir)
+    except (OSError, ValueError):
+        if mode == '单题录入':
+            raise
+        # Resolve the other questions' valid images while the document's graphicspath is still available.
+        for ref in reversed(graphics_references(source)):
+            try:
+                path = resolve_image(ref['path'], APP_ROOT, resource_dir, source)
+            except (OSError, ValueError):
+                continue
+            source = source[:ref['path_start']] + path.as_posix() + source[ref['path_end']:]
     questions = detect_tex_questions(source, filename, defaults)
     if mode == "单题录入" and len(questions) != 1:
         raise ValueError(f"当前文件包含 {len(questions)} 道题，请选择批量或同卷模式。")
@@ -4487,6 +4578,32 @@ def _tex_classify_one(question):
     question.content = inject_meta_data(question.content, meta)
 
 
+def _tex_source_signature(doc, defaults, mode, expected_count, resource_dir):
+    material = (doc['source'], defaults, mode, expected_count, resource_dir,
+                graphics_fingerprint(doc['source'], BASE_DIR, resource_dir))
+    return hashlib.sha256(json.dumps(material, ensure_ascii=False).encode('utf-8')).hexdigest()
+
+
+def _tex_assess_draft(doc, index, resource_dir, *, force=False):
+    """Persist both successes and failures across Streamlit reruns until the evidence changes."""
+    from services.batch_assessment_service import assessment_signature
+    question = doc['review_questions'][index]
+    attempts = doc.setdefault('review_attempts', {})
+    try:
+        token = assessment_signature(question, project_dir=APP_ROOT, source_dir=resource_dir)
+    except (OSError, ValueError) as exc:
+        attempts[index] = (None, str(exc))
+        return
+    if not force and attempts.get(index, (None, ''))[0] == token:
+        return
+    try:
+        doc['review_questions'][index] = _assess_batch_question(question, force=force, source_dir=resource_dir)
+        error = ''
+    except Exception as exc:
+        error = str(exc) or '未收到有效评级。'
+    attempts[index] = (token, error)
+
+
 def _tex_detect_review(doc, defaults, mode, expected_count=None, ai_enabled=True):
     questions = _tex_workspace_questions(doc['source'], doc['name'], defaults, mode)
     if expected_count and len(questions) != expected_count:
@@ -4494,7 +4611,8 @@ def _tex_detect_review(doc, defaults, mode, expected_count=None, ai_enabled=True
             questions = split_question_with_ai(questions[0], expected_count, int(defaults['number']), _read_root_ai_env_config())
         else:
             raise ValueError(f'题号范围需要 {expected_count} 道题，实际检测到 {len(questions)} 道。请补充题号或 problem 环境。')
-    elif len(questions) == 1 and mode != '单题录入' and ai_enabled and not expected_count:
+    elif (len(questions) == 1 and mode != '单题录入' and ai_enabled and not expected_count
+          and r'\begin{problem}' not in doc['source'] and len(doc['source'].strip().splitlines()) > 1):
         questions = split_question_with_ai(questions[0], None, int(defaults['number']), _read_root_ai_env_config())
     if expected_count:
         for index, question in enumerate(questions):
@@ -4505,67 +4623,145 @@ def _tex_detect_review(doc, defaults, mode, expected_count=None, ai_enabled=True
         questions[0].number = defaults['number']
         q = questions[0]
         q.content = replace_problem_header(q.content, q.year, q.paper_type, q.paper, q.number, q.subject)
+    # Match the previous reviewed draft by the original file's identity, even after a teacher renumbers it.
+    previous = dict(zip(doc.get('review_keys', []), doc.get('review_questions', []))) if doc.get('review_batch') else {}
+    keys, counts = [], {}
+    for q in questions:
+        identity = (q.year, q.paper_type, q.paper, q.number)
+        occurrence = counts.get(identity, 0)
+        keys.append((*identity, occurrence))
+        counts[identity] = occurrence + 1
+    sources = {key: (q.content, q.subject) for key, q in zip(keys, questions)}
+    previous_sources = doc.get('review_sources', {})
+    previous_attempts = {key: doc.get('review_attempts', {}).get(i) for i, key in enumerate(doc.get('review_keys', []))}
+    doc.update(review_questions=questions, review_attempts={}, review_keys=keys, review_sources=sources,
+               review_generation=doc.get('review_generation', 0) + 1, review_batch=mode != '单题录入')
+    resource_dir = st.session_state.get('tex_workspace_resource_dir', BASE_DIR)
+    progress = st.progress(0)
     errors = []
-    if ai_enabled:
-        progress = st.progress(0)
-        for index, question in enumerate(questions):
+    for index, (key, question) in enumerate(zip(keys, questions)):
+        if mode != '单题录入':
+            if key in previous and key in previous_sources:
+                if previous_sources[key] == sources[key]:
+                    questions[index] = previous[key]
+                    if previous_attempts.get(key):
+                        doc['review_attempts'][index] = previous_attempts[key]
+                else:
+                    # Carry teacher corrections and the last assessment into the revised source.
+                    previous_meta, _ = parse_meta_data(previous[key].content)
+                    original_meta, _ = parse_meta_data(previous_sources[key][0])
+                    imported_meta, body = parse_meta_data(question.content)
+                    changed = [field for field in original_meta.keys() | imported_meta.keys()
+                               if imported_meta.get(field) != original_meta.get(field)]
+                    for field in changed:
+                        previous_meta[field] = imported_meta.get(field, '')
+                    if previous_sources[key][1] == question.subject:
+                        question.subject = previous[key].subject
+                    else:
+                        changed.append('知识板块')
+                    body = replace_problem_header(body, question.year, question.paper_type, question.paper,
+                                                  question.number, question.subject)
+                    question.content = inject_meta_data(body, previous_meta)
+                    if changed:
+                        questions[index] = _mark_batch_overrides(question, changed)
+            _tex_assess_draft(doc, index, resource_dir)
+        elif ai_enabled:
             try:
                 _tex_classify_one(question)
             except Exception as exc:
                 errors.append(f'第 {question.number} 题：AI 标注失败，请重试或手动修改。{exc}')
-            progress.progress((index + 1) / len(questions))
-        progress.empty()
-    return questions, errors
+        question = questions[index]
+        meta, body = parse_meta_data(question.content)
+        meta['题型'] = infer_question_type(question.content, question.subject)
+        question.content = inject_meta_data(body, meta)
+        progress.progress((index + 1) / len(questions))
+    progress.empty()
+    return errors
 
 
-def _render_tex_question_review(doc, selected, signature):
+_TEX_REVIEW_FIELDS = {'subject': '知识板块', 'points': '知识点', 'methods': '物理方法', 'tags': '标签',
+                      'difficulty': '难度星级', 'question_type': '题型'}
+
+
+def _tex_review_input(doc, index, prefix, field, batch):
+    question = doc['review_questions'][index]
+    value = st.session_state[prefix + '_' + field]
+    meta, body = parse_meta_data(question.content)
+    if batch and field == 'difficulty':
+        from services.batch_assessment_service import manual_difficulty
+        try:
+            value = manual_difficulty(value)
+        except ValueError as exc:
+            st.toast(str(exc), icon='⚠️')
+            return
+    if field == 'number':
+        question.number = value.strip()
+    elif field == 'subject':
+        if batch:
+            from services.batch_assessment_service import selected_subjects
+            question.subject = selected_subjects('，'.join(value), SUBJECTS)
+        else:
+            question.subject = '，'.join(value) or '未分类'
+    elif field == 'content':
+        body = value
+    else:
+        meta[_TEX_REVIEW_FIELDS[field]] = value
+    body = replace_problem_header(body, question.year, question.paper_type, question.paper,
+                                  question.number, question.subject)
+    question.content = inject_meta_data(body, meta)
+    if batch and field in _TEX_REVIEW_FIELDS and field != 'question_type':
+        doc['review_questions'][index] = _mark_batch_overrides(question, [_TEX_REVIEW_FIELDS[field]])
+
+
+def _render_tex_question_review(doc, selected, signature, mode, resource_dir):
     questions = doc.get('review_questions', [])
     if not questions:
         return
     if doc.get('review_signature') != signature:
-        st.warning('源码、题号范围或录入信息已改变，请重新检测分题后保存。')
+        st.warning('源码、图片或录入信息已改变。请重新生成草稿核对。' if mode == '单题录入'
+                   else '源码、图片或录入信息已改变。可重新生成草稿核对，保存时也会更新评级。')
         return
     st.markdown(f'##### 已分成 {len(questions)} 道独立题目')
-    st.caption('每道题可修改题号、分类、知识点与源码；保存会分别写成独立文件。')
+    st.caption('可逐题修改题号、分类、知识点与源码。每道题保存为一个独立文件。')
     generation = doc.get('review_generation', 0)
+    batch = mode != '单题录入'
     for index, question in enumerate(questions):
         prefix = f'tex_review_{selected}_{generation}_{index}'
         with st.expander(f'第 {question.number} 题 · {question.subject}', expanded=len(questions) == 1):
-            values = dict(number=question.number, subject=[s for s in question.subject.split('，') if s in SUBJECTS],
-                          content=question.content)
-            meta, _ = parse_meta_data(question.content)
-            values.update(points=meta.get('知识点', ''), methods=meta.get('物理方法', ''),
-                          tags=meta.get('标签', ''), difficulty=meta.get('难度星级', ''),
-                          question_type=infer_question_type(question.content, question.subject))
-            if st.button('🪄 重新 AI 分类与标注', key=prefix + '_retry'):
+            retry = st.button('🪄 重新 AI 分类与标注', key=prefix + '_retry')
+            if batch:
+                _tex_assess_draft(doc, index, resource_dir, force=retry)
+                question = questions[index]
+                error = doc['review_attempts'][index][1]
+                if error:
+                    st.error(f'评级失败，本题保留在草稿中。可修改源码或点击重新标注。{error}')
+                else:
+                    _render_batch_assessment(question.content)
+            elif retry:
                 try:
                     with st.spinner('正在分析这一道题…'):
                         _tex_classify_one(question)
-                    meta, _ = parse_meta_data(question.content)
-                    values.update(subject=question.subject.split('，'), points=meta.get('知识点', ''),
-                                  methods=meta.get('物理方法', ''), tags=meta.get('标签', ''),
-                                  difficulty=meta.get('难度星级', ''), content=question.content)
-                    for field, value in values.items():
-                        st.session_state[prefix + '_' + field] = value
                 except Exception as exc:
                     st.error(f'AI 标注失败：{exc}')
+            meta, body = parse_meta_data(question.content)
+            values = dict(number=question.number, subject=[s for s in question.subject.split('，') if s in SUBJECTS],
+                          content=body if batch else question.content, points=meta.get('知识点', ''),
+                          methods=meta.get('物理方法', ''), tags=meta.get('标签', ''), difficulty=meta.get('难度星级', ''),
+                          question_type=infer_question_type(question.content, question.subject))
             for field, value in values.items():
-                st.session_state.setdefault(prefix + '_' + field, value)
+                st.session_state[prefix + '_' + field] = value
+            def widget(field):
+                return dict(key=prefix + '_' + field, on_change=_tex_review_input, args=(doc, index, prefix, field, batch))
             c_num, c_subj = st.columns([1, 3])
-            question.number = c_num.text_input('题号', key=prefix + '_number').strip()
-            subjects = c_subj.multiselect('知识板块（首个为主）', SUBJECTS, key=prefix + '_subject')
-            question.subject = '，'.join(subjects) or '未分类'
-            question_type = st.selectbox('题型（必选）', QUESTION_TYPES, key=prefix + '_question_type')
-            points = st.text_input('知识点', key=prefix + '_points')
-            methods = st.text_input('物理方法', key=prefix + '_methods')
+            c_num.text_input('题号', **widget('number'))
+            c_subj.multiselect('知识板块（首个为主）', SUBJECTS, **widget('subject'))
+            st.selectbox('题型（必选）', QUESTION_TYPES, **widget('question_type'))
+            st.text_input('知识点', **widget('points'))
+            st.text_input('物理方法', **widget('methods'))
             c_tags, c_diff = st.columns([3, 1])
-            tags = c_tags.text_input('自由标签', key=prefix + '_tags')
-            difficulty = c_diff.text_input('难度星级', key=prefix + '_difficulty')
-            body = st.text_area('本题 LaTeX 源码', key=prefix + '_content', height=220)
-            question.content = replace_problem_header(body, question.year, question.paper_type, question.paper,
-                                                      question.number, question.subject)
-            meta.update({'知识点': points, '物理方法': methods, '标签': tags, '难度星级': difficulty, '题型': question_type})
-            question.content = inject_meta_data(question.content, meta)
+            c_tags.text_input('自由标签', **widget('tags'))
+            c_diff.text_input('难度星级', **widget('difficulty'))
+            st.text_area('本题 LaTeX 源码', height=220, **widget('content'))
             render_question_preview(question.content, show_title=True)
 
 
@@ -4742,9 +4938,10 @@ def page_tex_entry():
         c_download.download_button("⬇ 下载当前源码", source.encode("utf-8"), documents[selected]["name"], "text/plain", key="tex_workspace_download_source", use_container_width=True)
         c_ai.button("📥 合并 AI 录入草稿", key="tex_workspace_merge_ai", on_click=_tex_merge_ai_draft, use_container_width=True)
     with save_tab:
-        signature = hashlib.sha256((source + json.dumps(defaults, ensure_ascii=False) + mode + str(expected_count)).encode('utf-8')).hexdigest()
+        signature = _tex_source_signature(documents[selected], defaults, mode, expected_count, resource_dir)
         c_detect, c_tag = st.columns([1.5, 1])
-        ai_enabled = c_tag.checkbox('逐题 AI 分类及知识点标注', value=True, key='tex_workspace_ai_tagging')
+        ai_enabled = c_tag.checkbox('逐题 AI 分类及知识点标注' if mode == '单题录入' else '使用 AI 辅助分题',
+                                    value=True, key='tex_workspace_ai_tagging')
         if c_detect.button('🔎 检测分题并生成逐题草稿', key='tex_workspace_detect', type='primary', disabled=bool(range_error), use_container_width=True):
             try:
                 detecting_all = st.session_state.get('tex_workspace_save_scope') == '所有已载入文件'
@@ -4752,15 +4949,14 @@ def page_tex_entry():
                 if detecting_all:
                     detect_defaults['number'] = str(number + sum(len(doc.get('review_questions', [])) or 1 for doc in documents[:selected]))
                 with st.spinner('正在检测题目边界并逐题标注…'):
-                    questions, errors = _tex_detect_review(documents[selected], detect_defaults, mode,
-                                                         None if detecting_all else expected_count, ai_enabled)
-                documents[selected].update(review_questions=questions, review_signature=signature,
-                                            review_generation=documents[selected].get('review_generation', 0) + 1)
+                    errors = _tex_detect_review(documents[selected], detect_defaults, mode,
+                                                None if detecting_all else expected_count, ai_enabled)
+                documents[selected]['review_signature'] = signature
                 for error in errors:
                     st.warning(error)
             except Exception as exc:
                 st.error(f'分题检测失败：{exc}；原始源码仍保留。')
-        _render_tex_question_review(documents[selected], selected, signature)
+        _render_tex_question_review(documents[selected], selected, signature, mode, resource_dir)
         c_scope, c_save = st.columns([1.4, 1])
         scope = c_scope.selectbox("保存范围", ["当前文件", "所有已载入文件"] if mode != "单题录入" else ["当前文件"], key="tex_workspace_save_scope", label_visibility="collapsed")
         indices = range(len(documents)) if scope == "所有已载入文件" else [selected]
@@ -4772,26 +4968,45 @@ def page_tex_entry():
             st.caption("请先在 PDF 中采用或放弃待确认的修改，再保存到题库。")
         if c_save.button("💾 保存到题库", key="tex_workspace_save", type="primary", disabled=pending_edit, use_container_width=True):
             try:
-                pending = []
-                for doc in documents if scope == "所有已载入文件" else [documents[selected]]:
-                    doc_defaults = dict(defaults, number=str(number + len(pending)))
-                    doc_signature = hashlib.sha256((doc['source'] + json.dumps(defaults, ensure_ascii=False) + mode + str(expected_count)).encode('utf-8')).hexdigest()
-                    if doc.get('review_signature') == doc_signature:
-                        pending.extend(doc['review_questions'])
-                    else:
-                        detected = _tex_workspace_questions(doc["source"], doc["name"], doc_defaults, mode)
-                        raise ValueError(f'{doc["name"]} 检测到 {len(detected)} 道题。请先点击“检测分题并生成逐题草稿”，完成分类、标注与人工检查后再保存。')
                 if range_error:
                     raise ValueError(range_error)
+                pending, ready, failed = [], [], []
+                refresh_review = False
+                for doc in documents if scope == "所有已载入文件" else [documents[selected]]:
+                    doc_defaults = dict(defaults, number=str(number + len(pending)))
+                    doc_signature = _tex_source_signature(doc, defaults, mode, expected_count, resource_dir)
+                    if doc.get('review_signature') != doc_signature:
+                        if mode == '单题录入':
+                            detected = _tex_workspace_questions(doc["source"], doc["name"], doc_defaults, mode)
+                            raise ValueError(f'{doc["name"]} 检测到 {len(detected)} 道题。请先检测分题并检查草稿。')
+                        _tex_detect_review(doc, doc_defaults, mode, expected_count if scope == '当前文件' else None,
+                                           ai_enabled)
+                        doc['review_signature'] = doc_signature
+                        refresh_review = True
+                    for index, question in enumerate(doc['review_questions']):
+                        if mode != '单题录入':
+                            _tex_assess_draft(doc, index, resource_dir)
+                            question = doc['review_questions'][index]
+                            error = doc['review_attempts'][index][1]
+                            if error:
+                                failed.append(dict(status='error', file=question.filename,
+                                                   message=f'评级失败，已保留草稿，可逐题重试。{error}'))
+                            else:
+                                ready.append(question)
+                        else:
+                            ready.append(question)
+                        pending.append(question)
                 if expected_count and len(pending) != expected_count:
                     raise ValueError(f'题号范围应保存 {expected_count} 道题，当前只有 {len(pending)} 道。请先检测分题。')
                 if expected_count and {q.number for q in pending} != {str(n) for n in range(number, number + expected_count)}:
                     raise ValueError('逐题题号不符合起始～终止范围，请修改题号或录入范围。')
                 if any(not q.number for q in pending) or len({(q.year, q.paper_type, q.paper, q.number) for q in pending}) != len(pending):
                     raise ValueError('题号为空或有重复，请在逐题草稿中修改。')
-                st.session_state["tex_workspace_save_logs"] = _save_tex_workspace_questions(pending)
+                st.session_state["tex_workspace_save_logs"] = (_save_tex_workspace_questions(ready) if ready else []) + failed
                 # 题目已入库：立即删除本次录题产生的临时编译目录（预览 PDF 仍在会话内存中）
                 _cleanup_tex_entry_temp()
+                if refresh_review:
+                    st.rerun()
             except ValueError as exc:
                 st.error(str(exc))
         logs = st.session_state.get("tex_workspace_save_logs", [])
@@ -5877,6 +6092,29 @@ def page_entry(force_single_mode: bool = False, cloze_mode: bool = False):
                                         on_apply_callback=lambda updated: queue_diagram_update('entry_content', updated))
             
         elif mode in ["批量试题录入", "同卷试题录入"]:
+            from services.ai_batch_import import EDITABLE_LABELS, draft_labels, draft_question
+
+            def _batch_defaults():
+                return dict(year=st.session_state.get("u_batch_year", "2026"),
+                            paper_type=st.session_state.get("u_batch_type", "G"),
+                            paper=st.session_state.get("u_batch_paper", "待填写"), number="1", subject="未分类")
+
+            def _batch_resource_token(item):
+                from services.batch_assessment_service import assessment_signature
+                if not re.search(r'\\(?:includegraphics|input)\b', item["content"]):
+                    return ''
+                try:
+                    return assessment_signature(draft_question(item, _batch_defaults()), project_dir=APP_ROOT)
+                except (ValueError, OSError):
+                    return ''
+
+            def _batch_error_key(item):
+                _, source = _parse_question_meta(item["content"])
+                data = (item["filename"], source.strip(), _batch_resource_token(item))
+                return hashlib.sha256(json.dumps(data, ensure_ascii=False).encode()).hexdigest()
+
+            assessment_errors = st.session_state.setdefault("batch_assessment_errors", {})
+
             def _split_batch_text_to_items(text: str):
                 text = text or ""
                 parts = re.split(r'---(.+\.tex)---\s*', text)
@@ -5908,24 +6146,45 @@ def page_entry(force_single_mode: bool = False, cloze_mode: bool = False):
                 old_count = int(st.session_state.get("batch_item_count") or 0)
                 items = items or []
                 st.session_state["batch_item_count"] = len(items)
+                st.session_state["batch_resource_versions"] = [_batch_resource_token(item) for item in items]
                 if src_hash is not None:
                     st.session_state["batch_items_src_hash"] = src_hash
                 for idx, it in enumerate(items):
                     st.session_state[f"batch_item_name_{idx}"] = it.get("filename", "")
                     st.session_state[f"batch_item_text_{idx}"] = it.get("content", "")
                     st.session_state[f"batch_item_question_type_{idx}"] = infer_question_type(it.get("content", ""), it.get("filename", ""))
+                    meta, _ = _parse_question_meta(it["content"])
+                    header = extract_problem_header_fields(it["content"]) or {}
+                    for field in EDITABLE_LABELS:
+                        if field == "知识板块":
+                            value = [s for s in header.get("subject_str", "").split("，") if s in SUBJECTS]
+                        else:
+                            value = meta.get(field, "")
+                        st.session_state[f"batch_label_{idx}_{field}"] = value
                 for idx in range(len(items), old_count):
                     st.session_state.pop(f"batch_item_name_{idx}", None)
                     st.session_state.pop(f"batch_item_text_{idx}", None)
                     st.session_state.pop(f"batch_item_question_type_{idx}", None)
+                    for field in EDITABLE_LABELS:
+                        st.session_state.pop(f"batch_label_{idx}_{field}", None)
              
             def _ensure_batch_items_state():
                 src = st.session_state.get("batch_content", "") or ""
                 src_hash = hashlib.md5(src.encode("utf-8", errors="ignore")).hexdigest()
                 if st.session_state.get("batch_items_src_hash") == src_hash and st.session_state.get("batch_item_count") is not None:
+                    items = _current_items_from_state()
+                    versions = st.session_state.get('batch_resource_versions', [])
+                    changed = [i for i, (item, prior) in enumerate(zip(items, versions))
+                               if _batch_resource_token(item) != prior]
+                    if changed:
+                        for i in changed:
+                            items[i] = _assess_item(items[i])
+                        _replace_drafts(items)
                     return
-                items = _split_batch_text_to_items(src)
-                _write_batch_items_state(items, src_hash)
+                if src.strip():
+                    _replace_drafts(_detect_batch_drafts(src))
+                else:
+                    _write_batch_items_state([], src_hash)
             
             def _current_items_from_state():
                 n = int(st.session_state.get("batch_item_count") or 0)
@@ -5948,6 +6207,90 @@ def page_entry(force_single_mode: bool = False, cloze_mode: bool = False):
 
             def _sync_batch_content_from_items():
                 _set_batch_content_and_hash(_join_batch_items(_current_items_from_state()))
+
+            def _replace_drafts(items):
+                _set_batch_content_and_hash(_join_batch_items(items))
+                _write_batch_items_state(items, st.session_state["batch_items_src_hash"])
+
+            def _as_item(question):
+                return dict(filename=question.filename, content=question.content)
+
+            def _detect_batch_drafts(source, force=False):
+                items = _split_batch_text_to_items(source) or [dict(filename="批量草稿.tex", content=source)]
+                result = []
+                for item in items:
+                    try:
+                        questions = detect_tex_questions(item["content"], item["filename"], _batch_defaults())
+                        # Retain the original editable label block for already split drafts.
+                        drafts = [_as_item(q) for q in questions] if len(questions) > 1 else [item]
+                        result.extend(_assess_item(draft, force=force) for draft in drafts)
+                    except ValueError as exc:
+                        assessment_errors[_batch_error_key(item)] = str(exc)
+                        result.append(item)
+                return result
+
+            def _assess_item(item, *, force=False):
+                try:
+                    question = draft_question(item, _batch_defaults())
+                    item = _as_item(question)
+                    error_key = _batch_error_key(item)
+                    if not force and error_key in assessment_errors:
+                        return item
+                    question = _assess_batch_question(question, force=force)
+                    assessment_errors.pop(error_key, None)
+                    return _as_item(question)
+                except (ValueError, OSError) as exc:
+                    assessment_errors[_batch_error_key(item)] = str(exc)
+                    return item
+
+            def _retry_batch_item(idx):
+                items = _current_items_from_state()
+                items[idx] = _assess_item(items[idx], force=True)
+                _replace_drafts(items)
+
+            def _update_batch_item(idx, field):
+                items = _current_items_from_state()
+                try:
+                    old = _split_batch_text_to_items(st.session_state["batch_content"])[idx]
+                except IndexError:
+                    old = items[idx]
+                try:
+                    old_values = draft_labels(draft_question(old, _batch_defaults()))
+                except ValueError:
+                    old_values = {}
+                try:
+                    question = draft_question(items[idx], _batch_defaults(), filename_edited=field == "filename")
+                    if field in EDITABLE_LABELS:
+                        value = st.session_state[f"batch_label_{idx}_{field}"]
+                        if field == "知识板块":
+                            question.subject = "，".join(value) or "未分类"
+                            question.content = replace_problem_header(question.content, question.year, question.paper_type,
+                                                                      question.paper, question.number, question.subject)
+                        else:
+                            meta, _ = _parse_question_meta(question.content)
+                            meta[field] = value.strip()
+                            question.content = _inject_question_meta(question.content, meta)
+                    values = draft_labels(question)
+                    changed = [name for name in values if name in old_values and old_values[name] != values[name]]
+                    if field in EDITABLE_LABELS and field not in changed:
+                        changed.append(field)
+                    if "难度星级" in changed:
+                        from services.batch_assessment_service import manual_difficulty
+                        manual_difficulty(values["难度星级"])
+                    if changed:
+                        question = _mark_batch_overrides(question, changed)
+                    updated = _as_item(question)
+                    if field in ("source", "filename") and old != updated:
+                        assessment_errors.pop(_batch_error_key(updated), None)
+                    items[idx] = _assess_item(updated)
+                    _replace_drafts(items)
+                except (IndexError, ValueError) as exc:
+                    st.error(f"第 {idx + 1} 题修改失败：{exc}")
+                    if field in ("source", "filename"):
+                        _sync_batch_content_from_items()
+                        assessment_errors[_batch_error_key(items[idx])] = str(exc)
+                    else:
+                        _replace_drafts(items)
 
             def _manual_split_candidates(content):
                 lines = (content or "").splitlines()
@@ -6040,15 +6383,7 @@ def page_entry(force_single_mode: bool = False, cloze_mode: bool = False):
 
                 head_content = normalize_single_problem_structure(clean_head, year, p_type, paper, number, subject)
                 tail_content = normalize_single_problem_structure(clean_tail, year, p_type, paper, next_number, subject)
-                head_meta = {
-                    "ID": original_meta.get("ID") or str(next_id),
-                    "难度星级": original_meta.get("难度星级", ""),
-                    "标签": original_meta.get("标签", ""),
-                    "知识点": original_meta.get("知识点", ""),
-                    "物理方法": original_meta.get("物理方法", ""),
-                    "备注": original_meta.get("备注", ""),
-                    "组卷引用次数": original_meta.get("组卷引用次数", "0"),
-                }
+                head_meta = dict(original_meta, ID=original_meta.get("ID") or str(next_id))
                 if not original_meta.get("ID"):
                     used_ids.add(next_id)
                     next_id += 1
@@ -6072,9 +6407,10 @@ def page_entry(force_single_mode: bool = False, cloze_mode: bool = False):
                     "filename": generate_filename(year, p_type, paper, next_number, subject),
                     "content": inject_meta_data(tail_content, tail_meta),
                 })
-                new_text = _join_batch_items(current_items)
-                _set_batch_content_and_hash(new_text)
-                _write_batch_items_state(current_items, st.session_state["batch_items_src_hash"])
+                current_items[item_index:item_index + 2] = [
+                    _assess_item(item) for item in current_items[item_index:item_index + 2]
+                ]
+                _replace_drafts(current_items)
                 return True, f"已拆分为两题，新题暂定为第 {next_number} 题。"
 
             def _apply_same_paper_meta_to_items(items, year, p_type, paper):
@@ -6111,88 +6447,23 @@ def page_entry(force_single_mode: bool = False, cloze_mode: bool = False):
             with c_title:
                 st.markdown(f"### 📚 {mode}")
             with c_ai_btn:
-                def on_batch_ai_click():
-                    batch_text = _join_batch_items(_current_items_from_state())
-                    if not batch_text.strip():
-                        st.warning("内容为空，无法进行 AI 分析")
+                def _detect_and_assess_batch(force=False):
+                    items = _current_items_from_state()
+                    text = _join_batch_items(items) or st.session_state.get("batch_content_fallback", "")
+                    if not text.strip():
+                        st.warning("请输入批量题目。")
                         return
                     try:
-                        batch_text = join_tex_questions(detect_tex_questions(batch_text, 'AI批量草稿.tex',
-                            dict(year=st.session_state.get('u_batch_year', '2026'),
-                                 paper_type=st.session_state.get('u_batch_type', 'G'),
-                                 paper=st.session_state.get('u_batch_paper', '待填写'), number='1', subject='未分类')))
+                        with st.spinner("正在逐题评估…"):
+                            _replace_drafts(_detect_batch_drafts(text, force=force))
                     except ValueError as exc:
-                        st.error(f'分题检测失败：{exc}')
-                        return
-                    
-                    # Split by `---filename---`
-                    parts = re.split(r'(---.+\.tex---\s*)', batch_text)
-                    new_batch_text = ""
-                    if len(parts) > 1:
-                        new_batch_text = parts[0]
-                        from utils.latex_ops import parse_meta_data
-                        
-                        progress_text = "🤖 正在批量调用 AI..."
-                        my_bar = st.progress(0, text=progress_text)
-                        total_q = len(parts) // 2
-                        
-                        for i in range(1, len(parts), 2):
-                            current_q = i // 2 + 1
-                            my_bar.progress(current_q / total_q, text=f"{progress_text} ({current_q}/{total_q})")
-                            
-                            header = parts[i]
-                            content = parts[i+1]
-                            existing_meta, clean_content = parse_meta_data(content)
-                            
-                            # 调用 AI
-                            ai_res = call_ai_for_tags(clean_content)
-                            if "error" not in ai_res:
-                                diff = ai_res["difficulty"]
-                                existing_meta["难度星级"] = str(diff) if diff > 0 else ""
-                                existing_meta["标签"] = ai_res["tags"]
-                                existing_meta['知识点'] = ai_res.get('knowledge_points', '')
-                                existing_meta['物理方法'] = ai_res.get('physics_methods', '')
-                                fields = extract_problem_header_fields(clean_content)
-                                if fields and ai_res.get('subject'):
-                                    clean_content = replace_problem_header(clean_content, fields['year'], fields['p_type'],
-                                                                          fields['paper'], fields['number'], ai_res['subject'])
-                                    header = '---' + generate_filename(fields['year'], fields['p_type'], fields['paper'],
-                                                                       fields['number'], ai_res['subject']) + '---\n'
-                            else:
-                                st.toast(f"第 {current_q} 题 AI 分析出错: {ai_res['error']}", icon="❌")
-                                
-                            meta_str = "% === Begin Label Data ===\n"
-                            meta_str += f"% ID: {existing_meta.get('ID', '')}\n"
-                            meta_str += f"% 难度星级: {existing_meta.get('难度星级', '')}\n"
-                            meta_str += f"% 标签: {existing_meta.get('标签', '')}\n"
-                            meta_str += f"% 知识点: {existing_meta.get('知识点', '')}\n"
-                            meta_str += f"% 物理方法: {existing_meta.get('物理方法', '')}\n"
-                            meta_str += f"% 备注: {existing_meta.get('备注', '')}\n"
-                            meta_str += f"% 组卷引用次数: {existing_meta.get('组卷引用次数', '0')}\n"
-                            meta_str += "% === End  Label Data ===\n\n"
-                            
-                            new_batch_text += header + meta_str + clean_content.lstrip()
-                            
-                        my_bar.empty()
-                        _set_batch_content_and_hash(new_batch_text)
-                        st.toast("批量 AI 自动打标签完成！", icon="🪄")
-                    else:
-                        st.warning("未检测到有效的分隔线格式，请确保内容符合 `---xxx.tex---` 格式")
+                        st.error(f"分题检测失败：{exc}")
 
-                st.button("🪄 AI 自动打标签", key="btn_batch_ai", on_click=on_batch_ai_click, use_container_width=True)
-
-            def on_batch_detect_click():
-                try:
-                    text = join_tex_questions(detect_tex_questions(_join_batch_items(_current_items_from_state()), '批量草稿.tex',
-                        dict(year=st.session_state.get('u_batch_year', '2026'), paper_type=st.session_state.get('u_batch_type', 'G'),
-                             paper=st.session_state.get('u_batch_paper', '待填写'), number='1', subject='未分类')))
-                    _set_batch_content_and_hash(text)
-                    _write_batch_items_state(_split_batch_text_to_items(text), st.session_state['batch_items_src_hash'])
-                except ValueError as exc:
-                    st.error(f'分题检测失败：{exc}')
-
+                st.button("🪄 重新评估全部", key="btn_batch_ai", on_click=_detect_and_assess_batch,
+                          args=(True,), use_container_width=True)
             with c_detect_btn:
-                st.button('🔎 重新检测分题', key='btn_batch_detect_questions', on_click=on_batch_detect_click, use_container_width=True)
+                st.button("🔎 重新检测分题", key="btn_batch_detect_questions", on_click=_detect_and_assess_batch,
+                          use_container_width=True)
             
             # 如果是同卷录入，提供试卷头部信息输入
             if mode == "同卷试题录入":
@@ -6314,11 +6585,6 @@ button[kind="secondary"][data-testid="stBaseButton-secondary"][aria-label="放�
                 """, unsafe_allow_html=True)
                 for idx, it in enumerate(items):
                     st.markdown('<hr style="border-top: 1px solid #e1e4e8; margin-top: 14px; margin-bottom: 14px;">', unsafe_allow_html=True)
-                    def _apply_batch_fname():
-                        _sync_batch_content_from_items()
-                        st.toast("已应用文件名修改", icon="✅")
-                        st.rerun()
-
                     def _discard_batch_item(_idx=idx):
                         # 从 batch_content 中移除该题目
                         current_items = _current_items_from_state()
@@ -6328,14 +6594,15 @@ button[kind="secondary"][data-testid="stBaseButton-secondary"][aria-label="放�
                             _set_batch_content_and_hash(new_text)
                             _write_batch_items_state(current_items, st.session_state["batch_items_src_hash"])
                             st.toast("已放弃该题目")
-                        st.rerun()
 
                     # 文件名操作栏与源码/预览栏平级，兼容 Streamlit 1.37 的列嵌套限制。
                     c_fn_1, c_btn_1, c_btn_2 = st.columns([3, 1, 1], vertical_alignment="bottom")
                     with c_fn_1:
-                        st.text_input("文件名", key=f"batch_item_name_{idx}", on_change=_sync_batch_content_from_items)
+                        st.text_input("文件名", key=f"batch_item_name_{idx}", on_change=_update_batch_item,
+                                      args=(idx, "filename"))
                     with c_btn_1:
-                        st.button("应用标题", key=f"batch_apply_fname_{idx}", use_container_width=True, on_click=_apply_batch_fname)
+                        st.button("应用标题", key=f"batch_apply_fname_{idx}", use_container_width=True,
+                                  on_click=_update_batch_item, args=(idx, "filename"))
                     with c_btn_2:
                         st.button("放弃本题×", key=f"batch_discard_fname_{idx}", use_container_width=True, on_click=_discard_batch_item, type="secondary")
 
@@ -6344,8 +6611,8 @@ button[kind="secondary"][data-testid="stBaseButton-secondary"][aria-label="放�
                         st.selectbox("题型（必选）", QUESTION_TYPES, key=f"batch_item_question_type_{idx}",
                                      on_change=_sync_batch_content_from_items,
                                      help="已按本题内容预选，请逐题核对；可手动修改。")
-                        st.text_area("题目源码", height=240, key=f"batch_item_text_{idx}", label_visibility="collapsed", on_change=_sync_batch_content_from_items)
-                        st.caption("提示：编辑后点击空白处或按 Ctrl+Enter 以应用更新。")
+                        st.text_area("题目源码", height=240, key=f"batch_item_text_{idx}", label_visibility="collapsed",
+                                     on_change=_update_batch_item, args=(idx, "source"))
                     with c_prev:
                         fname = (st.session_state.get(f"batch_item_name_{idx}", "") or "").strip()
                         st.markdown(f"### 📄 {fname}")
@@ -6355,7 +6622,21 @@ button[kind="secondary"][data-testid="stBaseButton-secondary"][aria-label="放�
                         except Exception as e:
                             st.error(f"预览渲染出错: {e}")
 
-                    split_source = st.session_state.get(f"batch_item_text_{idx}", it.get("content") or "") or ""
+                    issue = assessment_errors.get(_batch_error_key(it))
+                    if issue:
+                        st.warning(f"本题评估失败，草稿已保留。{issue}")
+                    else:
+                        _render_batch_assessment(it["content"])
+                    st.button("重新评估本题", key=f"batch_assessment_retry_{idx}",
+                              on_click=_retry_batch_item, args=(idx,))
+                    with st.expander("修改本题板块与标签"):
+                        st.multiselect("知识板块（首个为主）", SUBJECTS, key=f"batch_label_{idx}_知识板块",
+                                       on_change=_update_batch_item, args=(idx, "知识板块"))
+                        for field in EDITABLE_LABELS[1:]:
+                            st.text_input(field, key=f"batch_label_{idx}_{field}",
+                                          on_change=_update_batch_item, args=(idx, field))
+
+                    split_source = it["content"]
                     split_candidates = _manual_split_candidates(split_source)
                     if split_candidates:
                         with st.expander("✂️ 手动拆题", expanded=False):
@@ -6368,275 +6649,120 @@ button[kind="secondary"][data-testid="stBaseButton-secondary"][aria-label="放�
                                 key=f"batch_split_line_{idx}_{hashlib.md5(split_source.encode('utf-8', errors='ignore')).hexdigest()[:8]}",
                                 help="选择下一道题题干开始的那一行。明确边界会优先显示。",
                             )
-                            if st.button("从选中行拆分", key=f"batch_split_apply_{idx}", type="primary"):
-                                split_ok, split_message = _split_batch_item_at_line(idx, selected_line)
+                            def _split_clicked(_idx=idx, _line=selected_line):
+                                split_ok, split_message = _split_batch_item_at_line(_idx, _line)
                                 if split_ok:
                                     st.toast(split_message, icon="✂️")
-                                    st.rerun()
                                 else:
                                     st.error(split_message)
+                            st.button("从选中行拆分", key=f"batch_split_apply_{idx}", type="primary",
+                                      on_click=_split_clicked)
                 _sync_batch_content_from_items()
 
             st.markdown('<hr style="border-top: 1px solid #e1e4e8; margin-top: 12px; margin-bottom: 16px;">', unsafe_allow_html=True)
-            if mode == "同卷试题录入":
-                c_same_title, c_same_btn = st.columns([2, 1])
-                with c_same_title:
-                    st.markdown("### 📚 同卷试题批量处理状态")
-                with c_same_btn:
-                    if st.button("💾 同卷提取并保存", type="primary", use_container_width=True, key="same_paper_save_btn"):
-                        try:
-                            for item in _current_items_from_state():
-                                require_question_type(_parse_question_meta(item["content"])[0].get("题型"))
-                        except ValueError as exc:
-                            st.error(str(exc))
-                            st.stop()
-                        st.session_state["_run_same_paper_batch"] = True
-                        st.session_state["_run_ai_tagging_batch"] = st.session_state.get("batch_enable_ai_flag", False)
-                        st.session_state["batch_enable_ai_flag"] = False
-                        st.rerun()
-                st.info("同卷试题批量录入的处理结果会在此显示。")
-                
-                if st.session_state.get("_run_same_paper_batch", False):
-                    st.session_state["_run_same_paper_batch"] = False
-                    batch_text = st.session_state.get("batch_content", "")
-                    u_year = st.session_state.get("u_batch_year", "")
-                    u_paper = st.session_state.get("u_batch_paper", "")
-                    u_type = st.session_state.get("u_batch_type", "G")
-                    
-                    if not batch_text.strip():
-                        st.warning("请输入内容")
-                    elif not (u_year and u_paper):
-                        st.error("请完善年份和试卷名称信息")
-                    else:
-                        parts = re.split(r'---(.+\.tex)---\s*', batch_text)
-                        count = 0
-                        log_msg = []
-                        progress_bar = st.progress(0)
-                        status_text = st.empty()
-                        total_files = len(parts) // 2
-                        for i in range(1, len(parts), 2):
-                            current_idx = i // 2 + 1
-                            if i + 1 < len(parts):
-                                raw_fname = parts[i].strip()
-                                file_content = parts[i+1].strip()
-                                status_text.text(f"正在处理: {raw_fname} ({current_idx}/{total_files})")
-                                name_body = raw_fname.replace('.tex', '')
-                                segments = name_body.split('-')
-                                if len(segments) >= 2:
-                                    q_num = segments[-2]
-                                    q_subj = segments[-1]
-                                    final_filename = generate_filename(u_year, u_type, u_paper, q_num, q_subj)
-                                    primary_subj = q_subj.split("，")[0]
-                                    save_dir = os.path.join(CHAPTERS_DIR, primary_subj, str(u_year))
-                                    ensure_dir(save_dir)
-                                    file_path = os.path.join(save_dir, final_filename)
-                                    if "\\begin{problem}" in file_content:
-                                        file_content = replace_problem_header(file_content, str(u_year), u_type, u_paper, q_num, q_subj)
-                                    else:
-                                        file_content = normalize_single_problem_structure(file_content, str(u_year), u_type, u_paper, q_num, q_subj)
-                                    file_content = extract_and_replace_tikz(file_content, final_filename, save_dir)
-                                    from utils.latex_ops import parse_meta_data, inject_meta_data
-                                    existing_meta, clean_content = parse_meta_data(file_content)
-                                    from utils.csv_ops import get_next_id
-                                    q_id = get_next_id()
-                                    meta_dict = {
-                                        "ID": q_id,
-                                        "难度星级": existing_meta.get("难度星级", ""),
-                                        "标签": _merge_tag_texts(existing_meta.get("标签", ""), st.session_state.get("batch_custom_tags", "")),
-                                        "知识点": _merge_tag_texts(existing_meta.get("知识点", ""), st.session_state.get("batch_knowledge_points", "")),
-                                        "物理方法": _merge_tag_texts(existing_meta.get("物理方法", ""), st.session_state.get("batch_physics_methods", "")),
-                                        "题型": require_question_type(existing_meta.get("题型")),
-                                        "备注": existing_meta.get("备注", ""),
-                                        "组卷引用次数": existing_meta.get("组卷引用次数", "0"),
-                                    }
-                                    file_content = inject_meta_data(file_content, meta_dict)
-                                    try:
-                                        duplicate_matches = []
-                                        saved = _save_batch_question_if_new(
-                                            file_path,
-                                            file_content,
-                                            str(u_year),
-                                            u_type,
-                                            u_paper,
-                                            q_num,
-                                            q_subj,
-                                            duplicate_matches_out=duplicate_matches,
-                                        )
-                                        if not saved:
-                                            log_msg.append({
-                                                "status": "skip",
-                                                "file": final_filename,
-                                                "msg": (
-                                                    f"检测到完全相同题干，已跳过（已有：{duplicate_matches[0].get('name', '')}）"
-                                                    if duplicate_matches
-                                                    else "检测到同名旧题目，已保留旧题并跳过新的识别结果"
-                                                ),
-                                            })
-                                            progress_bar.progress(current_idx / total_files)
-                                            continue
-                                        count += 1
-                                        ai_str = ""
-                                        if meta_dict['难度星级'] or meta_dict['标签']:
-                                            ai_str = f" [AI自动提取: 星级={meta_dict['难度星级'] or '无'} | 标签={meta_dict['标签'] or '无'}]"
-                                        log_msg.append({"status": "success", "file": final_filename, "path": file_path, "ai_info": ai_str})
-                                    except Exception as e:
-                                        log_msg.append({"status": "error", "file": final_filename, "msg": str(e)})
-                                else:
-                                    log_msg.append({"status": "skip", "file": raw_fname, "msg": "文件名格式不足 (需至少包含 题号-板块)"})
-                            progress_bar.progress(current_idx / total_files)
-                        status_text.empty()
-                        c_msg, c_jump = st.columns([3, 1])
-                        c_msg.success(f"处理完成，共保存 {count} 个文件")
-                        def _jump_to_browse_same_paper():
-                            st.session_state["main_sidebar_radio"] = "🔍\n全局浏览\n与编辑"
-                            st.session_state["adv_search_active"] = False
-                            st.session_state["recent_saved_active"] = True
-                            st.session_state["recent_saved_paths"] = [log.get("path") for log in log_msg if log.get("status") == "success" and log.get("path")]
-                        c_jump.button("跳转至全局浏览查看 ↗", use_container_width=True, type="primary", key="jump_to_browse_same_paper", on_click=_jump_to_browse_same_paper)
-                        st.toast(f"同卷处理完成！共保存 {count} 个文件", icon="✅")
-                        with st.expander("查看处理日志", expanded=True):
-                            for log_index, log in enumerate(log_msg):
-                                if log["status"] == "success":
-                                    c1, c2 = st.columns([4, 1])
-                                    ai_str = log.get('ai_info', '')
-                                    c1.success(f"✅ {log['file']}{ai_str}")
-                                    log_key = hashlib.md5(
-                                        str(log.get("path") or log.get("file") or log_index).encode("utf-8", errors="ignore")
-                                    ).hexdigest()[:10]
-                                    if c2.button("📂 打开", key=f"open_log_u_{log_index}_{log_key}"):
-                                        try:
-                                            os.startfile(log['path'])
-                                        except Exception as e:
-                                            st.error(f"无法打开: {e}")
-                                elif log["status"] == "error":
-                                    st.error(f"❌ {log['file']}: {log['msg']}")
-                                else:
-                                    st.warning(f"⚠️ {log['file']}: {log['msg']}")
+            same_paper = mode == "同卷试题录入"
+            save_key = "same_paper_save_btn" if same_paper else "batch_save_btn"
+            logs_key = save_key + "_logs"
 
-            elif mode == "批量试题录入":
-                c_batch_title, c_batch_btn = st.columns([2, 1])
-                with c_batch_title:
-                    st.markdown("### 🗃️ 批量处理状态")
-                with c_batch_btn:
-                    if st.button("💾 批量提取并保存", type="primary", use_container_width=True, key="batch_save_btn"):
-                        try:
-                            for item in _current_items_from_state():
-                                require_question_type(_parse_question_meta(item["content"])[0].get("题型"))
-                        except ValueError as exc:
-                            st.error(str(exc))
-                            st.stop()
-                        st.session_state["_run_batch_mode"] = True
-                        st.session_state["_run_ai_tagging_global_batch"] = st.session_state.get("batch_enable_ai_flag", False)
-                        st.session_state["batch_enable_ai_flag"] = False
-                        st.rerun()
-                st.info("批量录入的处理结果会在此显示。")
-                if st.session_state.get("_run_batch_mode", False):
-                    st.session_state["_run_batch_mode"] = False
-                    batch_text = st.session_state.get("batch_content", "")
-                    if not batch_text.strip():
-                        st.warning("请输入内容")
-                    else:
-                        parts = re.split(r'---(.+\.tex)---\s*', batch_text)
-                        count = 0
-                        log_msg = []
-                        progress_bar = st.progress(0)
-                        status_text = st.empty()
-                        total_files = len(parts) // 2
-                        for i in range(1, len(parts), 2):
-                            current_idx = i // 2 + 1
-                            if i + 1 < len(parts):
-                                filename = parts[i].strip()
-                                file_content = parts[i+1].strip()
-                                status_text.text(f"正在处理: {filename} ({current_idx}/{total_files})")
-                                name_body = filename.replace('.tex', '')
-                                segments = name_body.split('-')
-                                if len(segments) >= 5:
-                                    year_seg = segments[0]
-                                    topic_seg = segments[-1]
-                                    primary_topic = topic_seg.split("，")[0]
-                                    save_dir = os.path.join(CHAPTERS_DIR, primary_topic, str(year_seg))
-                                    ensure_dir(save_dir)
-                                    file_path = os.path.join(save_dir, filename)
-                                    file_content = extract_and_replace_tikz(file_content, filename, save_dir)
-                                    from utils.latex_ops import parse_meta_data, inject_meta_data
-                                    existing_meta, clean_content = parse_meta_data(file_content)
-                                    from utils.csv_ops import get_next_id
-                                    q_id = get_next_id()
-                                    meta_dict = {
-                                        "ID": q_id,
-                                        "难度星级": existing_meta.get("难度星级", ""),
-                                        "标签": _merge_tag_texts(existing_meta.get("标签", ""), st.session_state.get("batch_custom_tags", "")),
-                                        "知识点": _merge_tag_texts(existing_meta.get("知识点", ""), st.session_state.get("batch_knowledge_points", "")),
-                                        "物理方法": _merge_tag_texts(existing_meta.get("物理方法", ""), st.session_state.get("batch_physics_methods", "")),
-                                        "题型": require_question_type(existing_meta.get("题型")),
-                                        "备注": existing_meta.get("备注", ""),
-                                        "组卷引用次数": existing_meta.get("组卷引用次数", "0"),
-                                    }
-                                    file_content = inject_meta_data(file_content, meta_dict)
-                                    try:
-                                        duplicate_matches = []
-                                        header_fields = extract_problem_header_fields(file_content) or {}
-                                        saved = _save_batch_question_if_new(
-                                            file_path,
-                                            file_content,
-                                            header_fields.get("year") or segments[0],
-                                            header_fields.get("p_type") or segments[1],
-                                            header_fields.get("paper") or segments[2],
-                                            header_fields.get("number") or segments[3],
-                                            header_fields.get("subject_str") or segments[4],
-                                            duplicate_matches_out=duplicate_matches,
-                                        )
-                                        if not saved:
-                                            log_msg.append({
-                                                "status": "skip",
-                                                "file": filename,
-                                                "msg": (
-                                                    f"检测到完全相同题干，已跳过（已有：{duplicate_matches[0].get('name', '')}）"
-                                                    if duplicate_matches
-                                                    else "检测到同名旧题目，已保留旧题并跳过新的识别结果"
-                                                ),
-                                            })
-                                            progress_bar.progress(current_idx / total_files)
-                                            continue
-                                        count += 1
-                                        ai_str = ""
-                                        if meta_dict['难度星级'] or meta_dict['标签']:
-                                            ai_str = f" [AI自动提取: 星级={meta_dict['难度星级'] or '无'} | 标签={meta_dict['标签'] or '无'}]"
-                                        log_msg.append({"status": "success", "file": filename, "path": file_path, "id": q_id, "ai_info": ai_str})
-                                    except Exception as e:
-                                        log_msg.append({"status": "error", "file": filename, "msg": str(e)})
-                                else:
-                                    log_msg.append({"status": "skip", "file": filename, "msg": "文件名格式错误"})
-                            progress_bar.progress(current_idx / total_files)
-                        status_text.empty()
-                        c_msg, c_jump = st.columns([3, 1])
-                        c_msg.success(f"处理完成，共保存 {count} 个文件")
-                        def _jump_to_browse_batch():
-                            st.session_state["main_sidebar_radio"] = "🔍\n全局浏览\n与编辑"
-                            st.session_state["adv_search_active"] = False
-                            st.session_state["recent_saved_active"] = True
-                            st.session_state["recent_saved_paths"] = [log.get("path") for log in log_msg if log.get("status") == "success" and log.get("path")]
-                        c_jump.button("跳转至全局浏览查看 ↗", use_container_width=True, type="primary", key="jump_to_browse_batch", on_click=_jump_to_browse_batch)
-                        clear_statistics_cache()
-                        st.toast(f"批量处理完成！共保存 {count} 个文件", icon="✅")
-                        with st.expander("查看处理日志", expanded=True):
-                            for log_index, log in enumerate(log_msg):
-                                if log["status"] == "success":
-                                    c1, c2 = st.columns([4, 1])
-                                    ai_str = log.get('ai_info', '')
-                                    c1.success(f"✅ {log['file']}{ai_str}")
-                                    log_key = hashlib.md5(
-                                        str(log.get("path") or log.get("file") or log_index).encode("utf-8", errors="ignore")
-                                    ).hexdigest()[:10]
-                                    if c2.button("📂 打开", key=f"open_log_{log_index}_{log_key}"):
-                                        try:
-                                            os.startfile(log['path'])
-                                        except Exception as e:
-                                            st.error(f"无法打开: {e}")
-                                elif log["status"] == "error":
-                                    st.error(f"❌ {log['file']}: {log['msg']}")
-                                else:
-                                    st.warning(f"⚠️ {log['file']}: {log['msg']}")
+            def _save_ai_batch():
+                from utils.csv_ops import get_next_id
+
+                current = _current_items_from_state()
+                if not current:
+                    _detect_and_assess_batch()
+                    current = _current_items_from_state()
+                if not current:
+                    return
+                override = None
+                if same_paper:
+                    defaults = _batch_defaults()
+                    if not defaults["year"].isdigit() or not defaults["paper"].strip():
+                        st.error("请填写统一年份和试卷名称。")
+                        return
+                    override = (defaults["year"], defaults["paper_type"], defaults["paper"])
+                logs = []
+                progress = st.progress(0)
+                for index, item in enumerate(current):
+                    try:
+                        # Assess the actual draft before choosing a path. A module edit
+                        # therefore changes its directory, filename, header and index together.
+                        item = _assess_item(item)
+                        current[index] = item
+                        error = assessment_errors.get(_batch_error_key(item))
+                        if error:
+                            raise ValueError(error)
+                        question = draft_question(item, _batch_defaults(), paper_override=override)
+                        current[index] = _as_item(question)
+                        meta, _ = _parse_question_meta(question.content)
+                        meta["题型"] = require_question_type(
+                            meta.get("题型") or infer_question_type(question.content, question.subject))
+                        batch_overrides = []
+                        for field, key in (("标签", "batch_custom_tags"), ("知识点", "batch_knowledge_points"),
+                                           ("物理方法", "batch_physics_methods")):
+                            merged = _merge_tag_texts(meta.get(field, ""), st.session_state.get(key, ""))
+                            if merged != meta.get(field, ""):
+                                batch_overrides.append(field)
+                                meta[field] = merged
+                        filename = question.filename
+                        save_dir = os.path.join(CHAPTERS_DIR, question.subject.split("，")[0], question.year)
+                        path = os.path.join(save_dir, filename)
+                        if os.path.exists(path):
+                            logs.append(dict(status="skip", file=filename, msg="同名题目已存在，已跳过。"))
+                            continue
+                        meta.update(ID=get_next_id())
+                        meta.setdefault("组卷引用次数", "0")
+                        question.content = _inject_question_meta(question.content, meta)
+                        if batch_overrides:
+                            question = _mark_batch_overrides(question, batch_overrides)
+                        ensure_dir(save_dir)
+                        content = extract_and_replace_tikz(question.content, filename, save_dir)
+                        matches = []
+                        saved = _save_batch_question_if_new(path, content, question.year, question.paper_type,
+                                                            question.paper, question.number, question.subject,
+                                                            duplicate_matches_out=matches)
+                        if saved:
+                            logs.append(dict(status="success", file=filename, path=path, msg="已保存"))
+                        else:
+                            detail = f"题干与 {matches[0].get('name', '')} 相同" if matches else "同名题目已存在"
+                            logs.append(dict(status="skip", file=filename, msg=detail + "，已跳过。"))
+                    except Exception as exc:
+                        logs.append(dict(status="error", file=item["filename"], msg=str(exc)))
+                    finally:
+                        progress.progress((index + 1) / len(current))
+                progress.empty()
+                _replace_drafts(current)
+                st.session_state[logs_key] = logs
+                if any(log["status"] == "success" for log in logs):
+                    clear_statistics_cache()
+
+            c_batch_title, c_batch_btn = st.columns([2, 1])
+            c_batch_title.markdown("### 批量处理状态")
+            c_batch_btn.button("💾 同卷提取并保存" if same_paper else "💾 批量提取并保存", type="primary",
+                               use_container_width=True, key=save_key, on_click=_save_ai_batch)
+            logs = st.session_state.get(logs_key, [])
+            if logs:
+                saved = [log for log in logs if log["status"] == "success"]
+                st.info(f"上次处理：{len(saved)} 道已保存，{sum(log['status'] == 'skip' for log in logs)} 道跳过，"
+                        f"{sum(log['status'] == 'error' for log in logs)} 道失败。")
+                with st.expander("查看处理日志", expanded=True):
+                    for index, log in enumerate(logs):
+                        if log["status"] == "success":
+                            label_col, open_col = st.columns([4, 1])
+                            label_col.success(log["file"])
+                            if open_col.button("📂 打开", key=f"{save_key}_open_{index}"):
+                                try:
+                                    os.startfile(log["path"])
+                                except OSError as exc:
+                                    st.error(str(exc))
+                        elif log["status"] == "skip":
+                            st.warning(f"{log['file']}：{log['msg']}")
+                        else:
+                            st.error(f"{log['file']}：{log['msg']}")
+                if saved:
+                    def _browse_ai_batch():
+                        st.session_state.update(main_sidebar_radio="🔍\n全局浏览\n与编辑", adv_search_active=False,
+                                                recent_saved_active=True, recent_saved_paths=[log["path"] for log in saved])
+                    st.button("跳转至全局浏览查看 ↗", key=f"{save_key}_browse", on_click=_browse_ai_batch)
             
     # === 右侧：实时预览与保存（仅单题模式） ===
     with col_right:
@@ -7005,8 +7131,7 @@ def _set_pending_question_action(key_prefix, fhash, action, fpath=""):
                 if read_question_text(fpath) != draft['base']:
                     st.toast('文件已更新，请先核对保留的草稿。', icon='⚠️')
                     return
-                final_content = save_modified_tex_file(fpath, new_content)
-                _update_csv_index_for_content_change(fpath, final_content)
+                fpath, final_content = _save_and_index_content_edit(fpath, new_content)
                 _clear_advanced_search_result_cache()
             st.session_state[text_key] = final_content
             st.session_state.pop(text_key + '_draft', None)
@@ -7404,12 +7529,11 @@ def _render_browse_question_editor_card_body(q_label, content, fpath, key_prefix
 
     # === 物理/数学插图智能矫正 Agent (Pi-Agent 架构，全局浏览与编辑对话框) ===
     def _on_browse_diagram_apply(updated_text):
-        final_content = save_modified_tex_file(fpath, updated_text)
-        _update_csv_index_for_content_change(fpath, final_content)
+        saved_path, final_content = _save_and_index_content_edit(fpath, updated_text)
         _clear_advanced_search_result_cache()
         # This apply handler runs after the editor widget is instantiated.
         st.session_state[f"browse_pending_text_{text_area_key}"] = final_content
-        _request_question_scroll_restore(fpath)
+        _request_question_scroll_restore(saved_path)
         st.toast(f"{q_label} 插图已保存并同步", icon="✅")
         st.rerun()
 
@@ -8466,20 +8590,21 @@ def _page_browse_body(is_exam_mode=False, is_delete_mode=False, paper_type_scope
                 font-size: 1.06rem !important;
                 line-height: 1.1 !important;
             }
-            /* 知识板块：单行横向滚动 */
+            /* 知识板块：桌面端分两行，窄窗口继续换行以完整展示 */
             div[data-testid="stHorizontalBlock"]:has(#mc-subject-chip-start) {
-                flex-wrap: nowrap !important;
-                overflow-x: auto !important;
-                overflow-y: hidden !important;
-                padding-bottom: 3px !important;
+                display: grid !important;
+                grid-template-columns: repeat(11, minmax(0, 1fr)) !important;
+                align-items: start !important;
+                overflow: visible !important;
                 gap: 6px !important;
-                scrollbar-width: thin !important;
             }
             div[data-testid="stHorizontalBlock"]:has(#mc-subject-chip-start) > div[data-testid="column"] {
-                flex: 0 0 114px !important;
-                min-width: 114px !important;
-                max-width: 114px !important;
-                width: 114px !important;
+                min-width: 0 !important;
+                max-width: none !important;
+                width: 100% !important;
+            }
+            div[data-testid="stHorizontalBlock"]:has(#mc-subject-chip-start) div[data-testid="stButton"] {
+                display: flex !important;
             }
             div[data-testid="stHorizontalBlock"]:has(#mc-subject-chip-start) div[data-testid="stButton"] > button {
                 min-height: 28px !important;
@@ -8487,9 +8612,22 @@ def _page_browse_body(is_exam_mode=False, is_delete_mode=False, paper_type_scope
                 font-size: 12.2px !important;
                 border-radius: 8px !important;
                 padding: 0 4px !important;
-                white-space: nowrap !important;
-                overflow: hidden !important;
-                text-overflow: ellipsis !important;
+                white-space: normal !important;
+                overflow-wrap: anywhere !important;
+            }
+            div[data-testid="stHorizontalBlock"]:has(#mc-subject-chip-start) div[data-testid="stButton"] > button p {
+                font-size: 12.2px !important;
+                line-height: 1.1 !important;
+            }
+            @media (max-width: 1100px) {
+                div[data-testid="stHorizontalBlock"]:has(#mc-subject-chip-start) {
+                    grid-template-columns: repeat(7, minmax(0, 1fr)) !important;
+                }
+            }
+            @media (max-width: 700px) {
+                div[data-testid="stHorizontalBlock"]:has(#mc-subject-chip-start) {
+                    grid-template-columns: repeat(4, minmax(0, 1fr)) !important;
+                }
             }
             /* 其它导航按钮更矮 */
             div[data-testid="stVerticalBlockBorderWrapper"]:has(#left-panel-anchor):not(:has(div[data-testid="stVerticalBlockBorderWrapper"] #left-panel-anchor)) div[data-testid="stButton"] > button {
@@ -8500,7 +8638,8 @@ def _page_browse_body(is_exam_mode=False, is_delete_mode=False, paper_type_scope
                 padding: 0 6px !important;
             }
             /* 隐藏旧的左栏样式锚点占位 */
-            div[data-testid="element-container"]:has(#knowledge-subject-area) {
+            div[data-testid="element-container"]:has(#knowledge-subject-area),
+            div[data-testid="element-container"]:has(#mc-subject-chip-start) {
                 display: none !important;
             }
             </style>
@@ -8552,7 +8691,7 @@ def _page_browse_body(is_exam_mode=False, is_delete_mode=False, paper_type_scope
             if st.session_state["browse_subject"] not in SUBJECTS:
                 st.session_state["browse_subject"] = SUBJECTS[0]
 
-            # 顶部横排：单行横向滚动，22 个板块不再占两行
+            # 由上方网格样式将 21 个板块排成两行，保持原有选择状态与按钮顺序。
             chip_cols = st.columns(len(SUBJECTS), gap="small")
             for idx, subj in enumerate(SUBJECTS):
                 with chip_cols[idx]:
@@ -11784,7 +11923,8 @@ def render_question_header(q_label, content, fpath, extra_html_label="", compact
     
     meta = prepared_meta if prepared_meta is not None else _cached_question_meta(content)
     question_type = meta.get("题型") or infer_question_type(content)
-    st.caption(f"题型：{question_type}")
+    assessment_status = meta.get('评分状态', '')
+    st.caption(f"题型：{question_type}" + (f"　评分：{assessment_status}" if assessment_status else ""))
     diff = meta.get("难度星级", "").strip()
     tags = meta.get("标签", "").strip()
     knowledge_points = meta.get("知识点", "").strip()

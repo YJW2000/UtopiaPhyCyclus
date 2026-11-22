@@ -7,6 +7,7 @@ from pathlib import Path
 import shutil
 import subprocess
 from tempfile import TemporaryDirectory
+from services.local_process import run
 
 
 def _find_codex() -> str | None:
@@ -20,7 +21,7 @@ def _find_codex() -> str | None:
         query = ("[Console]::OutputEncoding = [Text.UTF8Encoding]::new($false); "
                  "Get-AppxPackage -Name OpenAI.Codex | Select-Object -First 1 -ExpandProperty InstallLocation")
         try:
-            result = subprocess.run([str(shell), "-NoProfile", "-NonInteractive", "-Command", query],
+            result = run([str(shell), "-NoProfile", "-NonInteractive", "-Command", query],
                                     capture_output=True, timeout=8, creationflags=subprocess.CREATE_NO_WINDOW)
         except (OSError, subprocess.TimeoutExpired):
             return None
@@ -34,6 +35,10 @@ def _find_codex() -> str | None:
 
 
 def run_local_codex_json(prompt: str, schema: dict, images: list[bytes], *, timeout: int = 180) -> dict:
+    if os.environ.get('UTOPIA_DESKTOP_STATE'):
+        from services.desktop_model import read_settings, request_api_json
+        if read_settings().get('provider') == 'api':
+            return request_api_json(prompt, schema, images, timeout)
     executable = _find_codex()
     if not executable:
         raise RuntimeError("未找到本机 Codex CLI。请安装 Codex CLI 并运行 codex login 后重试。")
@@ -49,7 +54,7 @@ def run_local_codex_json(prompt: str, schema: dict, images: list[bytes], *, time
             (directory / name).write_bytes(data)
             command.extend(["--image", name])
         try:
-            result = subprocess.run(
+            result = run(
                 [*command, "-"], cwd=directory, input=prompt.encode("utf-8"), capture_output=True,
                 timeout=timeout, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
             )

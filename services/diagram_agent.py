@@ -1041,6 +1041,10 @@ class PiDiagramAgent:
 
     def _get_api_config(self) -> Dict[str, str]:
         """获取项目配置的 API 密钥与地址"""
+        if os.environ.get('UTOPIA_DESKTOP_STATE'):
+            from services.desktop_model import read_settings
+            if read_settings().get('provider') != 'api':
+                return {'api_key': 'desktop-session', 'base_url': 'local://codex', 'model_name': 'codex'}
         env_path = os.path.join(self.base_dir, ".env")
         if os.path.exists(env_path):
             load_dotenv(env_path, override=True)
