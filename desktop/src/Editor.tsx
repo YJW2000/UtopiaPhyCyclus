@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { FormEvent, KeyboardEvent, PointerEvent } from 'react'
 import { EditorChat, EditorModal } from './EditorChat'
 import { EditorPdf } from './EditorPdf'
 import type { PdfNavigation, PdfPosition } from './EditorPdf'
+import PaneDivider from './PaneDivider'
 import { editorCall, errorMessage, pollEditorTask } from './editorContract'
 import type { EditorAttachment, EditorCompileResult, EditorDocument, EditorMessage, EditorProposal, EditorSelection, PdfPanel } from './editorContract'
 import './editor.css'
@@ -46,6 +47,10 @@ const modes: [Mode, string, string][] = [['review', '审阅', 'file'], ['split',
 const views: [View, string][] = [['preview', 'PDF 预览'], ['source', 'LaTeX'], ['original', '原卷'], ['compare', '修改对照']]
 const questionKinds = ['单项选择题', '多项选择题', '实验题', '计算题']
 const activeChatDrafts = new Map<string, { prompt: string; attachments: EditorAttachment[] }>()
+const chatPanelId = 'workbench-chat-pane'
+const chatMinWidth = 280
+const chatMaxWidth = 680
+const chatMaxFraction = 0.52
 
 function documentDraft(document: EditorDocument): Draft {
   return { source: document.source ?? '', title: document.title, selections: document.selections ?? [], activeSelectionId: document.activeSelectionId ?? null }
@@ -109,7 +114,6 @@ function Workbench({ document, onChange, onClose }: Props) {
   const [sourceRange, setSourceRange] = useState({ start: 0, end: 0 })
   const [commandsOpen, setCommandsOpen] = useState(false)
   const [pairOpen, setPairOpen] = useState(false)
-  const root = useRef<HTMLDivElement>(null)
   const sourceArea = useRef<HTMLTextAreaElement>(null)
   const lineNumbers = useRef<HTMLDivElement>(null)
   const sourceScroll = useRef(layout.sourceScroll)
@@ -121,7 +125,9 @@ function Workbench({ document, onChange, onClose }: Props) {
   const compareRun = useRef<AbortController>(null)
   const compileRun = useRef(false)
   const navigationStamp = useRef(0)
-  const changed = JSON.stringify(draft) !== JSON.stringify(documentDraft(record))
+  const changed = useMemo(() => JSON.stringify(draft) !== JSON.stringify(documentDraft(record)), [draft, record])
+  const sourceLineCount = useMemo(() => draft.source.split('\n').length, [draft.source])
+  const sourceLines = useMemo(() => Array.from({ length: sourceLineCount }, (_, index) => <div key={index}>{index + 1}</div>), [sourceLineCount])
   const selected = draft.selections.find(item => item.id === draft.activeSelectionId)
   const proposals = record.proposals ?? []
   const proposal = proposals.find(item => item.id === proposalId) ?? proposals.at(-1)
@@ -435,28 +441,31 @@ function Workbench({ document, onChange, onClose }: Props) {
     setNavigation(previous => ({ ...previous, [target]: { page: Math.max(1, targetPage), offset, stamp: ++navigationStamp.current } }))
   }
 
-  function handleResize(event: PointerEvent<HTMLDivElement>, kind: 'chat' | 'document') {
+  function handleDocumentResize(event: PointerEvent<HTMLDivElement>) {
     if (event.button !== 0) return
     const divider = event.currentTarget
-    const parent = (kind === 'chat' ? root.current : divider.parentElement)?.getBoundingClientRect()
+    const parent = divider.parentElement
     if (!parent) return
     event.preventDefault()
     divider.setPointerCapture(event.pointerId)
-    const move = (moveEvent: globalThis.PointerEvent) => setLayout(previous => kind === 'chat'
-      ? { ...previous, chatWidth: Math.max(280, Math.min(parent.width * 0.53, parent.right - moveEvent.clientX)) }
-      : { ...previous, documentWidth: Math.max(22, Math.min(78, (moveEvent.clientX - parent.left) * 100 / parent.width)) })
+    const move = (moveEvent: globalThis.PointerEvent) => {
+      const bounds = parent.getBoundingClientRect()
+      if (bounds.width > 0) {
+        const width = (moveEvent.clientX - bounds.left) * 100 / bounds.width
+        setLayout(previous => ({ ...previous, documentWidth: Math.max(22, Math.min(78, width)) }))
+      }
+    }
     const stop = () => { divider.removeEventListener('pointermove', move); divider.removeEventListener('lostpointercapture', stop) }
     divider.addEventListener('pointermove', move)
     divider.addEventListener('lostpointercapture', stop)
   }
 
-  function divider(kind: 'chat' | 'document') {
-    return <div className="wb-divider" role="separator" aria-label={kind === 'chat' ? '调整聊天栏宽度' : '调整两栏宽度'} aria-orientation="vertical" tabIndex={0} onPointerDown={event => handleResize(event, kind)} onKeyDown={event => {
+  function documentDivider() {
+    return <div className="wb-divider" role="separator" aria-label="调整两栏宽度" aria-orientation="vertical" tabIndex={0} onPointerDown={handleDocumentResize} onKeyDown={event => {
       if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return
       event.preventDefault()
       const direction = event.key === 'ArrowLeft' ? -1 : 1
-      setLayout(previous => kind === 'chat' ? { ...previous, chatWidth: Math.max(280, Math.min((root.current?.clientWidth ?? 900) * 0.53, previous.chatWidth - direction * 24)) }
-        : { ...previous, documentWidth: Math.max(22, Math.min(78, previous.documentWidth + direction * 3)) })
+      setLayout(previous => ({ ...previous, documentWidth: Math.max(22, Math.min(78, previous.documentWidth + direction * 3)) }))
     }} />
   }
 
@@ -478,7 +487,7 @@ function Workbench({ document, onChange, onClose }: Props) {
         <button type="button" className="wb-btn" disabled={sourceRange.start === sourceRange.end} onClick={markSource}>标记选段</button>
       </div></div>
       <div className="wb-source-editor">
-        <div className="wb-line-rail" aria-hidden="true" ref={lineNumbers}>{Array.from({ length: draft.source.split('\n').length }, (_, index) => <div key={index}>{index + 1}</div>)}</div>
+        <div className="wb-line-rail" aria-hidden="true" ref={lineNumbers}>{sourceLines}</div>
         <textarea aria-label="编辑 LaTeX 源码" spellCheck={false} wrap="off" value={draft.source} placeholder="在此录入或修改 LaTeX 源码…"
           ref={attachSource}
           onScroll={event => {
@@ -509,7 +518,7 @@ function Workbench({ document, onChange, onClose }: Props) {
       {!layout.compareText && currentComparison?.error && <div className="wb-notice" role="status">部分对照预览编译失败。 <button type="button" className="wb-btn" onClick={() => { setCompileLog(currentComparison.error ?? ''); setShowLog(true) }}>编译日志</button></div>}
       <div className="wb-document-panes">
         <div className="wb-document-panel" style={{ flexBasis: `${layout.documentWidth}%` }}>{layout.compareText ? <DiffSource label="修改前" text={proposal.changes?.map(item => item.before).join('\n\n') ?? proposal.before} side="before" /> : renderPdf('before', currentComparison?.before || proposal.beforePath, '修改前', '此版本没有 PDF 预览。', currentComparison?.loading)}</div>
-        {divider('document')}
+        {documentDivider()}
         <div className="wb-document-panel wb-document-panel-grow">{layout.compareText ? <DiffSource label="修改后" text={proposal.changes?.map(item => item.after).join('\n\n') ?? proposal.after} side="after" /> : renderPdf('after', currentComparison?.after || proposal.afterPath, '修改后', '此版本没有 PDF 预览。', currentComparison?.loading)}</div>
       </div>
     </div>
@@ -595,7 +604,7 @@ function Workbench({ document, onChange, onClose }: Props) {
     catch { /* Keep the editor open with its failed save visible. */ }
   }
 
-  return <div className={`wb-workbench wb-mode-${layout.mode}`} ref={root}>
+  return <div className={`wb-workbench wb-mode-${layout.mode}`}>
     <header className="wb-header">
       <div className="wb-document-title">
         <button type="button" className="wb-icon wb-back" onClick={() => void close()} aria-label="返回" title="返回"><WorkbenchIcon name="back" /></button>
@@ -647,12 +656,17 @@ function Workbench({ document, onChange, onClose }: Props) {
         </div>
         {layout.view === 'compare' ? renderComparison() : layout.pair ? <div className="wb-document-panes">
           <div className="wb-document-panel" style={{ flexBasis: `${layout.documentWidth}%` }}>{renderView(layout.view)}</div>
-          {divider('document')}
+          {documentDivider()}
           <div className="wb-document-panel wb-document-panel-grow">{renderView(layout.pair)}</div>
         </div> : renderView(layout.view)}
       </main>
-      {layout.mode === 'split' && divider('chat')}
-      <aside className="wb-chat-pane" hidden={layout.mode === 'review'} style={layout.mode === 'split' ? { width: `min(${layout.chatWidth}px, 52%)` } : undefined}>
+      {layout.mode !== 'chat' && <PaneDivider open={layout.mode === 'split'} panelId={chatPanelId} label="题目助手"
+        width={layout.chatWidth} minWidth={chatMinWidth} maxWidth={chatMaxWidth} maxFraction={chatMaxFraction}
+        onToggle={() => setLayout(previous => ({ ...previous, mode: previous.mode === 'split' ? 'review' : 'split' }))}
+        onWidthChange={width => setLayout(previous => ({ ...previous, chatWidth: width }))} />}
+      <aside id={chatPanelId} className="wb-chat-pane" hidden={layout.mode === 'review'} style={layout.mode === 'split' ? {
+        width: `clamp(min(${chatMinWidth}px, ${chatMaxFraction * 100}%), ${layout.chatWidth}px, min(${chatMaxWidth}px, ${chatMaxFraction * 100}%))`,
+      } : undefined}>
         <EditorChat messages={record.messages ?? []} proposals={proposals} attachments={attachments} selection={selected} prompt={prompt} status={chatStatus}
           pending={pending} busy={Boolean(pending)} hasPdfSelection={preciseCaptures.length > 0} onPrompt={setPrompt} onAttach={files => void attachFiles(files)}
           onRemove={id => setAttachments(previous => previous.filter(item => item.id !== id))} onClearSelection={() => selectSource(null)} onSend={scope => void sendChat(scope)}

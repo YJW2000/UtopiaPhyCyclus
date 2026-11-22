@@ -1,0 +1,68 @@
+.pane-divider {
+  position: relative;
+  z-index: 2;
+  flex: 0 0 12px;
+  align-self: stretch;
+  background: var(--mc-surface-soft);
+  color: var(--mc-muted);
+  touch-action: none;
+  user-select: none;
+}
+
+.pane-divider-grip {
+  position: absolute;
+  inset: 0;
+  cursor: col-resize;
+  touch-action: none;
+}
+
+.pane-divider-grip::before {
+  content: '';
+  position: absolute;
+  inset-block: 0;
+  left: 50%;
+  width: 1px;
+  background: var(--mc-border);
+}
+
+.pane-divider .pane-divider-toggle {
+  display: grid;
+  place-items: center;
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 20px;
+  height: 48px;
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--mc-border-strong);
+  border-radius: 10px;
+  background: var(--mc-surface);
+  color: var(--mc-muted);
+  cursor: pointer;
+  touch-action: none;
+}
+
+.pane-divider[data-collapsed] .pane-divider-toggle {
+  right: 0;
+  left: auto;
+  transform: translateY(-50%);
+  border-radius: 10px 0 0 10px;
+}
+
+.pane-divider:hover .pane-divider-grip::before,
+.pane-divider:focus-within .pane-divider-grip::before,
+.pane-divider[data-dragging] .pane-divider-grip::before {
+  background: var(--mc-accent);
+}
+
+.pane-divider .pane-divider-toggle:hover,
+.pane-divider .pane-divider-toggle:focus-visible {
+  color: var(--mc-action-bg);
+  border-color: var(--mc-accent);
+}
+
+.pane-divider[data-dragging] .pane-divider-toggle {
+  cursor: col-resize;
+}

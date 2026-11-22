@@ -46,7 +46,6 @@ export default function App() {
     [recent, setRecent] = useState<EditorDocument[]>([])
   const [busy, setBusy] = useState(''),
     [error, setError] = useState(''),
-    [chat, setChat] = useState(true),
     [collapsed, setCollapsed] = useState(
       () => localStorage.getItem('nav.compact') === 'yes'
     )
@@ -258,9 +257,6 @@ export default function App() {
                 >
                   返回当前文稿
                 </button>
-              )}
-              {!chat && (
-                <button onClick={() => setChat(true)}>✦ 题库助手</button>
               )}
             </div>
           </header>
@@ -613,44 +609,38 @@ export default function App() {
                 </div>
               )}
             </div>
-            {chat && (
-              <ContextChat
-                key={(prefs?.library || '') + page}
-                name={pages[page][1]}
-                storageKey={'chat:' + prefs?.library + ':' + page}
-                context={{
-                  page: pages[page][1],
-                  query,
-                  total: summary.total,
-                  subjects: summary.subjects,
-                  rows: (page === 'stats' ? summary.recent : rows).slice(0, 20),
-                  basket: basket.map((r) => ({
-                    id: r.id,
-                    paper: r.paper,
-                    number: r.number,
-                  })),
-                }}
-                close={() => setChat(false)}
-                apply={(a) => {
-                  if (a.action === 'search') {
-                    setQuery(a.query || '')
-                    navigate('search')
-                  } else if (a.action === 'add') {
-                    const ids = new Set(a.ids)
-                    const saved = new Set(basket.map((r) => r.path))
-                    changeBasket([
-                      ...basket,
-                      ...[...rows, ...summary.recent].filter(
-                        (r) =>
-                          ids.has(r.id) &&
-                          !saved.has(r.path) &&
-                          saved.add(r.path)
-                      ),
-                    ])
-                  }
-                }}
-              />
-            )}
+            <ContextChat
+              name={pages[page][1]}
+              storageKey={'chat:' + prefs?.library + ':' + page}
+              context={{
+                page: pages[page][1],
+                query,
+                total: summary.total,
+                subjects: summary.subjects,
+                rows: (page === 'stats' ? summary.recent : rows).slice(0, 20),
+                basket: basket.map((r) => ({
+                  id: r.id,
+                  paper: r.paper,
+                  number: r.number,
+                })),
+              }}
+              apply={(a) => {
+                if (a.action === 'search') {
+                  setQuery(a.query || '')
+                  navigate('search')
+                } else if (a.action === 'add') {
+                  const ids = new Set(a.ids)
+                  const saved = new Set(basket.map((r) => r.path))
+                  changeBasket([
+                    ...basket,
+                    ...[...rows, ...summary.recent].filter(
+                      (r) =>
+                        ids.has(r.id) && !saved.has(r.path) && saved.add(r.path)
+                    ),
+                  ])
+                }
+              }}
+            />
           </div>
         )}
       </main>

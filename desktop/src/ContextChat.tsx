@@ -1,4 +1,66 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useId, useRef, useState } from 'react'
+import type { ReactNode } from 'react'
+import PaneDivider from './PaneDivider'
+
+function ChatDock({ children }: { children: ReactNode }) {
+  const panelId = useId()
+  const [open, setOpen] = useState(
+    () => localStorage.getItem('chat.collapsed') !== 'yes'
+  )
+  const [width, setWidth] = useState(() => {
+    const saved = Number(localStorage.getItem('chat.width'))
+    return Number.isFinite(saved) && saved > 0
+      ? Math.min(520, Math.max(230, saved))
+      : 300
+  })
+  const lastWidth = useRef(width)
+
+  useEffect(() => {
+    lastWidth.current = width
+    const timer = setTimeout(
+      () => localStorage.setItem('chat.width', String(width)),
+      140
+    )
+    return () => clearTimeout(timer)
+  }, [width])
+  useEffect(() => {
+    const flush = () => localStorage.setItem('chat.width', String(lastWidth.current))
+    window.addEventListener('pagehide', flush)
+    return () => {
+      window.removeEventListener('pagehide', flush)
+      flush()
+    }
+  }, [])
+
+  function toggle() {
+    localStorage.setItem('chat.collapsed', open ? 'yes' : 'no')
+    setOpen(!open)
+  }
+  return (
+    <>
+      <PaneDivider
+        open={open}
+        panelId={panelId}
+        label="题库助手"
+        width={width}
+        minWidth={230}
+        maxWidth={520}
+        maxFraction={0.44}
+        onWidthChange={setWidth}
+        onToggle={toggle}
+      />
+      <aside
+        id={panelId}
+        aria-label="题库助手"
+        className="context-chat"
+        hidden={!open}
+        style={{ width }}
+      >
+        {children}
+      </aside>
+    </>
+  )
+}
 interface Action {
   action: string
   ids?: string[]
@@ -8,19 +70,22 @@ interface Turn extends Partial<Action> {
   role: string
   text: string
 }
-export default function ContextChat({
-  name,
-  storageKey,
-  context,
-  apply,
-  close,
-}: {
+interface ChatProps {
   name: string
   storageKey: string
   context: object
   apply: (a: Action) => void
-  close: () => void
-}) {
+}
+
+export default function ContextChat(props: ChatProps) {
+  return (
+    <ChatDock>
+      <ChatContents key={props.storageKey} {...props} />
+    </ChatDock>
+  )
+}
+
+function ChatContents({ name, storageKey, context, apply }: ChatProps) {
   const [turns, setTurns] = useState<Turn[]>(() => {
     try {
       return JSON.parse(localStorage.getItem(storageKey) || '[]')
@@ -31,16 +96,9 @@ export default function ContextChat({
   const [input, setInput] = useState(''),
     [busy, setBusy] = useState(false),
     [error, setError] = useState('')
-  const [width, setWidth] = useState(() =>
-    Math.min(
-      520,
-      Math.max(230, Number(localStorage.getItem('chat.width')) || 300)
-    )
-  )
   const scroll = useRef<HTMLDivElement>(null),
     alive = useRef(true),
-    task = useRef(''),
-    drag = useRef(false)
+    task = useRef('')
   useEffect(() => {
     alive.current = true
     return () => {
@@ -105,44 +163,10 @@ export default function ContextChat({
       if (alive.current) setBusy(false)
     }
   }
-  function resize(n: number) {
-    const size = Math.min(520, Math.max(230, n))
-    setWidth(size)
-    localStorage.setItem('chat.width', String(size))
-  }
   return (
-    <aside className="context-chat" style={{ width }}>
-      <div
-        className="chat-resize"
-        role="separator"
-        aria-label="调整对话宽度"
-        tabIndex={0}
-        aria-orientation="vertical"
-        onPointerDown={(e) => {
-          drag.current = true
-          e.currentTarget.setPointerCapture(e.pointerId)
-        }}
-        onPointerMove={(e) => {
-          if (drag.current) resize(window.innerWidth - e.clientX)
-        }}
-        onPointerUp={() => {
-          drag.current = false
-        }}
-        onLostPointerCapture={() => {
-          drag.current = false
-        }}
-        onKeyDown={(e) => {
-          if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
-            e.preventDefault()
-            resize(width + (e.key === 'ArrowLeft' ? 12 : -12))
-          }
-        }}
-      />
+    <>
       <header>
         <strong>✦　题库助手</strong>
-        <button onClick={close} aria-label="收起题库助手">
-          ›
-        </button>
       </header>
       <div className="context-history" ref={scroll}>
         {!turns.length && (
@@ -208,6 +232,6 @@ export default function ContextChat({
           </button>
         )}
       </form>
-    </aside>
+    </>
   )
 }

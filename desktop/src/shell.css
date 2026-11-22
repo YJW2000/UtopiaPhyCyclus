@@ -171,6 +171,9 @@ summary:focus-visible {
 .workspace-body {
   display: flex;
 }
+.workspace-body:has(> .pane-divider[data-dragging]) iframe {
+  pointer-events: none;
+}
 .editor-mount > * {
   flex: 1;
   min-width: 0;
@@ -451,24 +454,20 @@ summary:focus-visible {
   word-break: break-all;
 }
 .context-chat {
-  width: clamp(232px, 22vw, 355px);
-  min-width: 190px;
+  min-width: min(230px, 44%);
   max-width: 44%;
   flex: none;
   display: flex;
   flex-direction: column;
   min-height: 0;
-  border-left: 1px solid var(--mc-border);
   background: var(--mc-surface);
 }
 .context-chat header {
   min-height: 46px;
   font-size: 14px;
 }
-.context-chat header button {
-  border: none;
-  font-size: 20px;
-  padding: 0 6px;
+.context-chat[hidden] {
+  display: none;
 }
 .context-history {
   flex: 1;
@@ -602,27 +601,7 @@ summary:focus-visible {
   .collapse-nav {
     font-size: 0;
   }
-  .context-chat {
-    width: 200px;
-  }
   .page-head {
     flex-wrap: wrap;
   }
-}
-.context-chat {
-  position: relative;
-}
-.chat-resize {
-  position: absolute;
-  left: -3px;
-  top: 0;
-  bottom: 0;
-  width: 6px;
-  cursor: col-resize;
-  z-index: 2;
-  touch-action: none;
-}
-.chat-resize:hover,
-.chat-resize:focus {
-  background: var(--mc-accent-soft);
 }

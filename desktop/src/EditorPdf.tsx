@@ -23,7 +23,7 @@ interface PdfProps {
   onZoom: (zoom: number) => void
 }
 
-interface PdfReader { document: PDFDocumentProxy; aspect: number }
+interface PdfReader { path: string; document: PDFDocumentProxy; aspect: number }
 
 let pdfLibrary: Promise<typeof import('pdfjs-dist')> | undefined
 const pdfAssets = new URL('./pdfjs/', location.href)
@@ -40,7 +40,8 @@ const PAGE_GAP = 16
 const DEFAULT_ASPECT = Math.sqrt(2)
 
 export function EditorPdf({ path, label, panel, position, navigation, pending, empty, crop, onCropToggle, onCapture, onNavigate, onZoom }: PdfProps) {
-  const [reader, setReader] = useState<PdfReader>()
+  const [loaded, setReader] = useState<PdfReader>()
+  const reader = loaded?.path === path ? loaded : undefined
   const [failure, setFailure] = useState('')
   const [size, setSize] = useState({ width: 0, height: 0 })
   const [skip, setSkip] = useState(1)
@@ -75,7 +76,7 @@ export function EditorPdf({ path, label, panel, position, navigation, pending, e
         const document = await task.promise
         const firstPage = await document.getPage(1)
         const viewport = firstPage.getViewport({ scale: 1 })
-        if (active) setReader({ document, aspect: viewport.height / viewport.width || DEFAULT_ASPECT })
+        if (active) setReader({ path, document, aspect: viewport.height / viewport.width || DEFAULT_ASPECT })
       })().catch(error => { if (active) setFailure(errorMessage(error)) })
     }
     return () => {
@@ -98,8 +99,16 @@ export function EditorPdf({ path, label, panel, position, navigation, pending, e
 
   const count = reader?.document.numPages ?? 0
   const pageWidth = Math.max(100, Math.min(930, size.width - 36) * position.zoom)
-  const pageHeight = Math.ceil(pageWidth * (reader?.aspect ?? DEFAULT_ASPECT))
+  const pageAspect = reader?.aspect ?? DEFAULT_ASPECT
+  const pageHeight = Math.ceil(pageWidth * pageAspect)
   const step = pageHeight + PAGE_GAP
+  const [rasterWidth, setRasterWidth] = useState(pageWidth)
+
+  useEffect(() => {
+    // Scale the published bitmap during drag, then render at the settled size.
+    const timer = setTimeout(() => setRasterWidth(pageWidth), 140)
+    return () => clearTimeout(timer)
+  }, [pageWidth])
 
   function jump(page: number, offset = 0) {
     const element = scroller.current
@@ -193,6 +202,7 @@ export function EditorPdf({ path, label, panel, position, navigation, pending, e
       {reader && count > 0 && <div className="wb-pdf-stack" style={{ '--wb-paper-width': `${pageWidth}px`, height: count * step + Math.max(PAGE_GAP, size.height - step) } as CSSProperties}>
         {Array.from({ length: Math.max(0, last - first + 1) }, (_, index) => first + index).map(page => <PdfPage
           document={reader.document} key={page} page={page} width={pageWidth} height={pageHeight} top={(page - 1) * step}
+          rasterWidth={rasterWidth} rasterHeight={Math.ceil(rasterWidth * pageAspect)}
           crop={crop} onCapture={(dataUrl, rect) => onCapture({ id: globalThis.crypto.randomUUID(), title: `${label} · 第 ${page} 页`, page, panel, dataUrl, rect })}
         />)}
       </div>}
@@ -205,6 +215,8 @@ interface PdfPageProps {
   page: number
   width: number
   height: number
+  rasterWidth: number
+  rasterHeight: number
   top: number
   crop: boolean
   onCapture: (dataUrl: string, rect: [number, number, number, number]) => void
@@ -213,39 +225,48 @@ interface PdfPageProps {
 interface Point { x: number; y: number }
 interface Rect extends Point { width: number; height: number }
 
-function PdfPage({ document, page, width, height, top, crop, onCapture }: PdfPageProps) {
+function PdfPage({ document, page, width, height, rasterWidth, rasterHeight, top, crop, onCapture }: PdfPageProps) {
   const canvas = useRef<HTMLCanvasElement>(null)
   const pointer = useRef<Point | null>(null)
   const [selection, setSelection] = useState<Rect>()
-  const [rendered, setRendered] = useState({ width, height, error: '', ready: false })
+  const [rendered, setRendered] = useState<{ aspect?: number; error: string }>({ error: '' })
+  const displayedWidth = rendered.aspect ? Math.min(width, height / rendered.aspect) : width
+  const displayedHeight = rendered.aspect ? displayedWidth * rendered.aspect : height
 
   useEffect(() => {
     let active = true
     let render: RenderTask | undefined
-    setRendered(previous => ({ ...previous, ready: false, error: '' }))
     void document.getPage(page).then(pdfPage => {
       const node = canvas.current
       if (!active || !node) return undefined
       const natural = pdfPage.getViewport({ scale: 1 })
-      const viewport = pdfPage.getViewport({ scale: Math.min(width / natural.width, height / natural.height) })
+      const viewport = pdfPage.getViewport({ scale: Math.min(rasterWidth / natural.width, rasterHeight / natural.height) })
       const ratio = Math.min(Math.max(window.devicePixelRatio, 1), 2, 3000 / Math.max(viewport.width, viewport.height))
-      node.width = Math.max(1, Math.round(viewport.width * ratio))
-      node.height = Math.max(1, Math.round(viewport.height * ratio))
-      render = pdfPage.render({ canvas: node, viewport, transform: [ratio, 0, 0, ratio, 0, 0] })
+      const staged = window.document.createElement('canvas')
+      staged.width = Math.max(1, Math.round(viewport.width * ratio))
+      staged.height = Math.max(1, Math.round(viewport.height * ratio))
+      render = pdfPage.render({ canvas: staged, viewport, transform: [ratio, 0, 0, ratio, 0, 0] })
       return render.promise.then(() => {
-        if (active) setRendered({ width: viewport.width, height: viewport.height, error: '', ready: true })
+        if (!active) return
+        const context = node.getContext('2d')
+        if (!context) throw new Error('无法显示 PDF 页面。')
+        node.width = staged.width
+        node.height = staged.height
+        context.drawImage(staged, 0, 0)
+        staged.width = staged.height = 0
+        setRendered({ aspect: natural.height / natural.width, error: '' })
       })
     }).catch(error => {
-      if (active) setRendered({ width, height, error: errorMessage(error), ready: false })
+      if (active) setRendered(previous => previous.aspect ? previous : { error: errorMessage(error) })
     })
     return () => { active = false; render?.cancel() }
-  }, [document, page, width, height])
+  }, [document, page, rasterWidth, rasterHeight])
 
   function getPoint(event: PointerEvent<HTMLDivElement>): Point {
     const area = event.currentTarget.getBoundingClientRect()
     return {
-      x: Math.max(0, Math.min(area.width, event.clientX - area.left)),
-      y: Math.max(0, Math.min(area.height, event.clientY - area.top)),
+      x: Math.max(0, Math.min(1, (event.clientX - area.left) / area.width)),
+      y: Math.max(0, Math.min(1, (event.clientY - area.top) / area.height)),
     }
   }
 
@@ -261,28 +282,25 @@ function PdfPage({ document, page, width, height, top, crop, onCapture }: PdfPag
     pointer.current = null
     setSelection(undefined)
     const source = canvas.current
-    if (!bounds || !source || bounds.width < 8 || bounds.height < 8) return
-    const scaleX = source.width / rendered.width
-    const scaleY = source.height / rendered.height
-    const widthPx = bounds.width * scaleX
-    const heightPx = bounds.height * scaleY
+    if (!bounds || !source || bounds.width * displayedWidth < 8 || bounds.height * displayedHeight < 8) return
+    const widthPx = bounds.width * source.width
+    const heightPx = bounds.height * source.height
     const scale = Math.min(1, 1800 / Math.max(widthPx, heightPx))
     const snapshot = window.document.createElement('canvas')
     snapshot.width = Math.max(1, Math.round(widthPx * scale))
     snapshot.height = Math.max(1, Math.round(heightPx * scale))
     const context = snapshot.getContext('2d')
     if (!context) return
-    context.drawImage(source, bounds.x * scaleX, bounds.y * scaleY, widthPx, heightPx, 0, 0, snapshot.width, snapshot.height)
+    context.drawImage(source, bounds.x * source.width, bounds.y * source.height, widthPx, heightPx, 0, 0, snapshot.width, snapshot.height)
     onCapture(snapshot.toDataURL('image/jpeg', 0.91), [
-      bounds.x / rendered.width, bounds.y / rendered.height,
-      (bounds.x + bounds.width) / rendered.width, (bounds.y + bounds.height) / rendered.height,
+      bounds.x, bounds.y, Math.min(1, bounds.x + bounds.width), Math.min(1, bounds.y + bounds.height),
     ])
   }
 
   return <div className="wb-paper-slot" style={{ top, height }} aria-label={`第 ${page} 页`}>
-    <div className="wb-paper" style={{ width: rendered.width, height: rendered.height }}
+    <div className="wb-paper" style={{ width: displayedWidth, height: displayedHeight }}
       onPointerDown={event => {
-        if (!crop || !rendered.ready || event.button !== 0) return
+        if (!crop || !rendered.aspect || event.button !== 0) return
         event.preventDefault()
         event.currentTarget.setPointerCapture(event.pointerId)
         pointer.current = getPoint(event)
@@ -291,9 +309,9 @@ function PdfPage({ document, page, width, height, top, crop, onCapture }: PdfPag
       onPointerMove={event => { if (pointer.current) setSelection(getSelection(event)) }}
       onPointerUp={endSelection}
       onPointerCancel={() => { pointer.current = null; setSelection(undefined) }}>
-      <canvas ref={canvas} style={{ visibility: rendered.ready ? 'visible' : 'hidden' }} />
+      <canvas ref={canvas} style={{ visibility: rendered.aspect ? 'visible' : 'hidden' }} />
       {rendered.error && <p className="wb-page-error">{rendered.error}</p>}
-      {crop && selection && <div className="wb-crop-area" style={{ left: selection.x, top: selection.y, width: selection.width, height: selection.height }} />}
+      {crop && selection && <div className="wb-crop-area" style={{ left: `${selection.x * 100}%`, top: `${selection.y * 100}%`, width: `${selection.width * 100}%`, height: `${selection.height * 100}%` }} />}
     </div>
   </div>
 }
