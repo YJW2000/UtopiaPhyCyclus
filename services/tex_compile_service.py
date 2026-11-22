@@ -11,6 +11,7 @@ import time
 import uuid
 
 from services.local_process import run
+from services.desktop_tool_paths import find_desktop_tool
 from services.tex_import_service import parse_tex_questions
 from services.pdf_selection_edit import build_source_map
 from utils.tex_log_tools import extract_tex_errors, summarize_tex_log
@@ -252,7 +253,7 @@ def _tex_relative_path(path: Path, base: Path) -> str:
 def compile_tex_preview(source: str, project_dir: str, defaults: dict,
                         engine: str = 'xelatex', resource_dir: str = '', timeout: int = 45,
                         *, editor_source: str | None = None, cache_dir=None, search_dirs=()) -> dict:
-    executable = shutil.which(engine)
+    executable = find_desktop_tool(engine)
     if engine not in ('xelatex', 'lualatex', 'pdflatex') or not executable:
         return dict(ok=False, error=f'未找到本地 {engine} 编译器，请检查 TeX Live / MiKTeX 的 PATH。', log='')
     work_dir = Path(resource_dir or project_dir).resolve()

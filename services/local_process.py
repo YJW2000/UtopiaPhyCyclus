@@ -46,8 +46,8 @@ def _kill_tree(process):
             pass
 
 
-def run(command, *, input=None, capture_output=False, timeout=None, **kwargs):
-    if _cancel_event.get() is None:
+def run(command, *, input=None, capture_output=False, timeout=None, kill_tree_on_timeout=False, **kwargs):
+    if _cancel_event.get() is None and not kill_tree_on_timeout:
         return subprocess.run(command, input=input, capture_output=capture_output, timeout=timeout, **kwargs)
     check_cancelled()
     if capture_output:

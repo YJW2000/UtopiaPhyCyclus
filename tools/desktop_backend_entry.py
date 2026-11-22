@@ -32,6 +32,10 @@ def configure_runtime() -> None:
             break
     with contextlib.redirect_stdout(sys.stderr):
         configure(resource_root)
+    if os.name == 'nt':
+        from services.desktop_tool_paths import fresh_tool_path
+        os.environ['NoDefaultCurrentDirectoryInExePath'] = '1'
+        os.environ['PATH'] = fresh_tool_path()
     os.environ['TEXMFVAR'] = str(state / 'texmf-var')
     os.environ['TEXMFCONFIG'] = str(state / 'texmf-config')
     if 'UTOPIA_WHISPER_LIB' in os.environ:

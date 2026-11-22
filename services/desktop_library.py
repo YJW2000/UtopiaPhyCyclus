@@ -10,8 +10,10 @@ import shutil
 from threading import Lock
 import uuid
 
-from services.desktop_model import api_config, read_settings
+from services.desktop_model import api_config, read_settings, selected_provider
+from services.desktop_tool_paths import fresh_tool_path
 from services.file_service import atomic_write_text
+from services.local_agent import LOCAL_AGENTS, agent_status, run_agent_json
 from utils import question_index
 from utils.theme_palettes import SKINS, normalize_skin, theme_tokens
 
@@ -49,13 +51,13 @@ def create_library_handlers(library: Path, state_dir: Path):
         mode = 'dark' if mode == 'dark' else 'light'
         return {'skin': skin, 'mode': mode, 'tokens': theme_tokens(skin, mode),
                 'skins': {k: {'name': v['name'], 'accent': v['accent']} for k, v in SKINS.items()},
-                'provider': saved.get('provider', 'codex'), 'library': str(library)}
+                'provider': selected_provider(state), 'library': str(library)}
 
     def preferences(p):
         update = {}
-        for field, allowed in (('skin', SKINS), ('mode', {'dark', 'light'}), ('provider', {'codex', 'api'})):
+        for field, allowed in (('skin', SKINS), ('mode', {'dark', 'light'}), ('provider', {*LOCAL_AGENTS, 'api'})):
             if field in p:
-                if p[field] not in allowed:
+                if not isinstance(p[field], str) or p[field] not in allowed:
                     raise ValueError('设置值无效。')
                 update[field] = p[field]
         with lock:
@@ -166,8 +168,7 @@ def create_library_handlers(library: Path, state_dir: Path):
                 missing.append(name)
         return {'integrity': integrity, 'total': len(rows), 'missing': missing}
 
-    def chat(p):
-        from services.local_codex import run_local_codex_json
+    def chat(p, *, provider=None):
         context = p.get('context') or {}
         message = str(p.get('message') or '').strip()
         if not message:
@@ -176,16 +177,19 @@ def create_library_handlers(library: Path, state_dir: Path):
                   'query': {'type':'string'}, 'ids': {'type':'array','items':{'type':'string'}}},
                   'required':['reply','action','query','ids'],'additionalProperties':False}
         material = {'当前页面及数据':context,'近几轮对话':(p.get('history') or [])[-12:], '本次请求':message}
-        result = run_local_codex_json('你是乌托邦高中物理题库的教研助手。用中文简洁回答。根据提供的真实题库数据回答。'
+        result = run_agent_json(provider or selected_provider(state), '你是乌托邦高中物理题库的教研助手。用中文简洁回答。根据提供的真实题库数据回答。'
                 '需要筛选时 action=search、query 写搜索词；仅当用户要求加入试卷时可用 add，ids 仅填上下文中出现的题目 ID。'
                 '操作是待确认建议，不可声称已经执行。其它情况 action=none。\n' + json.dumps(material, ensure_ascii=False), schema, [])
         return result
 
     def provider_status(_):
-        from services.local_codex import _find_codex
         config = api_config(library)
-        return {'codex': bool(_find_codex()), 'xelatex': bool(shutil.which('xelatex')),
-                'synctex': bool(shutil.which('synctex')), 'apiConfigured': bool(config['AI_MODEL_NAME'] and config['AI_API_KEY'] and config['AI_BASE_URL'])}
+        tool_path = fresh_tool_path()
+        agents = agent_status(tool_path)
+        return {'agents': agents, 'effectiveProvider': selected_provider(state),
+                'codex': agents[0]['installed'], 'xelatex': bool(shutil.which('xelatex', path=tool_path)),
+                'synctex': bool(shutil.which('synctex', path=tool_path)),
+                'apiConfigured': all(config[key] for key in ('AI_MODEL_NAME', 'AI_API_KEY', 'AI_BASE_URL'))}
 
     return {'library.summary':summary, 'library.search':search, 'library.assemble':assemble, 'library.demo':demo,
             'library.imageInput':image_input,'library.check':check, 'context.chat':chat,

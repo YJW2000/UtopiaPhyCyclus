@@ -1,8 +1,10 @@
 """Cancellable desktop operations that publish results only while active."""
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import nullcontext
 from threading import Event, RLock
 from uuid import uuid4
 
+from services.desktop_model import using_provider
 from services.local_process import TaskCancelled, cancellable, check_cancelled
 
 
@@ -45,7 +47,7 @@ class DesktopJobs:
         self._executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix='utopia-desktop')
         self._jobs = {}
 
-    def submit(self, operation, document_id=None):
+    def submit(self, operation, document_id=None, *, provider=None):
         job = DesktopJob(document_id)
         while len(self._jobs) >= 128:
             expired = next((key for key, old in self._jobs.items()
@@ -55,16 +57,16 @@ class DesktopJobs:
             self._jobs.pop(expired)
         queued = job.snapshot()
         self._jobs[queued['id']] = job
-        self._executor.submit(self._execute, job, operation)
+        self._executor.submit(self._execute, job, operation, provider)
         result = {'taskId': queued['id'], 'status': 'queued'}
         if document_id:
             result['documentId'] = document_id
         return result
 
     @staticmethod
-    def _execute(job, operation):
+    def _execute(job, operation, provider):
         try:
-            with cancellable(job.event):
+            with cancellable(job.event), (using_provider(provider) if provider else nullcontext()):
                 with job.lock:
                     check_cancelled()
                     job.state['status'] = 'running'

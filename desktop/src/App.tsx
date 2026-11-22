@@ -3,6 +3,7 @@ import logo from '../../static/sidebar.webp'
 import { Browse, Dashboard, emptySummary, Paper } from './Bank'
 import type { Question, Summary } from './Bank'
 import ContextChat from './ContextChat'
+import SettingsConnections from './SettingsConnections'
 import type { EditorDocument } from './editorContract'
 
 const Editor = lazy(() => import('./Editor'))
@@ -54,8 +55,7 @@ export default function App() {
     [basket, setBasket] = useState<Question[]>([])
   const [legacy, setLegacy] = useState(''),
     [legacyPending, setLegacyPending] = useState(false),
-    [check, setCheck] = useState<any>(),
-    [providers, setProviders] = useState<any>()
+    [check, setCheck] = useState<any>()
   const routeGeneration = useRef(0),
     fileInput = useRef<HTMLInputElement>(null)
   const [paste, setPaste] = useState(''),
@@ -100,10 +100,6 @@ export default function App() {
   }, [])
   useEffect(() => {
     if (['tex', 'pdf', 'entry'].includes(page) && !editing) void drafts()
-    if (page === 'settings')
-      void call('ui.providers')
-        .then(setProviders)
-        .catch((e: unknown) => setError(errorText(e)))
   }, [page, editing, drafts])
   function navigate(next: Page) {
     routeGeneration.current++
@@ -514,39 +510,15 @@ export default function App() {
                           </select>
                         </label>
                       </section>
-                      <section className="mc-card">
-                        <h2>模型连接</h2>
-                        <select
-                          aria-label="模型连接"
-                          value={prefs?.provider || 'codex'}
-                          onChange={(e) =>
-                            void work('正在保存…', async () =>
-                              theme(
-                                await call('ui.save', {
-                                  provider: e.target.value,
-                                })
-                              )
-                            )
-                          }
-                        >
-                          <option value="codex">本机 Codex</option>
-                          <option value="api">自定义 API</option>
-                        </select>
-                        <p>
-                          {prefs?.provider === 'api'
-                            ? providers?.apiConfigured
-                              ? '已读取当前题库的 API 配置。'
-                              : '可在 API 设置中填写地址、模型和密钥。'
-                            : providers?.codex
-                              ? '已找到本机 Codex，使用已有登录。'
-                              : '使用本机 Codex 登录。若未安装，请先安装并登录 Codex。'}
-                        </p>
-                        {prefs?.provider === 'api' && (
-                          <button onClick={() => openLegacy('settings')}>
-                            打开 API 设置
-                          </button>
-                        )}
-                      </section>
+                      <SettingsConnections
+                        provider={prefs?.provider}
+                        saveProvider={async (provider) => {
+                          const saved = await call<Prefs>('ui.save', { provider })
+                          setPrefs((current) => current && { ...current, provider: saved.provider })
+                        }}
+                        openApi={() => openLegacy('settings')}
+                        apiPending={legacyPending}
+                      />
                       <section className="mc-card">
                         <h2>本地题库</h2>
                         <p className="filepath">{prefs?.library}</p>

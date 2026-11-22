@@ -7,6 +7,8 @@ files:
   - dist/**/*
   - main.cjs
   - preload.cjs
+  - environment.cjs
+  - winget-bootstrap.cjs
   - THIRD_PARTY_NOTICES.txt
 extraResources:
   - from: ../.release-work/desktop-preview/app-backend

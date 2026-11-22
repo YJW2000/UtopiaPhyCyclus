@@ -2,11 +2,16 @@
 from __future__ import annotations
 
 import base64
+from contextlib import contextmanager
+from contextvars import ContextVar
 import json
 import os
 from pathlib import Path
 import subprocess
 import sys
+
+
+_job_provider = ContextVar('desktop_agent_provider', default=None)
 
 
 def read_settings(state=None):
@@ -21,6 +26,23 @@ def read_settings(state=None):
     return {}
 
 
+def selected_provider(state=None):
+    from services.local_agent import LOCAL_AGENTS
+    if state is None and _job_provider.get() is not None:
+        return _job_provider.get()
+    value = read_settings(state).get('provider')
+    return value if isinstance(value, str) and (value == 'api' or value in LOCAL_AGENTS) else 'codex'
+
+
+@contextmanager
+def using_provider(provider):
+    token = _job_provider.set(provider)
+    try:
+        yield
+    finally:
+        _job_provider.reset(token)
+
+
 def api_config(library):
     from dotenv import dotenv_values
     config = dotenv_values(Path(library) / '.env')
@@ -33,7 +55,7 @@ def request_api_json(prompt, schema, images, timeout):
     from services.ai_service import extract_json_obj_from_text
     config = api_config(os.environ['UTOPIA_DESKTOP_LIBRARY'])
     if not all(config[k] for k in ('AI_BASE_URL', 'AI_API_KEY', 'AI_MODEL_NAME')):
-        raise ValueError('请在设置中填写 API 地址、模型和密钥，或选择本机 Codex。')
+        raise ValueError('请在设置中填写 API 地址、模型和密钥，或选择本机 Agent。')
     content = [{'type': 'text', 'text': prompt + '\n请按这个 JSON Schema 返回对象：\n' + json.dumps(schema, ensure_ascii=False)}]
     for data in images:
         content.append({'type': 'image_url', 'image_url': {'url': 'data:image/png;base64,' + base64.b64encode(data).decode()}})
@@ -65,7 +87,7 @@ def _request_child():
 
 
 def legacy_completion(payload, timeout):
-    """Let existing OpenAI-shaped text and OCR callers use a locally signed-in Codex."""
+    """Let existing OpenAI-shaped text and OCR callers use the selected desktop provider."""
     from services.local_codex import run_local_codex_json
     from requests import Response
     turns, images = [], []

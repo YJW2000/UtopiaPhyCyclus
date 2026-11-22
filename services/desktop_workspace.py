@@ -14,10 +14,12 @@ from threading import RLock
 from uuid import uuid4
 
 from services.desktop_jobs import DesktopJobs
+from services.desktop_model import selected_provider
 from services.desktop_revision import (
     changed_ranges, chat_revision, decode_attachments, offsets, rebase_selections, utf16_length,
 )
 from services.file_service import atomic_write_text
+from services.local_agent import require_image_support
 from services.local_process import check_cancelled
 from services.pdf_import_service import import_pdf, inspect_pdf
 from services.tex_compile_service import compile_tex_preview
@@ -366,15 +368,18 @@ class DesktopWorkspace:
         if not params.get('path'):
             raise ValueError('请选择原卷 PDF。')
         _file(params['path'], ('.pdf',))
+        require_image_support(selected_provider(self.state))
         created = self.create({'path': params['path'], 'title': params.get('title')})
         return self.reconstruct({**params, 'id': created['id']})
 
     def reconstruct(self, params):
+        provider = selected_provider(self.state)
         with self.lock:
             document = self._read(params.get('id'))
             if not document.get('pdfPath'):
                 raise ValueError('当前草稿还没有原卷 PDF。')
-        return self.jobs.submit(lambda job: self._reconstruct(document, params, job), document['id'])
+        require_image_support(provider)
+        return self.jobs.submit(lambda job: self._reconstruct(document, params, job), document['id'], provider=provider)
 
     def _reconstruct(self, document, params, job):
         original = Path(document['pdfPath']).read_bytes()
@@ -523,6 +528,7 @@ class DesktopWorkspace:
         if scope not in ('selection', 'document'):
             raise ValueError('对话范围无效。')
         attachments, images = decode_attachments(params.get('attachments', []))
+        provider = selected_provider(self.state)
         with self.lock:
             document = self._read(params.get('id'))
             self._check_revision(document, params)
@@ -551,6 +557,8 @@ class DesktopWorkspace:
             if any(item.get('previewPath', document.get('previewPath')) != document.get('previewPath')
                    for item in pdf_selections):
                 raise ValueError('预览已刷新，请在当前页面重新框选。')
+            if images or pdf_selections:
+                require_image_support(provider)
             user_message = self._message('user', scope, prompt.strip(), attachments=attachments)
             document['messages'].append(user_message)
             self._write(document)
@@ -582,7 +590,7 @@ class DesktopWorkspace:
 
             job.publish(commit)
 
-        return self.jobs.submit(chat_job, document['id'])
+        return self.jobs.submit(chat_job, document['id'], provider=provider)
 
     @staticmethod
     def _find_proposal(document, proposal_id):

@@ -53,6 +53,7 @@ def main(argv=None):
     os.environ['UTOPIA_DESKTOP_STATE'] = str(state)
 
     from services.desktop_library import create_library_handlers
+    from services.desktop_model import selected_provider
     from services.desktop_workspace import DesktopWorkspace
 
     workspace = DesktopWorkspace(library, state)
@@ -69,9 +70,11 @@ def main(argv=None):
         chat = handlers['context.chat']
 
         def context_chat(params):
+            provider = selected_provider(state)
+
             def answer(job):
                 job.progress('正在分析当前页面')
-                result = chat(params)
+                result = chat(params, provider=provider)
                 job.publish(lambda: result)
 
             return workspace.jobs.submit(answer)

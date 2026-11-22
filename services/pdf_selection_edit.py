@@ -8,11 +8,11 @@ import json
 import os
 from pathlib import Path
 import re
-import shutil
 import subprocess
 from tempfile import TemporaryDirectory
 
 from services.local_codex import run_local_codex_json
+from services.desktop_tool_paths import find_desktop_tool
 from services.local_process import run
 from services.pdf_import_images import page_selection_rect
 
@@ -79,7 +79,7 @@ def _selection_context(pdf: bytes, page_number: int, rect, directory: Path):
 def _source_lines_at(source_map: dict | None, pdf: bytes, directory: Path, page: int, points):
     if not source_map:
         return []
-    executable = shutil.which("synctex")
+    executable = find_desktop_tool("synctex")
     if not executable:
         return []
     (directory / "preview.pdf").write_bytes(pdf)

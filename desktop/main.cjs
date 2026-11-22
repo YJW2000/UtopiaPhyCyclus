@@ -1,4 +1,4 @@
-const { app, BrowserWindow, dialog, ipcMain, Menu, net, protocol, session } = require('electron');
+const { app, BrowserWindow, dialog, ipcMain, Menu, net, protocol, session, shell } = require('electron');
 const { execFileSync, spawn } = require('node:child_process');
 const { createHash, randomUUID } = require('node:crypto');
 const fs = require('node:fs');
@@ -8,11 +8,13 @@ const path = require('node:path');
 const { createInterface } = require('node:readline');
 const { Readable } = require('node:stream');
 const { pathToFileURL } = require('node:url');
+const { createEnvironment } = require('./environment.cjs');
 
 const PRODUCT_NAME = '乌托邦高中物理题库助手';
 const APPLICATION_ID = 'io.github.yjw2000.utopiaphycyclus.desktop.preview';
 const SOURCE_ROOT = path.resolve(__dirname, '..');
 const RESOURCES = app.isPackaged ? process.resourcesPath : path.join(SOURCE_ROOT, '.release-work', 'desktop-preview');
+const environment = createEnvironment({ resources: RESOURCES });
 const BACKEND = app.isPackaged ? path.join(RESOURCES, 'app-backend') : SOURCE_ROOT;
 const RENDERER = path.join(__dirname, 'dist');
 const RENDERER_URL = !app.isPackaged && process.env.UTOPIA_DESKTOP_VITE_URL === 'http://127.0.0.1:5173/'
@@ -452,6 +454,9 @@ function registerIpc() {
   });
   handle('legacy', legacyUrl);
   handle('asset', assetUrl);
+  handle('detect-environment', environment.detect);
+  handle('install-environment-tool', environment.install);
+  handle('open-environment-help', id => shell.openExternal(environment.helpUrl(id)));
   handle('choose-library', () => {
     if (!selection) selection = chooseLibrary().finally(() => { selection = undefined; });
     return selection;

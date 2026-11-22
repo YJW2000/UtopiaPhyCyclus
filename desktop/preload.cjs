@@ -7,4 +7,7 @@ contextBridge.exposeInMainWorld('utopia', {
   chooseLibrary: () => ipcRenderer.invoke('utopia:choose-library'),
   asset: path => ipcRenderer.invoke('utopia:asset', path),
   legacy: route => ipcRenderer.invoke('utopia:legacy', route),
+  detectEnvironment: () => ipcRenderer.invoke('utopia:detect-environment'),
+  installEnvironmentTool: id => ipcRenderer.invoke('utopia:install-environment-tool', id),
+  openEnvironmentHelp: id => ipcRenderer.invoke('utopia:open-environment-help', id),
 });

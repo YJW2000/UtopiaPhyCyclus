@@ -9,6 +9,8 @@ import time
 import uuid
 from dataclasses import dataclass
 
+from services.desktop_tool_paths import find_desktop_tool
+
 from .diagram_palette import as_tex_definitions
 from .file_ops import ensure_dir
 from .tex_log_tools import clean_tex_log, detect_driver_crash, extract_tex_errors
@@ -445,7 +447,7 @@ def _compile_tikz_once(
         aux_path = os.path.join(compile_dir, f"{unique_id}.aux")
         log_path = os.path.join(compile_dir, f"{unique_id}.log")
 
-        xelatex = engine or shutil.which("xelatex")
+        xelatex = engine or find_desktop_tool("xelatex")
         if not xelatex:
             result.error_kind = ERROR_KIND_MISSING_XELATEX
             return result
@@ -642,7 +644,7 @@ def _compile_tikz_fallback(tikz_code, base_dir, timeout, target_png_path):
     if not _lualatex_fallback_enabled():
         return None
     try:
-        lualatex = shutil.which("lualatex")
+        lualatex = find_desktop_tool("lualatex")
     except Exception:  # pragma: no cover - 防御
         return None
     if not lualatex:
@@ -759,7 +761,7 @@ def get_tikz_image_b64(tikz_code, base_dir, source_tex_path=None, target_png_pat
     # not by the enclosing question's mtime (tags and prose do not change diagrams).
     cache_dir = os.path.join(base_dir, '.tikz_cache')
     ensure_dir(cache_dir)
-    engine = shutil.which('xelatex') or 'missing'
+    engine = find_desktop_tool('xelatex') or 'missing'
     try:
         engine_token = str(os.stat(engine).st_mtime_ns)
     except OSError:

@@ -450,6 +450,127 @@ summary:focus-visible {
   border-color: var(--mc-action-bg);
   background: var(--mc-accent-soft);
 }
+.settings-section-head,
+.settings-row,
+.settings-tool-heading,
+.settings-row-actions,
+.settings-login {
+  flex-wrap: wrap;
+}
+.settings-section-head {
+  margin-bottom: 8px;
+}
+.settings-agent-list {
+  min-inline-size: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+.settings-agent-list legend,
+.settings-selection {
+  font-size: 13px;
+  color: var(--mc-muted);
+}
+.settings-agent-list legend {
+  margin-bottom: 5px;
+  padding: 0;
+}
+.settings-selection:empty {
+  display: none;
+}
+.settings-row {
+  display: flex;
+  align-items: center;
+  gap: 6px 12px;
+  padding: 9px 0;
+  border-top: 1px solid var(--mc-border);
+}
+.settings-row:last-child {
+  padding-bottom: 0;
+}
+.settings-agent-choice,
+.settings-tool-heading {
+  display: flex;
+  align-items: center;
+  gap: 5px 9px;
+  flex: 1 1 max-content;
+  min-width: 0;
+}
+.settings-agent-choice {
+  flex-wrap: wrap;
+  min-height: 34px;
+}
+.settings-agent-choice input[type='radio'] {
+  margin: 0;
+  padding: 0;
+  flex: 0 0 auto;
+  accent-color: var(--mc-action-bg);
+}
+.settings-agent-choice:has(input:not(:disabled)) {
+  cursor: pointer;
+}
+.settings-agent-choice:has(input:checked) > span {
+  font-weight: 650;
+}
+.settings-status {
+  padding: 1px 7px;
+  color: var(--mc-muted);
+  border: 1px solid var(--mc-border);
+  border-radius: 999px;
+  white-space: nowrap;
+}
+.settings-status[data-ready='true'] {
+  color: var(--mc-text);
+  border-color: transparent;
+  background: var(--mc-accent-soft);
+}
+.settings-row-actions,
+.settings-login {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.settings-row-actions {
+  max-width: 100%;
+}
+.settings-row-message,
+.settings-agent-detail,
+.settings-tool-details {
+  flex: 1 0 100%;
+  min-width: 0;
+  font-size: 13px;
+}
+.settings-agent-detail {
+  padding: 0 0 4px 23px;
+}
+.settings-row-message p,
+.settings-agent-detail p {
+  margin: 2px 0;
+}
+.settings-tool-details code,
+.settings-login code {
+  font-family: var(--mc-font-mono);
+  color: var(--mc-muted);
+  overflow-wrap: anywhere;
+}
+.settings-tool-details code {
+  display: block;
+}
+.settings-login {
+  margin-top: 6px;
+}
+.settings-login code {
+  background: var(--mc-input-bg);
+  border: 1px solid var(--mc-border);
+  border-radius: 6px;
+  padding: 3px 6px;
+}
+.settings-connections [role='alert'] {
+  color: var(--mc-text);
+  border-inline-start: 2px solid var(--mc-action-bg);
+  padding-inline-start: 8px;
+  white-space: pre-wrap;
+}
 .filepath {
   word-break: break-all;
 }
