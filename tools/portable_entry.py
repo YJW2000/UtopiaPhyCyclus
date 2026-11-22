@@ -55,7 +55,7 @@ def main():
             raise RuntimeError(f'Application resources resolved outside the portable root: {BASE_DIR}')
         print(f'OK: Streamlit {streamlit.__version__}; PyMuPDF {fitz.VersionBind}; MuPDF {fitz.VersionFitz}; {len(SUBJECTS)} subjects')
         return
-    from services.launcher import available_port
+    from services.launcher import available_port, library_lifecycle
     port = args.port or available_port()
     (root / 'chapters').mkdir(exist_ok=True)
     if not args.no_browser:
@@ -76,7 +76,8 @@ def main():
                 f'--server.port={port}', '--server.address=127.0.0.1',
                 '--server.headless=true', '--server.fileWatcherType=none',
                 '--browser.gatherUsageStats=false', '--global.developmentMode=false']
-    raise SystemExit(cli.main())
+    with library_lifecycle(root):
+        raise SystemExit(cli.main())
 
 
 if __name__ == '__main__':

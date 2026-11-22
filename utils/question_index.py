@@ -16,6 +16,7 @@ import math
 import os
 import re
 import sqlite3
+import time
 import uuid
 
 from utils.index_schema import CSV_HEADERS
@@ -25,6 +26,7 @@ from services.fuzzy_search_service import (
 )
 
 _ready = set()
+_BUSY_TIMEOUT = 15
 _COLUMNS = ', '.join('"' + field + '"' for field in CSV_HEADERS)
 _LIGHT_FIELDS = CSV_HEADERS[:20] + CSV_HEADERS[23:]
 _LIGHT_COLUMNS = ', '.join('"' + field + '"' for field in _LIGHT_FIELDS)
@@ -46,7 +48,7 @@ def _key(path):
 
 
 def _connect(path):
-    conn = sqlite3.connect(path, timeout=15)
+    conn = sqlite3.connect(path, timeout=_BUSY_TIMEOUT)
     conn.row_factory = sqlite3.Row
     conn.execute('PRAGMA foreign_keys=ON')
     conn.execute('PRAGMA synchronous=NORMAL')
@@ -54,8 +56,8 @@ def _connect(path):
 
 
 @contextmanager
-def connection(csv_path=None):
-    path = ensure_index(csv_path)
+def connection(csv_path=None, *, bootstrap_from_tex=True):
+    path = ensure_index(csv_path, bootstrap_from_tex=bootstrap_from_tex)
     with closing(_connect(path)) as conn:
         yield conn
 
@@ -188,7 +190,7 @@ def _put(conn, row, *, old_path=None, activity=True):
     return row['题目ID']
 
 
-def ensure_index(csv_path=None):
+def ensure_index(csv_path=None, *, bootstrap_from_tex=True):
     if csv_path is None:
         from utils.core_config import CSV_INDEX_PATH
         csv_path = CSV_INDEX_PATH
@@ -197,7 +199,17 @@ def ensure_index(csv_path=None):
         return path
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with closing(_connect(path)) as conn:
-        conn.execute('PRAGMA journal_mode=WAL')
+        # Changing journal mode can report BUSY immediately during simultaneous first opens.
+        deadline = time.monotonic() + _BUSY_TIMEOUT
+        while True:
+            try:
+                conn.execute('PRAGMA journal_mode=WAL')
+                break
+            except sqlite3.OperationalError as error:
+                busy = getattr(error, 'sqlite_errorname', None) == 'SQLITE_BUSY' or str(error) == 'database is locked'
+                if not busy or time.monotonic() >= deadline:
+                    raise
+                time.sleep(0.05)
         _schema(conn)
         conn.execute('BEGIN IMMEDIATE')
         try:
@@ -207,7 +219,7 @@ def ensure_index(csv_path=None):
                 if os.path.isfile(csv_path) and os.path.getsize(csv_path):
                     with open(csv_path, encoding='utf-8-sig', newline='') as handle:
                         rows = list(csv.DictReader(handle))
-                else:
+                elif bootstrap_from_tex:
                     from utils.index_rebuild import collect_rows
                     from utils.core_config import CHAPTERS_DIR
                     rows = collect_rows(CHAPTERS_DIR, [])

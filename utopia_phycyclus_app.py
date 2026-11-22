@@ -905,10 +905,22 @@ def _set_current_theme_mode(mode: str):
     st.session_state['app_theme_mode']=mode
 
 
+def _set_library_tools_open(opened=False):
+    st.session_state["library_tools_open"] = opened
+    st.session_state.pop("tools_subpage", None)
+
+
 def page_ui_settings():
+    if st.session_state.get("library_tools_open"):
+        st.button("← 返回设置", key="close_library_tools", on_click=_set_library_tools_open)
+        page_tools()
+        return
+
     from services.theme_settings_ui import render_theme_settings
     render_theme_settings(_get_current_theme_skin(),_get_current_theme_mode(),
         _set_current_theme_skin,_set_current_theme_mode)
+    st.subheader("题库管理")
+    st.button("打开题库工具箱", key="open_library_tools", on_click=_set_library_tools_open, args=(True,))
 
 def _read_ocr_prompt_for_settings(config: dict) -> tuple[str, bool]:
     if os.path.exists(ocr_prompt_file):
@@ -2157,17 +2169,16 @@ def _remove_related_tikz_dir(file_path: str):
 def _update_chapter_indexes_from_ui():
     try:
         import utils.batch_gen as batch_gen
-        batch_gen.update_chapter_contents()
+        batch_gen.update_chapter_contents(os.path.dirname(CHAPTERS_DIR))
     except Exception as e:
         st.toast(f"章节索引更新失败：{e}", icon="⚠️")
 
 
 def _rebuild_csv_index_from_files():
-    """删除题目后按磁盘现状全量重建 CSV，避免遗留孤立索引记录。"""
-    import runpy
+    """按当前题库的题目文件重建 SQLite 索引。"""
+    from utils.index_rebuild import rebuild_index
 
-    init_script = os.path.join(BASE_DIR, "utils", "init_sqlite_index.py")
-    runpy.run_path(init_script, run_name="__main__")
+    rebuild_index(CHAPTERS_DIR, CSV_INDEX_PATH)
     _clear_advanced_search_result_cache()
     clear_statistics_cache()
 
@@ -9581,7 +9592,7 @@ def page_exam_paper_generation():
                         csv_data = _filter_question_rows(read_csv_index())
                         
                         if not csv_data:
-                            st.error("题库为空或索引未建立，请先在工具页一键重建题库索引。")
+                            st.error("题库为空或索引未建立。可在设置中打开题库工具箱重建索引。")
                         else:
                             import random
                             # 解析“高考范围”快捷选项
@@ -10705,7 +10716,7 @@ def render_operation_log_panel():
 
 # ================= 页面：工具箱 =================
 def page_tools():
-    st.header("🛠️ 工具箱")
+    st.header("🛠️ 题库工具箱")
 
     if st.session_state.get("tools_subpage") == "tag_edit":
         if st.button("⬅️ 返回工具箱", type="secondary"):
@@ -10828,22 +10839,12 @@ def page_tools():
         if st.button("🔄 一键重建/同步题库索引", key="btn_rebuild_db", use_container_width=True):
             with st.spinner("正在扫描所有目录并重建题库索引..."):
                 try:
-                    init_script = os.path.join(BASE_DIR, "utils", "init_sqlite_index.py")
-                    subprocess.run(
-                        [sys.executable, init_script],
-                        cwd=BASE_DIR,
-                        check=True,
-                        capture_output=True,
-                        text=True,
-                    )
-                    clear_statistics_cache()
+                    _rebuild_csv_index_from_files()
                     st.success("题库索引重建成功！")
                     record_operation("rebuild_csv_index", details="manual rebuild from chapters")
                     st.toast("题库索引同步完成！", icon="✅")
                     time.sleep(1)
                     st.rerun()
-                except subprocess.CalledProcessError as e:
-                    st.error(f"同步失败：\n{e.stderr}")
                 except Exception as e:
                     st.error(f"发生错误：{str(e)}")
             
@@ -10861,10 +10862,8 @@ def page_tools():
         if st.button("⚡ 执行更新章节索引", key="btn_update_idx", use_container_width=True):
             with st.spinner("正在运行更新脚本..."):
                 try:
-                    if BASE_DIR not in sys.path:
-                        sys.path.append(BASE_DIR)
                     import utils.batch_gen as batch_gen
-                    batch_gen.update_chapter_contents()
+                    batch_gen.update_chapter_contents(os.path.dirname(CHAPTERS_DIR))
                     st.success("章节索引更新完成！")
                     record_operation("update_chapter_index", details="manual chapter index update")
                 except Exception as e:
@@ -12892,7 +12891,7 @@ def page_system_intro():
 - 数据库提交前会检查关键字段与重复 ID，发现异常时整笔回滚
 - 搜索缓存会跟随数据库提交版本自动失效，减少“刚保存但搜索不到”的情况
 
-如果出现搜索结果异常、统计不准确、题目移动后找不到，优先执行“工具箱”中的一键重建/同步题库索引。
+如果遇到搜索结果异常、统计不准确或找不到已移动的题目，可在设置中打开题库工具箱，手动重建题库索引。
 
 ---
 
@@ -14179,7 +14178,6 @@ def main():
     pdf_entry_nav_option = "📑  PDF录入"
     browse_nav_option = "🔍  全局浏览"
     exam_nav_option = "🖨️  组卷排版"
-    tools_nav_option = "🛠️  维护工具"
     advanced_nav_option = "🔎  题目查找"
     intro_nav_option = "📘  架构介绍"
     manual_nav_option = "📖  规范指南"
@@ -14193,7 +14191,6 @@ def main():
         pdf_entry_nav_option,
         browse_nav_option,
         exam_nav_option,
-        tools_nav_option,
         advanced_nav_option,
         intro_nav_option,
         manual_nav_option,
@@ -14236,10 +14233,11 @@ def main():
         "🖨️  组卷排版服务": exam_nav_option,
         "🖨️\n组卷服务": exam_nav_option,
         "🖨️\n组卷": exam_nav_option,
-        "工具箱": tools_nav_option,
-        "🛠️  题库维护工具箱": tools_nav_option,
-        "🛠️\n工具箱": tools_nav_option,
-        "🛠️\n工具": tools_nav_option,
+        "维护工具": settings_nav_option,
+        "工具箱": settings_nav_option,
+        "🛠️  题库维护工具箱": settings_nav_option,
+        "🛠️\n工具箱": settings_nav_option,
+        "🛠️\n工具": settings_nav_option,
         "三级查找": advanced_nav_option,
         "精确查找": advanced_nav_option,
         "题目查找": advanced_nav_option,
@@ -14261,7 +14259,7 @@ def main():
         "📄  TeX录入": tex_entry_nav_option,
         "🔍  全局浏览": browse_nav_option,
         "🖨️  组卷排版": exam_nav_option,
-        "🛠️  维护工具": tools_nav_option,
+        "🛠️  维护工具": settings_nav_option,
         "🔎  精确查找": advanced_nav_option,
         "📘  架构介绍": intro_nav_option,
         "📖  规范指南": manual_nav_option,
@@ -14299,8 +14297,7 @@ def main():
             st.session_state["browse_mode"] = st.session_state.get("global_browse_mode", load_browse_mode())
         elif selection != advanced_nav_option:
             st.session_state["adv_search_active"] = False
-        if selection != tools_nav_option:
-            st.session_state["tools_subpage"] = None
+        _set_library_tools_open()
 
     pending_nav = st.session_state.get("main_sidebar_radio")
     if (
@@ -14358,7 +14355,7 @@ def main():
             if parent_option == settings_nav_option:
                 if st.session_state.get('settings_subpage') not in ('🎨 UI设置','🔑 API设置'):
                     st.session_state['settings_subpage']='🎨 UI设置'
-                st.radio('设置子功能',['🎨 UI设置','🔑 API设置'],key='settings_subpage',label_visibility='collapsed')
+                st.radio('设置子功能',['🎨 UI设置','🔑 API设置'],key='settings_subpage',label_visibility='collapsed',on_change=_set_library_tools_open)
             elif parent_option == entry_nav_option:
                 if st.session_state.get("entry_mode_sidebar") not in ("单题录入", "批量试题录入", "同卷试题录入"):
                     st.session_state["entry_mode_sidebar"] = "单题录入"
@@ -14463,8 +14460,6 @@ def main():
         page_browse()
     elif selected_nav == exam_nav_option:
         page_exam_paper_generation()
-    elif selected_nav == tools_nav_option:
-        page_tools()
     elif selected_nav == advanced_nav_option:
         if st.session_state.get("search_subpage") == "模糊查找":
             page_fuzzy_search()

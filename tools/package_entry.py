@@ -28,9 +28,11 @@ def main():
     configure(target)
     (target / 'chapters').mkdir(exist_ok=True)
     from streamlit.web import cli
+    from services.launcher import library_lifecycle
     sys.argv = ['streamlit', 'run', str(target / 'utopia_phycyclus_app.py'),
                 '--server.address=127.0.0.1', '--browser.gatherUsageStats=false', *streamlit_args]
-    raise SystemExit(cli.main())
+    with library_lifecycle(target):
+        raise SystemExit(cli.main())
 
 
 if __name__ == '__main__':

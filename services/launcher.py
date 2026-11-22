@@ -1,5 +1,7 @@
 """Offline fast bootstrap; reuse only an identified process owned by this project."""
 import argparse
+from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
 import hashlib
 import importlib.metadata
 import json
@@ -91,6 +93,26 @@ def available_port():
     raise RuntimeError('Ports 8501-8510 are busy.')
 
 
+def maintain_on_transition(root, phase):
+    try:
+        from services.library_maintenance import maintain_library
+        result = maintain_library(root)
+        print(f'[题库{phase}维护] 新增 {result["added"]}，更新 {result["updated"]}，缺失 {result["missing"]}。', flush=True)
+    except Exception as error:
+        print(f'[题库{phase}维护] {error}', file=sys.stderr, flush=True)
+
+
+@contextmanager
+def library_lifecycle(root):
+    """Start scanning alongside the web server and finish the second pass on normal shutdown."""
+    with ThreadPoolExecutor(max_workers=1) as maintenance:
+        maintenance.submit(maintain_on_transition, root, '启动')
+        try:
+            yield
+        finally:
+            maintenance.submit(maintain_on_transition, root, '退出')
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--repair', action='store_true')
@@ -123,24 +145,26 @@ def main():
         # 代码/样式改动后自动热更新：轮询监听（不依赖 watchdog）+ 自动重跑，
         # 避免服务进程缓存旧脚本、只在浏览器里刷新始终看不到新界面。
         '--server.fileWatcherType=poll', '--server.runOnSave=true'], cwd=root)
-    started = time.perf_counter()
-    try:
-        while time.perf_counter()-started < 40:
-            if child.poll() is not None:
-                raise RuntimeError(f'Service exited with code {child.returncode}')
-            if healthy(port):
-                state_path.write_text(json.dumps(dict(root=str(root.resolve()), python=str(Path(sys.executable).resolve()),
-                    pid=child.pid, identity=process_identity(child.pid), port=port)), encoding='utf-8')
-                print(f'[READY] http://localhost:{port} ({time.perf_counter()-started:.2f}s)', flush=True)
-                webbrowser.open(f'http://localhost:{port}')
-                break
-            time.sleep(.1)
-        else:
-            raise RuntimeError('Service health check timed out')
-        raise SystemExit(child.wait())
-    finally:
-        if child.poll() is None:
-            child.terminate()
+    with library_lifecycle(root):
+        started = time.perf_counter()
+        try:
+            while time.perf_counter()-started < 40:
+                if child.poll() is not None:
+                    raise RuntimeError(f'Service exited with code {child.returncode}')
+                if healthy(port):
+                    state_path.write_text(json.dumps(dict(root=str(root.resolve()), python=str(Path(sys.executable).resolve()),
+                        pid=child.pid, identity=process_identity(child.pid), port=port)), encoding='utf-8')
+                    print(f'[READY] http://localhost:{port} ({time.perf_counter()-started:.2f}s)', flush=True)
+                    webbrowser.open(f'http://localhost:{port}')
+                    break
+                time.sleep(.1)
+            else:
+                raise RuntimeError('Service health check timed out')
+            raise SystemExit(child.wait())
+        finally:
+            if child.poll() is None:
+                child.terminate()
+                child.wait()
 
 
 if __name__ == '__main__':

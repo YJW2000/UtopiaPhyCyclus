@@ -44,6 +44,13 @@ def configure_runtime() -> None:
 
 def main() -> None:
     mode = sys.argv.pop(1)
+    if mode == 'maintenance':
+        import json
+        from services.library_maintenance import maintain_library
+
+        # Indexing needs neither the portable TeX tree nor agent environment discovery.
+        print(json.dumps(maintain_library(Path(os.environ['UTOPIA_DESKTOP_LIBRARY']))))
+        return
     configure_runtime()
     if mode == 'rpc':
         runpy.run_module('services.desktop_rpc', run_name='__main__')

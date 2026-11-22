@@ -87,7 +87,7 @@ def parse_filename(filename):
         
     return (year, paper_base, wl_rank, q_num)
 
-def update_chapter_contents():
+def update_chapter_contents(library_root=None):
     r"""
     更新章节索引文件 (content_*.tex)
     
@@ -99,7 +99,8 @@ def update_chapter_contents():
     print("-" * 30)
     print("开始更新章节索引 (content_*.tex)...")
     
-    chapters_dir = os.path.join(root_dir, 'chapters')
+    library_root = library_root or root_dir
+    chapters_dir = os.path.join(library_root, 'chapters')
     if not os.path.exists(chapters_dir):
         print("错误：找不到 chapters 目录")
         return
@@ -123,7 +124,7 @@ def update_chapter_contents():
                     # 排除 content_*.tex 自身，避免循环引用
                     file_path = os.path.join(root, file)
                     # 计算相对路径，用于 \input 指令
-                    rel_path = os.path.relpath(file_path, root_dir)
+                    rel_path = os.path.relpath(file_path, library_root)
                     rel_path = rel_path.replace('\\', '/') # 转换为 LaTeX 标准路径分隔符
                     rel_path_no_ext = os.path.splitext(rel_path)[0]
                     

@@ -25,9 +25,9 @@ EXPECTED_OPTIONS = [
     "📊  数据统计",
     "📝  图片识别",
     "📄  TeX录入",
+    "📑  PDF录入",
     "🔍  全局浏览",
     "🖨️  组卷排版",
-    "🛠️  维护工具",
     "🔎  题目查找",
     "📘  架构介绍",
     "📖  规范指南",
@@ -75,8 +75,7 @@ def test_app_startup_and_short_sidebar():
         print(f"Sidebar nav group {group.key}:", group.options)
         nav_norm.extend(_norm(opt) for opt in group.options)
 
-    for opt in EXPECTED_OPTIONS:
-        assert _norm(opt) in nav_norm, f"{opt} must be in nav options!"
+    assert nav_norm == [_norm(opt) for opt in EXPECTED_OPTIONS]
 
     for opt in nav_norm:
         name = _nav_name(opt)
@@ -107,6 +106,15 @@ def test_app_startup_and_short_sidebar():
             print(f"Exception on route {nav_item}:", at.exception)
             sys.exit(1)
         print(f"Route {nav_item} rendered cleanly!")
+
+    at.button(key="open_library_tools").click().run()
+    assert not at.exception
+    assert at.session_state["main_nav_selection"] == "⚙️  设置"
+    assert at.button(key="btn_rebuild_db")
+    assert at.button(key="btn_tools_tag_edit")
+    at.button(key="close_library_tools").click().run()
+    assert not at.exception
+    assert at.button(key="open_library_tools")
 
     print("All warm terracotta runtime checks passed!")
 

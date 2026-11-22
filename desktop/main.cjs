@@ -27,7 +27,7 @@ const MIME_TYPES = new Map(Object.entries({
 }));
 const METHODS = new Set([
   'system.ping', 'library.demo', 'library.summary', 'library.search', 'library.assemble', 'library.imageInput',
-  'library.check', 'context.chat', 'ui.load', 'ui.save', 'ui.providers',
+  'library.check', 'library.maintenanceStatus', 'context.chat', 'ui.load', 'ui.save', 'ui.providers',
   'workspace.list', 'workspace.open', 'workspace.resume', 'workspace.create',
   'workspace.save', 'workspace.import_pdf', 'workspace.reconstruct', 'workspace.compile', 'workspace.chat',
   'workspace.apply', 'workspace.dismiss', 'workspace.undo', 'workspace.export', 'workspace.export_tex', 'workspace.export_pdf',
@@ -49,6 +49,10 @@ let state;
 let rpc;
 let legacy;
 let selection;
+let closing;
+let mayExit = false;
+let reopenAfterQuit = false;
+const maintenance = new Map();
 const readers = new Set();
 const writers = new Set();
 const assetTokens = new Map();
@@ -77,7 +81,7 @@ function pythonExecutable() {
   return options.find(file => fs.existsSync(file)) || 'python';
 }
 
-function startPython(mode, args, stdio) {
+function startPython(mode, args, stdio, root = library, workspace = state) {
   const entry = path.join(BACKEND, ...(app.isPackaged ? [] : ['tools']), 'desktop_backend_entry.py');
   const options = {
     cwd: BACKEND,
@@ -85,8 +89,8 @@ function startPython(mode, args, stdio) {
     stdio,
     env: {
       ...process.env,
-      UTOPIA_DESKTOP_LIBRARY: library,
-      UTOPIA_DESKTOP_STATE: state,
+      UTOPIA_DESKTOP_LIBRARY: root,
+      UTOPIA_DESKTOP_STATE: workspace,
       UTOPIA_DESKTOP_RESOURCES: RESOURCES,
       PYTHONPATH: '',
       PYTHONHOME: '',
@@ -107,6 +111,49 @@ function stopPython(child) {
     } catch { /* The process may have exited already. */ }
   }
   child.kill();
+}
+
+function runMaintenance(root, workspace) {
+  return new Promise((resolve, reject) => {
+    const child = startPython('maintenance', [], ['ignore', 'pipe', 'pipe'], root, workspace);
+    let output = '';
+    let diagnostic = '';
+    const timer = setTimeout(() => {
+      stopPython(child);
+      reject(new Error('维护超时，下次打开题库时会重新检查。'));
+    }, 90_000);
+    child.stdout.setEncoding('utf8').on('data', data => { output = (output + data).slice(-4096); });
+    child.stderr.setEncoding('utf8').on('data', data => { diagnostic = (diagnostic + data).slice(-2000); });
+    child.once('error', error => { clearTimeout(timer); reject(error); });
+    child.once('close', code => {
+      clearTimeout(timer);
+      if (code !== 0) return reject(new Error(diagnostic.trim() || `题库维护进程已退出（${code}）。`));
+      try { resolve(JSON.parse(output)); } catch (error) { reject(error); }
+    });
+  });
+}
+
+function scheduleMaintenance(root, workspace, phase) {
+  // Switching back to the same bank must wait for its previous scan to finish.
+  const previous = maintenance.get(workspace) || Promise.resolve();
+  const current = previous.then(async () => {
+    let report;
+    try {
+      report = { ok: true, result: await runMaintenance(root, workspace) };
+    } catch (error) {
+      report = { ok: false, error: error.message };
+    }
+    const file = path.join(workspace, `maintenance-${phase}.json`);
+    const temp = `${file}.${randomUUID()}.tmp`;
+    try {
+      await fsp.writeFile(temp, JSON.stringify({ phase, finishedAt: new Date().toISOString(), ...report }), { flag: 'wx' });
+      await fsp.rename(temp, file);
+    } finally {
+      await fsp.rm(temp, { force: true });
+    }
+  }).catch(error => console.error('无法记录题库维护结果。', error));
+  maintenance.set(workspace, current);
+  void current.then(() => { if (maintenance.get(workspace) === current) maintenance.delete(workspace); });
 }
 
 function createRpc() {
@@ -241,6 +288,7 @@ async function setLibrary(root) {
   const identity = createHash('sha256').update(process.platform === 'win32' ? root.toLowerCase() : root).digest('hex').slice(0, 24);
   const nextState = path.join(profile, 'workspaces', identity);
   await fsp.mkdir(nextState, { recursive: true });
+  const resolvedState = await fsp.realpath(nextState);
   const temporary = path.join(profile, `library-${randomUUID()}.tmp`);
   try {
     await fsp.writeFile(temporary, JSON.stringify({ library: root }, null, 2), { mode: 0o600, flag: 'wx' });
@@ -251,12 +299,14 @@ async function setLibrary(root) {
   rpc?.stop('题库连接已切换。');
   stopPython(legacy?.child);
   legacy = undefined;
+  if (library) scheduleMaintenance(library, state, 'shutdown');
   readers.clear();
   writers.clear();
   assetTokens.clear();
   tokenPaths.clear();
   library = root;
-  state = await fsp.realpath(nextState);
+  state = resolvedState;
+  scheduleMaintenance(root, state, 'startup');
 }
 
 async function connectLibrary() {
@@ -476,7 +526,21 @@ function registerIpc() {
   handle('call', async (method, params = {}) => {
     const activeLibrary = library;
     const normalized = await normalizeCall(method, params);
+    if (['library.summary', 'library.search', 'library.assemble', 'library.check', 'library.maintenanceStatus'].includes(method)) {
+      await maintenance.get(state);
+    }
     if (library !== activeLibrary) throw new Error('题库连接已切换。');
+    if (method === 'library.maintenanceStatus') {
+      const reports = await Promise.all(['startup', 'shutdown'].map(async phase => {
+        try {
+          return JSON.parse(await fsp.readFile(path.join(state, `maintenance-${phase}.json`), 'utf8'));
+        } catch (error) {
+          if (error.code === 'ENOENT') return null;
+          throw new Error('无法读取题库维护记录。');
+        }
+      }));
+      return { startup: reports[0], shutdown: reports[1] };
+    }
     if (!rpc) rpc = createRpc();
     return rpc.send(method, normalized);
   });
@@ -570,14 +634,31 @@ function openWindow() {
 
 if (app.requestSingleInstanceLock()) {
   app.on('second-instance', () => {
+    if (closing) {
+      reopenAfterQuit = true;
+      return;
+    }
     if (!window) return;
     if (window.isMinimized()) window.restore();
     window.focus();
   });
   app.on('window-all-closed', () => app.quit());
-  app.on('will-quit', () => {
-    rpc?.stop('桌面应用正在关闭。');
-    stopPython(legacy?.child);
+  app.on('will-quit', event => {
+    if (mayExit) return;
+    event.preventDefault();
+    if (closing) return;
+    closing = (async () => {
+      // will-quit fires after the windows close, for both the title bar and app.quit().
+      if (selection) await selection.catch(() => {});
+      rpc?.stop('桌面应用正在关闭。');
+      stopPython(legacy?.child);
+      if (library) scheduleMaintenance(library, state, 'shutdown');
+      await Promise.all(maintenance.values());
+    })().finally(() => {
+      mayExit = true;
+      if (reopenAfterQuit) app.relaunch();
+      app.quit();
+    });
   });
   app.whenReady().then(async () => {
     await connectLibrary();

@@ -15,13 +15,19 @@ const pages = {
   pdf: ['📑', 'PDF录入'],
   browse: ['🔍', '全局浏览'],
   exam: ['🖨️', '组卷排版'],
-  tools: ['🛠️', '维护工具'],
   search: ['🔎', '题目查找'],
   intro: ['📘', '架构介绍'],
   manual: ['📖', '规范指南'],
   settings: ['⚙️', '设置'],
 } as const
 type Page = keyof typeof pages
+type LibraryCheck = { integrity: string; total: number; missing: string[] }
+type MaintenanceCounts = { added: number; updated: number; missing: number; skipped: number }
+type MaintenanceRun = { finishedAt: string } & (
+  | { ok: true; result: MaintenanceCounts }
+  | { ok: false; error?: string }
+)
+type MaintenanceStatus = { startup: MaintenanceRun | null; shutdown: MaintenanceRun | null }
 type Prefs = {
   skin: string
   mode: string
@@ -80,7 +86,9 @@ export default function App() {
     [basket, setBasket] = useState<Question[]>([])
   const [legacy, setLegacy] = useState(''),
     [legacyPending, setLegacyPending] = useState(false),
-    [check, setCheck] = useState<any>()
+    [check, setCheck] = useState<LibraryCheck>()
+  const [maintenance, setMaintenance] = useState<MaintenanceStatus>(),
+    [maintenanceError, setMaintenanceError] = useState('')
   const routeGeneration = useRef(0),
     imageGeneration = useRef<number | null>(null),
     fileInput = useRef<HTMLInputElement>(null)
@@ -127,6 +135,20 @@ export default function App() {
   useEffect(() => {
     if (['tex', 'pdf', 'entry'].includes(page) && !editing) void drafts()
   }, [page, editing, drafts])
+  const showingSettings = page === 'settings' && !editing && !legacy
+  useEffect(() => {
+    if (!showingSettings) return
+    let active = true
+    setMaintenanceError('')
+    void call<MaintenanceStatus>('library.maintenanceStatus')
+      .then((status) => {
+        if (active) setMaintenance(status)
+      })
+      .catch((error: unknown) => {
+        if (active) setMaintenanceError(errorText(error))
+      })
+    return () => { active = false }
+  }, [showingSettings])
   function navigate(next: Page) {
     routeGeneration.current++
     setPage(next)
@@ -196,7 +218,7 @@ export default function App() {
   }
   const open = (row: Question) =>
     openWorkspace({ questionPath: row.path }, 'browse')
-  function openLegacy(route: Page | 'tags') {
+  function openLegacy(route: Page | 'tools' | 'tags') {
     const token = ++routeGeneration.current
     setLegacyPending(true)
     setError('')
@@ -502,36 +524,6 @@ export default function App() {
                       </section>
                     </>
                   )}
-                  {page === 'tools' && (
-                    <>
-                      <h1>🛠️ 维护工具</h1>
-                      <section className="mc-card">
-                        <h2>题库完整性</h2>
-                        <p>检查索引及其引用的题目文件。</p>
-                        <button
-                          onClick={() =>
-                            void work('正在校验…', async () =>
-                              setCheck(await call('library.check'))
-                            )
-                          }
-                        >
-                          检查题库
-                        </button>
-                        {check && (
-                          <p>
-                            索引 {check.integrity} · 已检查 {check.total} 题 ·
-                            缺少 {check.missing.length} 个文件
-                          </p>
-                        )}
-                        {check?.missing?.length > 0 && (
-                          <pre>{check.missing.join('\n')}</pre>
-                        )}
-                      </section>
-                      <button onClick={() => openLegacy('tags')}>
-                        管理题目标签
-                      </button>
-                    </>
-                  )}
                   {page === 'settings' && (
                     <>
                       <h1>⚙️ 设置</h1>
@@ -585,16 +577,67 @@ export default function App() {
                       <section className="mc-card">
                         <h2>本地题库</h2>
                         <p className="filepath">{prefs?.library}</p>
-                        <button
-                          onClick={() =>
-                            void work('正在打开题库…', async () => {
-                              if (await window.utopia.chooseLibrary())
-                                location.reload()
-                            })
-                          }
-                        >
-                          选择题库文件夹
-                        </button>
+                        <div className="settings-row-actions">
+                          <button
+                            disabled={Boolean(busy) || legacyPending}
+                            onClick={() =>
+                              void work('正在打开题库…', async () => {
+                                if (await window.utopia.chooseLibrary())
+                                  location.reload()
+                              })
+                            }
+                          >
+                            选择题库文件夹
+                          </button>
+                          <button
+                            disabled={Boolean(busy) || legacyPending}
+                            onClick={() =>
+                              void work('正在校验…', async () =>
+                                setCheck(await call<LibraryCheck>('library.check'))
+                              )
+                            }
+                          >
+                            检查题库
+                          </button>
+                          <button disabled={Boolean(busy) || legacyPending} onClick={() => openLegacy('tags')}>
+                            管理题目标签
+                          </button>
+                          <button disabled={Boolean(busy) || legacyPending} onClick={() => openLegacy('tools')}>
+                            打开题库工具箱
+                          </button>
+                        </div>
+                        {check && (
+                          <p role="status">
+                            索引 {check.integrity} · 已检查 {check.total} 题 · 缺少 {check.missing.length} 个文件
+                          </p>
+                        )}
+                        {check && check.missing.length > 0 && (
+                          <pre>{check.missing.join('\n')}</pre>
+                        )}
+                        <h3>自动维护记录</h3>
+                        {maintenanceError ? (
+                          <p role="status">读取失败。{maintenanceError}</p>
+                        ) : maintenance ? (
+                          <ul>
+                            {([
+                              ['启动时', maintenance.startup],
+                              ['上次退出时', maintenance.shutdown],
+                            ] as const).map(([label, run]) => (
+                              <li key={label}>
+                                {label} · {run ? (
+                                  <>
+                                    <time dateTime={run.finishedAt}>
+                                      {new Date(run.finishedAt).toLocaleString('zh-CN', { hour12: false })}
+                                    </time>
+                                    {run.ok
+                                      ? ` · 完成 · 新增 ${run.result.added} · 更新 ${run.result.updated} · 缺失 ${run.result.missing} · 跳过 ${run.result.skipped}`
+                                      : ` · 失败${run.error ? ` · ${run.error}` : ''}`}
+                                  </>
+                                ) : '暂无记录'}
+                              </li>
+                            ))}
+                          </ul>
+                        ) : <p role="status">正在读取…</p>}
                       </section>
                     </>
                   )}
@@ -632,7 +675,6 @@ export default function App() {
                               pdf: '逐题审阅与批量入库',
                               browse: '打开完整题库管理',
                               search: '打开高级检索',
-                              tools: '打开完整维护工具',
                               intro: '阅读项目架构介绍',
                               manual: '阅读完整规范指南',
                               stats: '查看详细统计',
