@@ -35,7 +35,7 @@ from services.question_service import (
     scan_duplicate_pairs,
 )
 from services.tex_import_service import decode_tex, parse_tex_questions, detect_tex_questions, repair_problem_headers, join_tex_questions
-from services.tex_compile_service import cleanup_preview_cache, compile_tex_preview, render_pdf_page
+from services.tex_compile_service import cleanup_preview_cache, compile_tex_preview
 from services.question_image_ui import apply_pending_diagram_update, queue_diagram_update, render_question_image_upload
 from utils.image_assets import copy_graphics, graphics_fingerprint
 from services.question_import_ai_service import classify_question, split_question_with_ai
@@ -4406,9 +4406,9 @@ def _tex_load_bank_question():
     questions = detect_tex_questions(source, os.path.basename(path), defaults)
     documents = st.session_state['tex_workspace_documents']
     if len(documents) == 1 and not documents[0]['source'].strip():
-        documents[0] = dict(name=os.path.basename(path), source=source)
+        documents[0] = dict(name=os.path.basename(path), source=source, open_pdf=True)
     else:
-        documents.append(dict(name=os.path.basename(path), source=source))
+        documents.append(dict(name=os.path.basename(path), source=source, open_pdf=True))
     st.session_state.update(tex_workspace_selected=len(documents) - 1, tex_workspace_source=source,
                             tex_workspace_year=defaults['year'], tex_workspace_type=defaults['paper_type'],
                             tex_workspace_paper=defaults['paper'], tex_workspace_mode='批量试题录入' if len(questions) > 1 else '单题录入')
@@ -4569,7 +4569,16 @@ def _render_tex_question_review(doc, selected, signature):
             render_question_preview(question.content, show_title=True)
 
 
-def _save_tex_workspace_questions(questions):
+def _save_pdf_questions(source, defaults, resource_dir):
+    questions = parse_tex_questions(source, 'PDF录入.tex', defaults)
+    for question in questions:
+        meta, body = parse_meta_data(question.content)
+        meta['题型'] = infer_question_type(question.content, question.subject)
+        question.content = inject_meta_data(body, meta)
+    return _save_tex_workspace_questions(questions, resource_dir=resource_dir)
+
+
+def _save_tex_workspace_questions(questions, *, resource_dir=None):
     logs = []
     from utils.csv_ops import get_next_id
     # Validate the whole selection before writing its first file.
@@ -4590,7 +4599,7 @@ def _save_tex_workspace_questions(questions):
             content = inject_meta_data(content, meta)
             ensure_dir(os.path.dirname(path))
             content = extract_and_replace_tikz(content, filename, os.path.dirname(path),
-                                               source_dir=st.session_state.get('tex_workspace_resource_dir', BASE_DIR))
+                                               source_dir=resource_dir or st.session_state.get('tex_workspace_resource_dir', BASE_DIR))
             create_question_file(path, content, year, paper_type, paper, number, subject)
             logs.append(dict(status="success", file=filename, message="已保存", path=path))
         except QuestionDuplicateError:
@@ -4600,11 +4609,6 @@ def _save_tex_workspace_questions(questions):
     if any(log["status"] == "success" for log in logs):
         clear_statistics_cache()
     return logs
-
-
-@st.cache_data(show_spinner=False, max_entries=12)
-def _tex_pdf_page(pdf, page_number, scale):
-    return render_pdf_page(pdf, page_number, scale)
 
 
 #: 应用启动时清扫 TeX 录入预览残留：只删早于该年龄的目录，避免误删其它会话正在编译的目录。
@@ -4641,8 +4645,10 @@ def _sync_tex_entry_cache_lifecycle(selected_nav: str, tex_entry_nav_option: str
 
 
 def page_tex_entry():
+    from services.pdf_edit_ui import has_pending_pdf_edit, pdf_revision, render_pdf_edit
+
     st.header("📄 TeX 录入")
-    st.caption("左侧编辑源码、右侧实时编译预览；录入模式在左侧边栏「录入模式」中切换。草稿独立于 AI 录入。")
+    st.caption("载入题目后可直接在 PDF 上框选修改，或切换到 LaTeX 源码。")
     if "tex_workspace_documents" not in st.session_state:
         st.session_state["tex_workspace_documents"] = [{"name": "草稿.tex", "source": ""}]
         st.session_state["tex_workspace_selected"] = 0
@@ -4674,8 +4680,11 @@ def page_tex_entry():
         resource_dir = c_resource.text_input("图片 / input 资源目录", value=BASE_DIR, key="tex_workspace_resource_dir")
         st.caption("题目片段自动使用题库模板；完整 document 文档保留自己的导言区。含中文的题库模板推荐 XeLaTeX。")
     defaults = dict(year=year.strip(), paper_type=paper_type, paper=paper.strip(), number=str(number), subject=subject)
-    left, right = st.columns([1, 1], gap="medium")
-    with left:
+
+    def revision_of(text):
+        return pdf_revision(text, BASE_DIR, defaults, engine, resource_dir, mode)
+
+    with st.container():
         with st.expander('📚 从题库载入待拆分题', expanded=False):
             paths = []
             for row in reversed(read_csv_index()):
@@ -4695,7 +4704,7 @@ def page_tex_entry():
             c_load, c_new, c_example = st.columns(3)
             if c_load.button("载入文件", key="tex_workspace_load", disabled=not uploads, use_container_width=True):
                 try:
-                    loaded = [{"name": f.name, "source": decode_tex(f.getvalue())} for f in uploads]
+                    loaded = [{"name": f.name, "source": decode_tex(f.getvalue()), "open_pdf": True} for f in uploads]
                     if len(documents) == 1 and not documents[0]["source"].strip():
                         documents[:] = loaded
                         selected = 0
@@ -4718,6 +4727,12 @@ def page_tex_entry():
             selected = st.selectbox("当前文件", range(len(documents)), format_func=lambda i: f"{i + 1}. {documents[i]['name']}", key="tex_workspace_selected", on_change=_tex_document_changed)
         with c_compile:
             compile_clicked = st.button("▶ 编译预览", key="tex_workspace_compile", type="primary", use_container_width=True)
+    if st.session_state.get("tex_workspace_notice"):
+        st.info(st.session_state.pop("tex_workspace_notice"))
+    if documents[selected].pop('sync_pdf_edit', False):
+        st.session_state['tex_workspace_source'] = documents[selected]['source']
+    pdf_tab, source_tab, save_tab = st.tabs(["PDF 框选修改", "LaTeX 源码", "逐题核对与保存"])
+    with source_tab:
         st.markdown("<style>[data-testid='stTextArea'] textarea[aria-label='TeX 源码'] {font-family: Consolas, 'Cascadia Code', monospace; font-size:14px; line-height:1.55; tab-size:2;}</style>", unsafe_allow_html=True)
         render_question_image_upload('tex_workspace_source', 'tex_workspace', APP_ROOT, on_change=_tex_editor_changed)
         source = st.text_area("TeX 源码", key="tex_workspace_source", height=600, on_change=_tex_editor_changed,
@@ -4726,8 +4741,7 @@ def page_tex_entry():
         c_download, c_ai = st.columns(2)
         c_download.download_button("⬇ 下载当前源码", source.encode("utf-8"), documents[selected]["name"], "text/plain", key="tex_workspace_download_source", use_container_width=True)
         c_ai.button("📥 合并 AI 录入草稿", key="tex_workspace_merge_ai", on_click=_tex_merge_ai_draft, use_container_width=True)
-        if st.session_state.get("tex_workspace_notice"):
-            st.info(st.session_state.pop("tex_workspace_notice"))
+    with save_tab:
         signature = hashlib.sha256((source + json.dumps(defaults, ensure_ascii=False) + mode + str(expected_count)).encode('utf-8')).hexdigest()
         c_detect, c_tag = st.columns([1.5, 1])
         ai_enabled = c_tag.checkbox('逐题 AI 分类及知识点标注', value=True, key='tex_workspace_ai_tagging')
@@ -4749,7 +4763,14 @@ def page_tex_entry():
         _render_tex_question_review(documents[selected], selected, signature)
         c_scope, c_save = st.columns([1.4, 1])
         scope = c_scope.selectbox("保存范围", ["当前文件", "所有已载入文件"] if mode != "单题录入" else ["当前文件"], key="tex_workspace_save_scope", label_visibility="collapsed")
-        if c_save.button("💾 保存到题库", key="tex_workspace_save", type="primary", use_container_width=True):
+        indices = range(len(documents)) if scope == "所有已载入文件" else [selected]
+        pending_edit = any(
+            st.session_state.get(f'tex_pdf_edit_{i}_proposal') and
+            has_pending_pdf_edit(f'tex_pdf_edit_{i}', revision_of(documents[i]['source']), documents[i].get('preview'))
+            for i in indices)
+        if pending_edit:
+            st.caption("请先在 PDF 中采用或放弃待确认的修改，再保存到题库。")
+        if c_save.button("💾 保存到题库", key="tex_workspace_save", type="primary", disabled=pending_edit, use_container_width=True):
             try:
                 pending = []
                 for doc in documents if scope == "所有已载入文件" else [documents[selected]]:
@@ -4785,57 +4806,58 @@ def page_tex_entry():
                     st.session_state.update(main_sidebar_radio="🔍\n全局浏览\n与编辑", adv_search_active=False,
                                             recent_saved_active=True, recent_saved_paths=[log["path"] for log in saved])
                 st.button("在题库中查看已保存题目 ↗", key="tex_workspace_browse", on_click=open_tex_saved)
-    fingerprint = hashlib.sha256((source + json.dumps(defaults, ensure_ascii=False) + engine + resource_dir + mode
-                                  + repr(graphics_fingerprint(source, BASE_DIR, resource_dir))).encode("utf-8")).hexdigest()
-    if compile_clicked:
+    doc = documents[selected]
+
+    def compile_draft(text):
+        if mode == "同卷试题录入":
+            normalized = re.sub(
+                r'\\begin\{problem\}\{(.*?)\}\{(.*?)\}\{(.*?)\}\{(.*?)\}\{(.*?)\}',
+                lambda m: replace_problem_header(m[0], defaults["year"], defaults["paper_type"], defaults["paper"], m[4], m[5]),
+                text, flags=re.DOTALL,
+            )
+            if normalized != text:
+                return compile_tex_preview(normalized, BASE_DIR, defaults, engine, resource_dir, editor_source=text)
+        return compile_tex_preview(text, BASE_DIR, defaults, engine, resource_dir)
+
+    def accept_draft(text, result):
+        doc.update(source=text, sync_pdf_edit=True, compile_result=result,
+                   preview=dict(result, fingerprint=revision_of(text)))
+        st.toast("已采用修改，可在「逐题核对与保存」中入库。")
+        st.rerun()
+
+    fingerprint = revision_of(source)
+    open_pdf = doc.pop('open_pdf', False)
+    if compile_clicked or (open_pdf and source.strip()):
         if not source.strip():
-            documents[selected]["compile_result"] = dict(ok=False, error="请先输入或上传 TeX 源码。", log="")
+            doc["compile_result"] = dict(ok=False, error="请先载入题目或在「LaTeX 源码」中输入题目。", log="")
         else:
-            compile_source = source
-            if mode == "同卷试题录入":
-                compile_source = re.sub(
-                    r'\\begin\{problem\}\{(.*?)\}\{(.*?)\}\{(.*?)\}\{(.*?)\}\{(.*?)\}',
-                    lambda m: replace_problem_header(m[0], defaults["year"], defaults["paper_type"], defaults["paper"], m[4], m[5]),
-                    source, flags=re.DOTALL,
-                )
             with st.spinner(f"正在调用本地 {engine} 编译…"):
-                result = compile_tex_preview(compile_source, BASE_DIR, defaults, engine, resource_dir)
-            documents[selected]["compile_result"] = result
+                result = compile_draft(source)
+            doc["compile_result"] = result
             if result["ok"]:
-                documents[selected]["preview"] = dict(pdf=result["pdf"], fingerprint=fingerprint, engine=engine)
-    with right:
-        st.markdown("#### PDF 编译预览")
-        preview = documents[selected].get("preview")
-        result = documents[selected].get("compile_result", {})
+                doc["preview"] = dict(result, fingerprint=fingerprint)
+    with pdf_tab:
+        preview = doc.get("preview")
+        result = doc.get("compile_result", {})
         if result and not result.get("ok"):
             st.error(result.get("error", "编译失败"))
             if result.get("diagnosis"):
                 with st.expander("🩺 编译诊断与修复建议", expanded=True):
                     st.code(result["diagnosis"], language="text")
         if preview:
-            if preview["fingerprint"] != fingerprint:
+            stale = preview["fingerprint"] != fingerprint or not result.get("ok")
+            if stale:
                 st.warning("源码或编译设置已改变，下方为上次成功编译的 PDF。点击“编译预览”更新。")
             else:
                 st.caption(f"本地 {preview['engine']} 编译成功")
             st.download_button("⬇ 下载 PDF", preview["pdf"], "题目预览.pdf", "application/pdf", key="tex_workspace_download_pdf")
             try:
-                import fitz
-                with fitz.open(stream=preview["pdf"], filetype="pdf") as pdf:
-                    page_count = len(pdf)
-                key = f"tex_workspace_page_{selected}"
-                if st.session_state.get(key, 1) > page_count:
-                    st.session_state[key] = 1
-                c_page, c_zoom = st.columns([1, 2])
-                page_number = c_page.number_input(f"页码（共 {page_count} 页）", min_value=1, max_value=page_count, value=1, key=key)
-                scale = c_zoom.slider("缩放", min_value=0.8, max_value=2.0, value=1.2, step=0.1, key="tex_workspace_zoom")
-                png, _ = _tex_pdf_page(preview["pdf"], page_number, scale)
-                with st.container(height=690):
-                    st.image(png, width=int(595 * scale))
-            except Exception as exc:
-                st.error(f"PDF 页面显示失败：{exc}；可下载 PDF 查看。")
+                render_pdf_edit(preview, source=source, revision=fingerprint, key=f"tex_pdf_edit_{selected}",
+                                compile_candidate=compile_draft, on_accept=accept_draft, disabled=stale)
+            except (ValueError, RuntimeError, OSError) as exc:
+                st.error(f"PDF 页面显示失败，可下载 PDF 查看。{exc}")
         else:
-            with st.container(height=690):
-                st.info("上传或粘贴源码后，点击左侧“编译预览”。PDF 在本机生成，编译错误会显示文件位置和行号。")
+            st.info("从题库载入题目或上传 TeX 文件即可预览。手动粘贴题目后，请点击「编译预览」。")
         if result.get("log"):
             with st.expander("编译日志", expanded=not result.get("ok")):
                 st.code(result["log"], language="text")
@@ -6955,6 +6977,13 @@ def _save_browse_metadata_from_widgets(key_prefix, fhash, fpath, rename_paths_ke
     st.toast("文件信息已保存，可继续修改", icon="✅")
 
 
+@st.cache_resource
+def _browse_save_lock():
+    # Compare the draft's base and write under one lock across browser sessions.
+    from threading import Lock
+    return Lock()
+
+
 def _set_pending_question_action(key_prefix, fhash, action, fpath=""):
     if action == "edit_meta":
         st.session_state[_question_action_state_key(key_prefix, fhash)] = action
@@ -6964,16 +6993,23 @@ def _set_pending_question_action(key_prefix, fhash, action, fpath=""):
         # fragment rerun reads the new file, without an obsolete intermediate render.
         from services.performance import timed
         text_key = f"{key_prefix}_edit_{_question_key('text', fpath)}"
-        new_content = st.session_state.get(text_key, '')
+        draft = st.session_state.get(text_key + '_draft')
+        if draft is None:
+            return
+        new_content = st.session_state.get(text_key, draft['source'])
         if not _duplicate_save_confirmation(fpath, new_content, scope=f"{key_prefix}:{fpath}"):
             _request_question_scroll_restore(fpath)
             return
         try:
-            with timed('browse_save'):
+            with _browse_save_lock(), timed('browse_save'):
+                if read_question_text(fpath) != draft['base']:
+                    st.toast('文件已更新，请先核对保留的草稿。', icon='⚠️')
+                    return
                 final_content = save_modified_tex_file(fpath, new_content)
                 _update_csv_index_for_content_change(fpath, final_content)
                 _clear_advanced_search_result_cache()
             st.session_state[text_key] = final_content
+            st.session_state.pop(text_key + '_draft', None)
             st.session_state[f"{key_prefix}_tex_edit_mode_{_question_key('tex', fpath)}"] = False
             _request_question_scroll_restore(fpath)
             st.toast('题目已保存', icon='✅')
@@ -7063,7 +7099,7 @@ def _render_free_tag_editor(key_prefix, fhash, tag_text="", fpath=""):
               on_click=_add_free_tag_item, args=(key_prefix, fhash, fpath))
 
 
-def _render_native_question_actions(key_prefix, fhash, fpath, is_tag_editing, is_tex_editing):
+def _render_native_question_actions(key_prefix, fhash, fpath, is_tag_editing, is_tex_editing, block_tex_action=False):
     action = None
     st.markdown('<span class="mc-question-actions-grid-anchor"></span>', unsafe_allow_html=True)
     tex_label = "\U0001f4be \u4fdd\u5b58\u4fee\u6539" if is_tex_editing else "\u270f\ufe0f \u5f00\u59cb\u4fee\u6539tex\u5185\u5bb9"
@@ -7075,7 +7111,7 @@ def _render_native_question_actions(key_prefix, fhash, fpath, is_tag_editing, is
     row2_col1, row2_col2, _ = st.columns([0.475, 0.475, 1.05], gap="small")
     row3_delete, _ = st.columns([0.95, 1.05], gap="small")
     with row1_col1:
-        if st.button(tex_label, key=f"{key_prefix}_tex_edit_{fhash}", type=tex_type, use_container_width=True, on_click=_set_pending_question_action, args=(key_prefix, fhash, tex_action, fpath)):
+        if st.button(tex_label, key=f"{key_prefix}_tex_edit_{fhash}", type=tex_type, disabled=block_tex_action, use_container_width=True, on_click=_set_pending_question_action, args=(key_prefix, fhash, tex_action, fpath)):
             action = tex_action
     with row1_col2:
         if st.button(edit_label, key=f"{key_prefix}_edit_meta_{fhash}", type=edit_type, use_container_width=True, on_click=_set_pending_question_action, args=(key_prefix, fhash, "edit_meta", fpath)):
@@ -7187,6 +7223,51 @@ def _render_browse_question_editor_fragment(q_label, content, fpath, key_prefix,
             extra_html_label, rename_paths_key, prepared_assets, interactive_difficulty)
 
 
+def _render_browse_pdf_editor(fpath, source, disk_content, text_key, edit_key, conflict):
+    from services.pdf_edit_ui import pdf_revision, render_pdf_edit
+
+    resource_dir = os.path.dirname(fpath)
+    preview_key = text_key + '_pdf_preview'
+
+    def revision(value):
+        return pdf_revision(value, BASE_DIR, {}, 'xelatex', resource_dir)
+
+    def compile_candidate(value):
+        return compile_tex_preview(value, BASE_DIR, {}, 'xelatex', resource_dir)
+
+    version = revision(source)
+    cached_version, preview = st.session_state.get(preview_key, (None, None))
+    if cached_version != version or preview is None:
+        with st.spinner('正在编译题目 PDF…'):
+            preview = compile_candidate(source)
+        st.session_state[preview_key] = (version, preview)
+    if not preview.get('ok'):
+        st.error(preview.get('error') or '题目 PDF 编译失败。')
+        if preview.get('diagnosis') or preview.get('log'):
+            with st.expander('编译详情'):
+                st.code(preview.get('diagnosis') or preview['log'], language='text')
+        if st.button('重新编译 PDF', key=text_key + '_pdf_retry'):
+            st.session_state.pop(preview_key, None)
+            st.rerun()
+        return
+
+    def accept(updated, compiled):
+        if read_question_text(fpath) != disk_content or revision(source) != version:
+            st.error('题目或插图已更新。请重新打开当前 PDF 核对选区。')
+            return
+        draft = st.session_state.setdefault(text_key + '_draft', {'base': disk_content})
+        draft['source'] = updated
+        st.session_state[text_key] = updated
+        st.session_state[edit_key] = True
+        st.session_state[preview_key] = (revision(updated), compiled)
+        _request_question_scroll_restore(fpath)
+        st.toast('修改已应用到草稿，点击「保存修改」可写回题库。')
+        st.rerun()
+
+    render_pdf_edit(preview, source=source, revision=version, key=text_key + '_pdf_edit',
+                    compile_candidate=compile_candidate, on_accept=accept, disabled=conflict)
+
+
 def _render_browse_question_editor_card_body(q_label, content, fpath, key_prefix, paper_type_scope=None, extra_html_label="", rename_paths_key=None, prepared_assets=None, interactive_difficulty=True):
     prepared_assets = prepared_assets or {}
     fhash = _question_key("meta", fpath)
@@ -7204,56 +7285,67 @@ def _render_browse_question_editor_card_body(q_label, content, fpath, key_prefix
     tag_edit_key = f"{key_prefix}_tag_edit_mode_{_question_key('tag', fpath)}"
     tex_edit_key = f"{key_prefix}_tex_edit_mode_{_question_key('tex', fpath)}"
     text_area_key = f"{key_prefix}_edit_{_question_key('text', fpath)}"
+    draft_key = text_area_key + '_draft'
+    view_key = text_area_key + '_view'
     pending_text = st.session_state.pop(f"browse_pending_text_{text_area_key}", None)
     if pending_text is not None:
         st.session_state[text_area_key] = pending_text
         st.session_state[tex_edit_key] = False
+        st.session_state.pop(draft_key, None)
     action = _pop_pending_question_action(key_prefix, fhash)
     is_tag_editing = st.session_state.get(tag_edit_key, False)
-    is_tex_editing = st.session_state.get(tex_edit_key, False)
     if action == "start_tex_edit":
+        st.session_state[view_key] = "LaTeX 源码"
         st.session_state[tex_edit_key] = True
-        st.session_state[text_area_key] = content
-        is_tex_editing = True
-    elif text_area_key not in st.session_state or not is_tex_editing:
-        st.session_state[text_area_key] = content
-    current_content = st.session_state.get(text_area_key, content) if is_tex_editing else content
-    if current_content == content and prepared_assets.get("editor_height") is not None:
-        est_height = prepared_assets["editor_height"]
-    else:
-        est_height = _cached_editor_height(current_content)
-
-    c_src, c_preview = st.columns([0.95, 1.05], gap="large")
-    with c_src:
-        if is_tex_editing:
-            render_question_image_upload(text_area_key, f'{key_prefix}_{fhash}', APP_ROOT)
-            current_content = st.text_area("源码", height=est_height, key=text_area_key)
-        else:
-            # A changing default value gives Streamlit a new widget identity.
-            # Keep the textarea node (and its synchronized preview height) alive
-            # when metadata is saved, so the form below it does not jump.
-            readonly_key = f"{text_area_key}_readonly"
-            st.session_state[readonly_key] = content
-            readonly_height = st.session_state.setdefault(f"{readonly_key}_height", est_height)
-            st.text_area("源码", height=readonly_height, disabled=True, key=readonly_key)
-            current_content = content
-
-        if action == "save_tex":
-            new_content = st.session_state.get(text_area_key, current_content)
-            if not _duplicate_save_confirmation(fpath, new_content, scope=f"{key_prefix}:{fpath}"):
-                st.rerun()
-            final_content = save_modified_tex_file(fpath, new_content)
-            _update_csv_index_for_content_change(fpath, final_content)
-            _clear_advanced_search_result_cache()
+        st.session_state.setdefault(draft_key, {'base': content, 'source': content})
+    view = st.radio("题目视图", ("题目预览", "PDF 框选编辑", "LaTeX 源码"),
+                    horizontal=True, key=view_key, label_visibility="collapsed")
+    draft = st.session_state.get(draft_key)
+    is_tex_editing = st.session_state.get(tex_edit_key, False) and draft is not None
+    current_content = draft['source'] if is_tex_editing else content
+    conflict = is_tex_editing and draft['base'] != content
+    if conflict:
+        st.warning('此题在草稿建立后已被修改。可切换到 LaTeX 源码复制草稿，或重新载入题库中的版本。')
+        if st.button('放弃草稿并载入最新题目', key=text_area_key + '_reload'):
+            st.session_state.pop(draft_key, None)
+            st.session_state.pop(text_area_key, None)
             st.session_state[tex_edit_key] = False
-            _request_question_scroll_restore(fpath)
-            st.toast(f"{q_label} 已保存", icon="✅")
-            try:
-                st.rerun(scope="fragment")
-            except st.errors.StreamlitAPIException:
-                # AppTest/full-script invocation has no active fragment rerun scope.
-                st.rerun()
+            st.rerun()
+    elif is_tex_editing and current_content != content:
+        st.caption('当前显示未保存的题目草稿。')
 
+    def remember_source():
+        st.session_state[draft_key]['source'] = st.session_state[text_area_key]
+
+    st.session_state[text_area_key] = current_content
+    show_source = view == "LaTeX 源码"
+    c_src, c_preview = st.columns([0.95, 1.05], gap="large") if show_source else (nullcontext(), nullcontext())
+    if show_source:
+        est_height = prepared_assets.get("editor_height") if current_content == content else None
+        est_height = est_height or _cached_editor_height(current_content)
+        with c_src:
+            if is_tex_editing:
+                render_question_image_upload(text_area_key, f'{key_prefix}_{fhash}', APP_ROOT, on_change=remember_source)
+                current_content = st.text_area("源码", height=est_height, key=text_area_key, on_change=remember_source)
+            else:
+                readonly_key = f"{text_area_key}_readonly"
+                st.session_state[readonly_key] = content
+                readonly_height = st.session_state.setdefault(f"{readonly_key}_height", est_height)
+                st.text_area("源码", height=readonly_height, disabled=True, key=readonly_key)
+
+    with c_preview:
+        st.markdown(f'<span id="browse-question-preview-{fhash}" style="display:block"></span>', unsafe_allow_html=True)
+        if view == "PDF 框选编辑":
+            _render_browse_pdf_editor(fpath, current_content, content, text_area_key, tex_edit_key, conflict)
+        else:
+            try:
+                prepared_markdown = prepared_assets.get("preview_markdown") if current_content == content else None
+                render_question_preview(current_content, show_title=False, prepared_markdown=prepared_markdown,
+                                        source_dir=os.path.dirname(fpath))
+            except Exception as error:
+                st.error(f"渲染错误: {error}")
+
+    with c_src:
         if action == "ai_generate":
             problem_tex = _extract_problem_env(current_content)
             with st.spinner("🤖 AI 正在生成解答..."):
@@ -7284,21 +7376,19 @@ def _render_browse_question_editor_card_body(q_label, content, fpath, key_prefix
 
         render_ai_solution_image_ocr_section(fpath, key_prefix="ai_solution_v1", compact=True)
 
-    with c_preview:
-        st.markdown(f'<span id="browse-question-preview-{fhash}" style="display:block"></span>', unsafe_allow_html=True)
-        try:
-            prepared_markdown = None
-            if current_content == content:
-                prepared_markdown = prepared_assets.get("preview_markdown")
-            render_question_preview(current_content, show_title=False, prepared_markdown=prepared_markdown,
-                                    source_dir=os.path.dirname(fpath))
-        except Exception as e:
-            st.error(f"渲染错误: {e}")
+    if show_source:
+        from services.editor_layout import render_editor_height_sync
+        render_editor_height_sync(fhash, is_tex_editing)
 
-    from services.editor_layout import render_editor_height_sync
-    render_editor_height_sync(fhash, is_tex_editing)
-
-    _render_native_question_actions(key_prefix, fhash, fpath, is_tag_editing, is_tex_editing)
+    pending_edit = False
+    if is_tex_editing and st.session_state.get(text_area_key + '_pdf_edit_proposal'):
+        from services.pdf_edit_ui import has_pending_pdf_edit, pdf_revision
+        _, preview = st.session_state.get(text_area_key + '_pdf_preview', (None, None))
+        revision = pdf_revision(current_content, BASE_DIR, {}, 'xelatex', os.path.dirname(fpath))
+        pending_edit = has_pending_pdf_edit(text_area_key + '_pdf_edit', revision, preview)
+        if pending_edit:
+            st.caption("请先在 PDF 中采用或放弃待确认的修改，再保存题目。")
+    _render_native_question_actions(key_prefix, fhash, fpath, is_tag_editing, is_tex_editing, conflict or pending_edit)
 
     if is_tag_editing:
         metadata_column, _ = st.columns([0.95, 1.05], gap="large")
@@ -13933,6 +14023,7 @@ def main():
     stats_nav_option = "📊  数据统计"
     entry_nav_option = "📝  智能录题"
     tex_entry_nav_option = "📄  TeX录入"
+    pdf_entry_nav_option = "📑  PDF录入"
     browse_nav_option = "🔍  全局浏览"
     exam_nav_option = "🖨️  组卷排版"
     tools_nav_option = "🛠️  维护工具"
@@ -13946,6 +14037,7 @@ def main():
         stats_nav_option,
         entry_nav_option,
         tex_entry_nav_option,
+        pdf_entry_nav_option,
         browse_nav_option,
         exam_nav_option,
         tools_nav_option,
@@ -13977,6 +14069,7 @@ def main():
         "📝\nAI录入": entry_nav_option,
         "📝\n录题": entry_nav_option,
         "TeX录入": tex_entry_nav_option,
+        "PDF录入": pdf_entry_nav_option,
         "📄  TeX代码录入": tex_entry_nav_option,
         "📄\nTeX录入": tex_entry_nav_option,
         "📄\nTeX": tex_entry_nav_option,
@@ -14103,7 +14196,7 @@ def main():
 
         # === 导航：分组渲染，使二级功能紧跟在其一级功能下方 ===
         # 有二级导航的一级项 → 允许插入的位置（索引）
-        _subnav_parents = {entry_nav_option: 1, tex_entry_nav_option: 2, settings_nav_option: 9}
+        _subnav_parents = {nav: nav_options.index(nav) for nav in (entry_nav_option, tex_entry_nav_option, settings_nav_option)}
         _active_nav = st.session_state.get("main_nav_selection", default_nav_option)
         _split_at = _subnav_parents.get(_active_nav)
 
@@ -14209,6 +14302,9 @@ def main():
         page_entry()
     elif selected_nav == tex_entry_nav_option:
         page_tex_entry()
+    elif selected_nav == pdf_entry_nav_option:
+        from services.pdf_import_ui import render_pdf_import
+        render_pdf_import(BASE_DIR, _save_pdf_questions)
     elif selected_nav == browse_nav_option:
         page_browse()
     elif selected_nav == exam_nav_option:

@@ -1,0 +1,139 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; color: var(--text, #26231e); font: 14px/1.4 system-ui, "Microsoft YaHei", sans-serif; }
+  .tools { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; padding: 3px 2px 7px; }
+  #hint { color: var(--muted, #655e55); margin-right: auto; }
+  button, select { padding: 4px 7px; color: inherit; background: var(--surface, #fff); font: inherit;
+    border: 1px solid var(--border, #ddd2c2); border-radius: 6px; }
+  button:not(:disabled), select { cursor: pointer; }
+  button:disabled { opacity: .55; }
+  :focus-visible { outline: 2px solid var(--accent, #ad5437); outline-offset: 1px; }
+  #viewport { max-height: 630px; overflow: auto; overscroll-behavior-x: contain; background: var(--surface, #eee9df);
+    border: 1px solid var(--border, #ddd2c2); border-radius: 6px; }
+  #sheet { position: relative; width: 100%; }
+  #sheet.selecting { touch-action: none; cursor: crosshair; }
+  img { display: block; width: 100%; user-select: none; -webkit-user-drag: none; pointer-events: none; }
+  #box { position: absolute; pointer-events: none; background: rgba(40, 110, 220, .16);
+    border: 2px solid #2366c7; box-shadow: inset 0 0 0 1px white; }
+</style>
+</head>
+<body>
+<div class="tools">
+  <span id="hint" aria-live="polite"></span>
+  <select id="zoom" aria-label="PDF 缩放">
+    <option value="100">适合宽度</option><option value="150">150%</option><option value="200">200%</option>
+  </select>
+  <button id="mode" type="button" aria-pressed="true">框选</button>
+  <button id="clear" type="button" disabled>清除选区</button>
+</div>
+<div id="viewport" tabindex="0" aria-label="PDF 页面">
+  <div id="sheet"><img id="page" draggable="false" alt=""><div id="box" hidden></div></div>
+</div>
+<script>
+const get = id => document.getElementById(id);
+const page = get("page"), sheet = get("sheet"), box = get("box"), mode = get("mode");
+let args, imageData, rect = null, drag = null, selecting = true;
+
+function send(type, data) {
+  window.parent.postMessage({isStreamlitMessage: true, type, ...data}, "*");
+}
+function publish() {
+  send("streamlit:setComponentValue", {dataType: "json", value: {
+    document_id: args.document_id, page: args.page, rect
+  }});
+}
+function refresh() {
+  const active = selecting && !args.readonly;
+  sheet.classList.toggle("selecting", active);
+  mode.hidden = get("clear").hidden = args.readonly;
+  mode.setAttribute("aria-pressed", String(active));
+  mode.textContent = active ? "切换到浏览" : "切换到框选";
+  get("clear").disabled = !rect;
+  get("hint").textContent = args.readonly ? "第 " + args.page + " 页" :
+    active ? (rect ? "已框选，可重新拖动选择" : "拖动框选要修改的内容") : "浏览页面";
+}
+function draw(area) {
+  box.hidden = !area;
+  if (!area) return;
+  box.style.left = area[0] * 100 + "%";
+  box.style.top = area[1] * 100 + "%";
+  box.style.width = (area[2] - area[0]) * 100 + "%";
+  box.style.height = (area[3] - area[1]) * 100 + "%";
+}
+function point(e) {
+  const b = page.getBoundingClientRect();
+  const unit = n => Math.max(0, Math.min(1, n));
+  return [unit((e.clientX - b.left) / b.width), unit((e.clientY - b.top) / b.height)];
+}
+function areaTo(e) {
+  const [x, y] = point(e);
+  const [startX, startY] = drag.start;
+  return [Math.min(x, startX), Math.min(y, startY), Math.max(x, startX), Math.max(y, startY)];
+}
+function cancelDrag() {
+  if (drag && sheet.hasPointerCapture(drag.id)) sheet.releasePointerCapture(drag.id);
+  drag = null;
+  draw(rect);
+}
+sheet.addEventListener("pointerdown", e => {
+  if (!args || args.readonly || !selecting || drag || !e.isPrimary || e.button !== 0 ||
+      !page.complete || !page.naturalWidth) return;
+  e.preventDefault();
+  drag = {id: e.pointerId, start: point(e)};
+  sheet.setPointerCapture(e.pointerId);
+  draw(null);
+});
+sheet.addEventListener("pointermove", e => {
+  if (drag && e.pointerId === drag.id) draw(areaTo(e));
+});
+sheet.addEventListener("pointerup", e => {
+  if (!drag || e.pointerId !== drag.id) return;
+  const area = areaTo(e), bounds = page.getBoundingClientRect();
+  cancelDrag();
+  if ((area[2] - area[0]) * bounds.width < 4 || (area[3] - area[1]) * bounds.height < 4) return;
+  rect = area;
+  draw(rect);
+  refresh();
+  publish();
+});
+sheet.addEventListener("lostpointercapture", e => {
+  if (drag && e.pointerId === drag.id) cancelDrag();
+});
+sheet.addEventListener("pointercancel", cancelDrag);
+document.addEventListener("keydown", e => { if (e.key === "Escape") cancelDrag(); });
+mode.addEventListener("click", () => { selecting = !selecting; cancelDrag(); refresh(); });
+get("zoom").addEventListener("change", e => { cancelDrag(); sheet.style.width = e.target.value + "%"; });
+get("clear").addEventListener("click", () => { rect = null; cancelDrag(); refresh(); publish(); });
+window.addEventListener("message", event => {
+  if (event.source !== window.parent || event.data?.type !== "streamlit:render") return;
+  const next = event.data.args;
+  if (!args || args.document_id !== next.document_id || args.page !== next.page) {
+    rect = next.initial_rect || null;
+    cancelDrag();
+    get("viewport").scrollTo(0, 0);
+  }
+  args = next;
+  if (args.readonly) { rect = null; cancelDrag(); }
+  if (imageData !== args.image) {
+    imageData = args.image;
+    page.alt = "PDF 第 " + args.page + " 页";
+    page.src = "data:image/png;base64," + imageData;
+  }
+  for (const [name, color] of Object.entries(args.colors)) {
+    document.documentElement.style.setProperty("--" + name, color);
+  }
+  draw(rect);
+  refresh();
+});
+new ResizeObserver(() => {
+  send("streamlit:setFrameHeight", {height: Math.ceil(document.body.getBoundingClientRect().height) + 2});
+}).observe(document.body);
+send("streamlit:componentReady", {apiVersion: 1});
+</script>
+</body>
+</html>

@@ -6,10 +6,12 @@ from pathlib import Path
 import re
 import shutil
 import subprocess
+from contextlib import contextmanager
 import time
 import uuid
 
 from services.tex_import_service import parse_tex_questions
+from services.pdf_selection_edit import build_source_map
 from utils.tex_log_tools import extract_tex_errors, summarize_tex_log
 from utils.tikz_ops import _driver_tmp_env
 from utils.image_assets import graphics_references, resolve_image
@@ -18,6 +20,50 @@ from utils.image_assets import graphics_references, resolve_image
 #: TeX 录入预览编译目录名：``<项目>/.tikz_cache/tex-entry/preview-<uuid>/``
 PREVIEW_CACHE_DIRNAME = 'tex-entry'
 _PREVIEW_DIR_PREFIX = 'preview-'
+
+
+def _lock_preview(handle):
+    # Both locks are nonblocking and are released by the OS on process exit.
+    if os.name == 'nt':
+        import msvcrt
+        handle.seek(0)
+        msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+    else:
+        import fcntl
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+
+
+@contextmanager
+def _preview_directory(directory: Path):
+    marker = directory.with_suffix('.lock')
+    handle = marker.open('xb+')
+    try:
+        with handle:
+            handle.write(b'1')
+            handle.flush()
+            _lock_preview(handle)
+            # Publish the directory only after its lock is visible.
+            directory.mkdir()
+            try:
+                yield
+            finally:
+                shutil.rmtree(directory, ignore_errors=True)
+    finally:
+        try:
+            marker.unlink(missing_ok=True)
+        except PermissionError:
+            pass  # A cleanup probe can briefly hold the marker on Windows.
+
+
+def _preview_in_use(directory: Path) -> bool:
+    try:
+        with directory.with_suffix('.lock').open('rb+') as handle:
+            _lock_preview(handle)
+    except FileNotFoundError:
+        return False  # A cache created by an earlier app version.
+    except OSError:
+        return True
+    return False
 
 
 def cleanup_preview_cache(project_dir: str, min_age_seconds: float = 0.0) -> int:
@@ -43,7 +89,10 @@ def cleanup_preview_cache(project_dir: str, min_age_seconds: float = 0.0) -> int
                     if entry.is_symlink() or not entry.is_dir(follow_symlinks=False):
                         continue
                     child = Path(entry.path)
-                    if child.resolve().parent != root_resolved:
+                    resolved = child.resolve()
+                    if resolved.parent != root_resolved:
+                        continue
+                    if _preview_in_use(resolved):
                         continue
                     if min_age_seconds > 0:
                         age = now - entry.stat(follow_symlinks=False).st_mtime
@@ -51,6 +100,7 @@ def cleanup_preview_cache(project_dir: str, min_age_seconds: float = 0.0) -> int
                             continue
                     shutil.rmtree(child, ignore_errors=True)
                     if not child.exists():
+                        child.with_suffix('.lock').unlink(missing_ok=True)
                         removed += 1
                 except OSError:
                     continue
@@ -180,8 +230,9 @@ def build_preview_document(source: str, project_dir: str, defaults: dict) -> str
     if re.search(r'(?m)^\s*\\documentclass\b', source):
         return source
     questions = parse_tex_questions(source, '草稿.tex', defaults)
-    main = (Path(project_dir) / 'main.tex').read_text(encoding='utf-8')
-    preamble = main.split(r'\begin{document}', 1)[0]
+    main = Path(project_dir) / 'main.tex'
+    preamble = (main.read_text(encoding='utf-8').split(r'\begin{document}', 1)[0]
+                if main.is_file() else r'\documentclass[12pt,UTF-8]{UtopiaPhyCyclus_book}')
     # The bank class supplies these environments; main.tex may carry older
     # custom definitions. Preserve those definitions by renewing the defaults.
     preamble = re.sub(r'\\NewDocumentEnvironment\{(solutions|answer)\}',
@@ -190,8 +241,16 @@ def build_preview_document(source: str, project_dir: str, defaults: dict) -> str
     return preamble + '\n\\begin{document}\n\\pagestyle{empty}\n' + body + '\n\\end{document}\n'
 
 
+def _tex_relative_path(path: Path, base: Path) -> str:
+    try:
+        return os.path.relpath(path, base).replace('\\', '/')
+    except ValueError:  # Windows paths on different drives.
+        return path.resolve().as_posix()
+
+
 def compile_tex_preview(source: str, project_dir: str, defaults: dict,
-                        engine: str = 'xelatex', resource_dir: str = '', timeout: int = 45) -> dict:
+                        engine: str = 'xelatex', resource_dir: str = '', timeout: int = 45,
+                        *, editor_source: str | None = None) -> dict:
     executable = shutil.which(engine)
     if engine not in ('xelatex', 'lualatex', 'pdflatex') or not executable:
         return dict(ok=False, error=f'未找到本地 {engine} 编译器，请检查 TeX Live / MiKTeX 的 PATH。', log='')
@@ -202,15 +261,9 @@ def compile_tex_preview(source: str, project_dir: str, defaults: dict,
     directory = None
     try:
         document = build_preview_document(source, project_dir, defaults)
-        # Resolve using the original source, before fragment parsing discards
-        # its graphicspath. Keep paths relative to the compiler's working dir.
-        for ref in reversed(graphics_references(document)):
-            try:
-                image = resolve_image(ref['path'], project_dir, work_dir, source)
-            except (OSError, ValueError):
-                continue  # Let TeX produce its normal actionable missing-file log.
-            filename = os.path.relpath(image, work_dir).replace('\\', '/')
-            document = document[:ref['path_start']] + filename + document[ref['path_end']:]
+        # Inverse search uses the editor's image path spelling. Compilers get
+        # the actual working-directory-relative filenames below.
+        original_document = document
         cache = Path(project_dir) / '.tikz_cache' / 'tex-entry'
         cache.mkdir(parents=True, exist_ok=True)
         # 每次编译独占唯一目录（旧 PDF 不可能误判成功）。这里**不用** tempfile.TemporaryDirectory：
@@ -218,13 +271,25 @@ def compile_tex_preview(source: str, project_dir: str, defaults: dict,
         # 会继承不到可访问 ACE，导致目录连本进程都不可读写；唯一 uuid 目录 + finally
         # 尽力清理在各种权限环境下都更稳健。
         directory = cache / ('preview-' + uuid.uuid4().hex)
-        directory.mkdir(parents=True, exist_ok=False)
-        try:
+        with _preview_directory(directory):
+            # Some Windows engines cannot set TEXMF_OUTPUT_DIRECTORY to a
+            # non-ASCII value. Preserve the resource cwd when possible.
+            compiler_dir = work_dir
+            if os.name == 'nt' and not _tex_relative_path(directory, work_dir).isascii():
+                compiler_dir = directory
+            for ref in reversed(graphics_references(document)):
+                try:
+                    image = resolve_image(ref['path'], project_dir, work_dir, source)
+                except (OSError, ValueError):
+                    continue  # Let TeX produce its normal actionable missing-file log.
+                filename = _tex_relative_path(image, compiler_dir)
+                document = document[:ref['path_start']] + filename + document[ref['path_end']:]
             tex = directory / 'preview.tex'
             tex.write_text(document, encoding='utf-8')
             env = os.environ.copy()
-            project_search = os.path.relpath(Path(project_dir).resolve(), work_dir).replace('\\', '/')
-            env['TEXINPUTS'] = '.' + os.pathsep + project_search + os.pathsep + env.get('TEXINPUTS', '')
+            search = ['.', _tex_relative_path(work_dir, compiler_dir),
+                      _tex_relative_path(Path(project_dir).resolve(), compiler_dir), env.get('TEXINPUTS', '')]
+            env['TEXINPUTS'] = os.pathsep.join(search)
             # 根因修复（2026-10-20，与 utils.tikz_ops 同一根因）：xdvipdfmx 用
             # %TMP%\dvipdfmx.N 建 PSTricks 临时文件，TMP/TEMP 不可写时 fopen 返回 NULL
             # 后未判空即 fprintf → MSVCR100 0xC0000417。这里给子进程注入本次临时目录下
@@ -243,14 +308,12 @@ def compile_tex_preview(source: str, project_dir: str, defaults: dict,
                     env['TEXMFCACHE'] = lua_cache
                 except OSError:
                     pass
-            relative_tex = os.path.relpath(tex, work_dir).replace('\\', '/')
-            relative_output = os.path.relpath(directory, work_dir).replace('\\', '/')
             for _ in range(2):
                 completed = subprocess.run(
                     [executable, '-no-shell-escape', '-interaction=nonstopmode',
                      '-halt-on-error', '-file-line-error', '-synctex=1',
-                     '-output-directory=' + relative_output, relative_tex],
-                    cwd=work_dir, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                     '-output-directory=' + _tex_relative_path(directory, compiler_dir), _tex_relative_path(tex, compiler_dir)],
+                    cwd=compiler_dir, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                     encoding='utf-8', errors='replace', timeout=timeout,
                     creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0,
                 )
@@ -262,10 +325,9 @@ def compile_tex_preview(source: str, project_dir: str, defaults: dict,
             pdf = directory / 'preview.pdf'
             if not pdf.exists():
                 return dict(ok=False, error='编译器未生成 PDF。', log=output[-24000:])
-            return dict(ok=True, pdf=pdf.read_bytes(), log=output[-24000:], engine=engine)
-        finally:
-            if directory is not None:
-                shutil.rmtree(directory, ignore_errors=True)
+            return dict(ok=True, pdf=pdf.read_bytes(), log=output[-24000:], engine=engine,
+                        source_map=build_source_map(source if editor_source is None else editor_source,
+                                                    original_document, directory / 'preview.synctex.gz'))
     except subprocess.TimeoutExpired as exc:
         partial = exc.stdout or b''
         if isinstance(partial, bytes):

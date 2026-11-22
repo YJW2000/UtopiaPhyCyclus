@@ -7,14 +7,17 @@ from utils.theme_system import generate_theme_css
 class SidebarFlyoutTests(unittest.TestCase):
     def test_native_bridge_routes_directly_to_children(self):
         at=AppTest.from_file('utopia_phycyclus_app.py',default_timeout=40).run()
-        for key,route,state,value in (
-            ('mc-nav-bridge-1-1','📝  智能录题','entry_mode_sidebar','批量试题录入'),
-            ('mc-nav-bridge-2-2','📄  TeX录入','tex_workspace_mode','同卷试题录入'),
-            ('mc-nav-bridge-6-1','🔎  题目查找','search_subpage','模糊查找'),
-            ('mc-nav-bridge-6-0','🔎  题目查找','search_subpage','精确查找'),
-            ('mc-nav-bridge-9-1','⚙️  设置','settings_subpage','🔑 API设置'),
-            ('mc-nav-bridge-9-0','⚙️  设置','settings_subpage','🎨 UI设置'),
+        nav_labels = at.radio(key='nav_group_a').options
+        for child,route,state,value in (
+            (1,'📝  智能录题','entry_mode_sidebar','批量试题录入'),
+            (2,'📄  TeX录入','tex_workspace_mode','同卷试题录入'),
+            (1,'🔎  题目查找','search_subpage','模糊查找'),
+            (0,'🔎  题目查找','search_subpage','精确查找'),
+            (1,'⚙️  设置','settings_subpage','🔑 API设置'),
+            (0,'⚙️  设置','settings_subpage','🎨 UI设置'),
         ):
+            index = next(i for i, label in enumerate(nav_labels) if label.startswith(route))
+            key = f'mc-nav-bridge-{index}-{child}'
             at.button(key=key).click().run()
             self.assertFalse(at.exception)
             self.assertEqual(at.session_state['main_nav_selection'],route)

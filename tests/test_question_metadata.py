@@ -81,6 +81,8 @@ class MetadataTests(unittest.TestCase):
                 at.session_state[name] = value
             at.run()
             key = app._question_key('meta', str(path))
+            view_key = 'metadata_test_edit_' + app._question_key('text', str(path)) + '_view'
+            at.radio(key=view_key).set_value('LaTeX 源码').run()
             at.button(key=f'metadata_test_edit_meta_{key}').click().run()
             self.assertNotIn(app.BROWSE_SCROLL_RESTORE_KEY, at.session_state.filtered_state)
             markdown = [element.value for element in at.markdown]
