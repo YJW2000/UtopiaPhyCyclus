@@ -4502,7 +4502,7 @@ def _tex_merge_ai_draft():
     mode = st.session_state.get("tex_workspace_mode", "单题录入")
     draft = st.session_state.get("entry_content" if mode == "单题录入" else "batch_content", "").strip()
     if not draft:
-        st.session_state["tex_workspace_notice"] = "AI 录入中还没有对应模式的草稿。"
+        st.session_state["tex_workspace_notice"] = "图片识别中还没有对应模式的草稿。"
         return
     index = st.session_state["tex_workspace_selected"]
     current = st.session_state.get("tex_workspace_source", "").rstrip()
@@ -4850,7 +4850,7 @@ def page_tex_entry():
         st.session_state["tex_workspace_selected"] = 0
         st.session_state["tex_workspace_source"] = ""
     documents = st.session_state["tex_workspace_documents"]
-    # 录入模式由侧边栏二级导航控制（与智能录题共用交互习惯，但各自独立存储）
+    # 录入模式由侧边栏二级导航控制，与图片识别各自独立存储。
     if st.session_state.get("tex_workspace_mode") not in ("单题录入", "批量试题录入", "同卷试题录入"):
         st.session_state["tex_workspace_mode"] = "单题录入"
     mode = st.session_state["tex_workspace_mode"]
@@ -4936,7 +4936,7 @@ def page_tex_entry():
         documents[selected]["source"] = source
         c_download, c_ai = st.columns(2)
         c_download.download_button("⬇ 下载当前源码", source.encode("utf-8"), documents[selected]["name"], "text/plain", key="tex_workspace_download_source", use_container_width=True)
-        c_ai.button("📥 合并 AI 录入草稿", key="tex_workspace_merge_ai", on_click=_tex_merge_ai_draft, use_container_width=True)
+        c_ai.button("📥 合并图片识别草稿", key="tex_workspace_merge_ai", on_click=_tex_merge_ai_draft, use_container_width=True)
     with save_tab:
         signature = _tex_source_signature(documents[selected], defaults, mode, expected_count, resource_dir)
         c_detect, c_tag = st.columns([1.5, 1])
@@ -5082,7 +5082,7 @@ def page_entry(force_single_mode: bool = False, cloze_mode: bool = False):
     st.markdown('<span id="mc-entry-page-anchor"></span>', unsafe_allow_html=True)
     if force_single_mode:
         # 挖空题生成页保持原来的布局：标题独占一行，识别素材工具在下方
-        st.header("🧩 挖空题生成" if cloze_mode else "📝 AI 录入")
+        st.header("🧩 挖空题生成" if cloze_mode else "📝 图片识别")
     
     # 初始化 Session State
     if "entry_year" not in st.session_state: st.session_state["entry_year"] = "2024"
@@ -5402,9 +5402,9 @@ def page_entry(force_single_mode: bool = False, cloze_mode: bool = False):
     with col_left:
         inject_custom_css() # 注入样式
 
-        # 常规 AI 录入页：页面标题 + 识别素材工具 + 说明小字 全部收进同一行，横向均匀分布
+        # 图片识别页的标题、工具和提示位于同一行。
         _header_in_row = not force_single_mode
-        _strip_hint = "提示: 如果 AI 响应时间过长，请直接刷新页面以中断。"
+        _strip_hint = "支持 Ctrl+V（Mac ⌘V）粘贴图片"
         # 队列为空时「识别 / 清空」不占位，整行保持紧凑且间距均匀
         _has_queue_pre = bool(st.session_state.get("ocr_queue") or st.session_state.get("pdf_queue"))
         if _header_in_row:
@@ -5448,7 +5448,7 @@ def page_entry(force_single_mode: bool = False, cloze_mode: bool = False):
                     c_clear = None
                     c_hint = _strip_cols[4]
             with c_head:
-                st.header("📝 AI 录入")
+                st.header("📝 图片识别")
             with c_hint:
                 st.markdown(
                     f'<div class="mc-entry-strip-hint" title="{_strip_hint}">{_strip_hint}</div>',
@@ -5484,7 +5484,7 @@ def page_entry(force_single_mode: bool = False, cloze_mode: bool = False):
         pdf_ocr_batch_size = 2
 
         def _upload_file_id(file_obj):
-            return f"{file_obj.name}_{file_obj.size}"
+            return getattr(file_obj, "file_id", None) or f"{file_obj.name}_{file_obj.size}"
 
         def _format_upload_size(size_bytes):
             if size_bytes >= 1024 * 1024:
@@ -5513,13 +5513,19 @@ def page_entry(force_single_mode: bool = False, cloze_mode: bool = False):
         with c_up:
             uploaded_files = st.file_uploader(
                 "📁 上传图片或 PDF",
-                type=["pdf", "png", "jpg", "jpeg"],
+                type=["pdf", "png", "jpg", "jpeg", "webp"],
                 key="entry_file_uploader",
                 accept_multiple_files=True,
                 label_visibility="collapsed",
                 help="拖拽文件到此处或点击选择。图片最多 5 张，PDF 最多 3 个。",
             )
 
+        if not force_single_mode:
+            paste_script = os.path.join(os.path.dirname(__file__), "static", "image_recognition_paste.js")
+            with open(paste_script, encoding="utf-8") as script:
+                components.html(f"<script>{script.read()}</script>", height=0)
+
+        upload_feedback = st.session_state.pop("entry_upload_feedback", [])
         if uploaded_files:
             current_file_ids = [_upload_file_id(f) for f in uploaded_files]
             prev_file_ids = st.session_state["entry_upload_prev_files"]
@@ -5558,12 +5564,11 @@ def page_entry(force_single_mode: bool = False, cloze_mode: bool = False):
                         ignored_image_count += 1
                         continue
                     try:
-                        img = Image.open(uploaded_file)
-                        img.load()
-                        st.session_state["ocr_queue"].append(img.copy())
+                        with Image.open(uploaded_file) as image:
+                            st.session_state["ocr_queue"].append(image.copy())
                         added_image_count += 1
                     except Exception as e:
-                        st.error(f"图片 {uploaded_file.name} 读取失败: {e}")
+                        upload_feedback.append(("error", f"图片 {uploaded_file.name} 读取失败: {e}"))
 
             st.session_state["entry_upload_prev_files"] = current_file_ids
             if added_pdf_count or added_image_count:
@@ -5572,13 +5577,23 @@ def page_entry(force_single_mode: bool = False, cloze_mode: bool = False):
                     added_parts.append(f"{added_image_count} 张图片")
                 if added_pdf_count:
                     added_parts.append(f"{added_pdf_count} 个 PDF")
-                st.toast(f"已添加 {'、'.join(added_parts)}", icon="✅")
+                upload_feedback.append(("toast", f"已添加 {'、'.join(added_parts)}"))
             if ignored_image_count:
-                st.warning(f"图片最多上传 {max_image_files} 张，已忽略 {ignored_image_count} 张图片。")
+                upload_feedback.append(("warning", f"最多添加 {max_image_files} 张图片，已忽略 {ignored_image_count} 张。"))
             if ignored_pdf_count:
-                st.warning(f"PDF 最多上传 {max_pdf_files} 个，已忽略 {ignored_pdf_count} 个文件。")
+                upload_feedback.append(("warning", f"PDF 最多上传 {max_pdf_files} 个，已忽略 {ignored_pdf_count} 个文件。"))
+            if added_image_count or added_pdf_count:
+                st.session_state["entry_upload_feedback"] = upload_feedback
+                st.rerun()
         else:
             st.session_state["entry_upload_prev_files"] = []
+        for kind, message in upload_feedback:
+            if kind == "toast":
+                st.toast(message, icon="✅")
+            elif kind == "warning":
+                st.warning(message)
+            else:
+                st.error(message)
 
         if st.session_state["pdf_queue"]:
           with st.expander(f"📄 已添加的 PDF（{len(st.session_state['pdf_queue'])} 个，点开设置页码）", expanded=False):
@@ -5672,7 +5687,7 @@ def page_entry(force_single_mode: bool = False, cloze_mode: bool = False):
                     st.warning("剪贴板中没有图片或支持的图片文件")
                     return
                 if len(st.session_state["ocr_queue"]) >= max_image_files:
-                    st.warning(f"图片最多上传 {max_image_files} 张。")
+                    st.warning(f"最多添加 {max_image_files} 张图片。")
                     return
                 st.session_state["ocr_queue"].append(candidates[0]["image"])
                 st.toast("已从剪贴板添加 1 张图片", icon="✅")
@@ -5695,7 +5710,6 @@ def page_entry(force_single_mode: bool = False, cloze_mode: bool = False):
                     if st.button("🗑️ 清空", key="clear_all_sources", use_container_width=True):
                         st.session_state["ocr_queue"] = []
                         st.session_state["pdf_queue"] = []
-                        st.session_state["entry_upload_prev_files"] = []
                         st.rerun()
 
         if _queue_total:
@@ -5815,9 +5829,8 @@ def page_entry(force_single_mode: bool = False, cloze_mode: bool = False):
             
 
 
-        # 增加手动中断提示（常规 AI 录入页已把提示并入顶部工具行）
-        if force_single_mode:
-            st.caption("提示: 如果 AI 响应时间过长，请直接刷新页面以中断。")
+        if _run_ocr_clicked or force_single_mode:
+            st.caption("如果识别时间过长，可以刷新页面中断。")
     # === 中间：录入/批量区 ===
     with col_mid:
         if mode == "单题录入":
@@ -12885,9 +12898,9 @@ def page_system_intro():
 
 ### 🧭 8) 日常使用工作流（给协作者的最短路径）
 
-**📝 AI 录入 / 📄 TeX 录入**
+**📝 图片识别 / 📄 TeX 录入**
 
-- 支持单题/批量/同卷录入
+- 图片识别支持上传或粘贴图片，并支持单题、批量和同卷录入
 - 单题录入支持实时预览、查找替换、AI 自动打标签
 - 可选 “本次录入同时生成解答”，并可选 “快速模式”
 
@@ -13833,7 +13846,7 @@ def _format_nav_label(option: str) -> str:
     if not match:
         return option
     icon, name = match.group(1), match.group(2).strip()
-    if name in ("智能录题", "TeX录入", "题目查找", "设置"):
+    if name in ("图片识别", "TeX录入", "题目查找", "设置"):
         # 箭头与页面状态无关，保证 format_func 是纯函数（AppTest 与 Streamlit 都要求）
         return f"{icon}  {name}  ⌄"
     return f"{icon}  {name}"
@@ -14161,7 +14174,7 @@ def main():
     _mc_prof("inject_custom_css", _mc_t)
 
     stats_nav_option = "📊  数据统计"
-    entry_nav_option = "📝  智能录题"
+    entry_nav_option = "📝  图片识别"
     tex_entry_nav_option = "📄  TeX录入"
     pdf_entry_nav_option = "📑  PDF录入"
     browse_nav_option = "🔍  全局浏览"
@@ -14205,6 +14218,7 @@ def main():
         "📊\n统计": stats_nav_option,
         "录入新题": entry_nav_option,
         "AI录入": entry_nav_option,
+        "智能录题": entry_nav_option,
         "📝  AI智能录题": entry_nav_option,
         "📝\nAI录入": entry_nav_option,
         "📝\n录题": entry_nav_option,

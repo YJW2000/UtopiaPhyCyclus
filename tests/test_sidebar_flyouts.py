@@ -9,7 +9,7 @@ class SidebarFlyoutTests(unittest.TestCase):
         at=AppTest.from_file('utopia_phycyclus_app.py',default_timeout=40).run()
         nav_labels = at.radio(key='nav_group_a').options
         for child,route,state,value in (
-            (1,'📝  智能录题','entry_mode_sidebar','批量试题录入'),
+            (1,'📝  图片识别','entry_mode_sidebar','批量试题录入'),
             (2,'📄  TeX录入','tex_workspace_mode','同卷试题录入'),
             (1,'🔎  题目查找','search_subpage','模糊查找'),
             (0,'🔎  题目查找','search_subpage','精确查找'),

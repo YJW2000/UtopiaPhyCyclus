@@ -78,7 +78,7 @@ def _sha(source):
 
 
 _SUMMARY = ('id', 'title', 'createdAt', 'updatedAt', 'sourcePath', 'pdfPath', 'previewPath',
-            'chapter', 'originalPage', 'pdfPageCount', 'revision')
+            'chapter', 'originalPage', 'pdfPageCount', 'inputKind', 'revision')
 
 
 class CompileError(RuntimeError):
@@ -129,7 +129,18 @@ class DesktopWorkspace:
         path = self._directory(ident) / 'document.json'
         if not path.is_file():
             raise ValueError('找不到这份草稿。')
-        return json.loads(path.read_text(encoding='utf-8'))
+        document = json.loads(path.read_text(encoding='utf-8'))
+        if (not document.get('inputKind') and document.get('pdfPageCount') == 1
+                and self._is_image_upload(document.get('_origin'))):
+            document['inputKind'] = 'image'
+        return document
+
+    def _is_image_upload(self, origin):
+        if not origin:
+            return False
+        path = Path(origin)
+        return (path.suffix.lower() == '.pdf' and path.parent.parent == self.state / 'uploads'
+                and re.fullmatch(r'[0-9a-f]{32}', path.parent.name) is not None)
 
     def _summaries(self):
         summaries = []
@@ -144,6 +155,10 @@ class DesktopWorkspace:
                 record = json.loads(summary.read_text(encoding='utf-8'))
             except (OSError, ValueError):
                 record = self._summary(self._read(directory.name))
+                self._write_summary(summary, record)
+            if (not record.get('inputKind') and record.get('pdfPageCount') == 1
+                    and self._is_image_upload(record.get('_origin'))):
+                record['inputKind'] = 'image'
                 self._write_summary(summary, record)
             summaries.append(record)
         return sorted(summaries, key=lambda document: document['updatedAt'], reverse=True)
@@ -232,6 +247,9 @@ class DesktopWorkspace:
                 tex_path = origin
         if params.get('pdfPath'):
             pdf_path = _file(params['pdfPath'], ('.pdf',))
+        input_kind = params.get('inputKind')
+        if input_kind is not None and (input_kind != 'image' or not pdf_path or tex_path):
+            raise ValueError('图片草稿需要附带图片转换后的 PDF。')
         preview_path = None
         if params.get('previewPath'):
             preview_path = _file(params['previewPath'], ('.pdf',))
@@ -253,6 +271,8 @@ class DesktopWorkspace:
         if original_pdf is not None:
             with self.pdf_lock:
                 page_count = inspect_pdf(original_pdf)
+        if input_kind == 'image' and page_count != 1:
+            raise ValueError('图片草稿只能包含一页。')
         ident = uuid4().hex
         directory = self._directory(ident)
         directory.mkdir()
@@ -270,6 +290,8 @@ class DesktopWorkspace:
                 original = directory / 'original.pdf'
                 _atomic_bytes(original, original_pdf)
                 document.update(pdfPath=str(original), pdfPageCount=page_count, originalPage=original_page)
+                if input_kind == 'image' or (page_count == 1 and self._is_image_upload(origin_key)):
+                    document['inputKind'] = 'image'
             if chapter:
                 document['chapter'] = chapter
             if preview_path:
@@ -390,7 +412,8 @@ class DesktopWorkspace:
         source = import_pdf(original, resource_dir=self._directory(document['id']),
                             defaults=self._defaults(document), first_page=first, last_page=last, pages=pages,
                             pdf_lock=self.pdf_lock, on_progress=lambda page, total: job.progress(
-                                f'正在识别原卷第 {page} 页', page=page, total=total, pageCount=page_count))
+                                '正在识别图片' if document.get('inputKind') == 'image' else f'正在识别原卷第 {page} 页',
+                                page=page, total=total, pageCount=page_count))
         check_cancelled()
         original_page = min(pages) if pages else first
         if document['source'].strip() and source != document['source']:

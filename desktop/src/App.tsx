@@ -4,12 +4,13 @@ import { Browse, Dashboard, emptySummary, Paper } from './Bank'
 import type { Question, Summary } from './Bank'
 import ContextChat from './ContextChat'
 import SettingsConnections from './SettingsConnections'
+import type { ClipboardImage } from './bridge'
 import type { EditorDocument } from './editorContract'
 
 const Editor = lazy(() => import('./Editor'))
 const pages = {
   stats: ['📊', '数据统计'],
-  entry: ['📝', '智能录题'],
+  entry: ['📝', '图片识别'],
   tex: ['📄', 'TeX录入'],
   pdf: ['📑', 'PDF录入'],
   browse: ['🔍', '全局浏览'],
@@ -37,6 +38,30 @@ const errorText = (e: unknown) =>
   )
 const filename = (path: string) => path.split(/[\\/]/).pop() || path
 
+async function readImageFile(file: File): Promise<ClipboardImage> {
+  const jpeg = file.type === 'image/jpeg' || (!file.type && /\.jpe?g$/i.test(file.name))
+  const png = file.type === 'image/png' || (!file.type && /\.png$/i.test(file.name))
+  if (!jpeg && !png) throw new Error('请选择 PNG 或 JPG 图片。')
+  const type = jpeg ? 'jpeg' : 'png'
+  const data = await new Promise<string>((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => {
+      const body = String(reader.result).split(',')[1]
+      if (body) resolve(body)
+      else reject(new Error('图片文件为空。'))
+    }
+    reader.onerror = () => reject(new Error('无法读取图片文件。'))
+    reader.readAsDataURL(file)
+  })
+  return { name: file.name || `剪贴板图片.${type}`, type, data }
+}
+
+function pasteGoesToControl(target: EventTarget | null) {
+  if (!(target instanceof Element)) return false
+  return Boolean(target.closest('.context-chat, input, textarea, select, [role="textbox"]')) ||
+    (target instanceof HTMLElement && target.isContentEditable)
+}
+
 export default function App() {
   const [page, setPage] = useState<Page>('stats'),
     [prefs, setPrefs] = useState<Prefs | null>(null),
@@ -57,6 +82,7 @@ export default function App() {
     [legacyPending, setLegacyPending] = useState(false),
     [check, setCheck] = useState<any>()
   const routeGeneration = useRef(0),
+    imageGeneration = useRef<number | null>(null),
     fileInput = useRef<HTMLInputElement>(null)
   const [paste, setPaste] = useState(''),
     [recentLoading, setRecentLoading] = useState(false)
@@ -111,7 +137,7 @@ export default function App() {
     setError('')
     if (next === 'stats') void summaryLoad()
   }
-  async function work(label: string, op: () => Promise<void>) {
+  const work = useCallback(async (label: string, op: () => Promise<void>) => {
     const token = routeGeneration.current
     setBusy(label)
     setError('')
@@ -122,22 +148,23 @@ export default function App() {
     } finally {
       if (token === routeGeneration.current) setBusy('')
     }
-  }
-  function openWorkspace(params: object, route: Page, id?: string) {
+  }, [])
+  const loadWorkspace = useCallback(async (params: object, route: Page, id?: string) => {
     performance.clearMarks('document-open')
     performance.mark('document-open')
     const token = routeGeneration.current
-    void work('正在打开题目…', async () => {
-      const result = await call<EditorDocument>(
-        id ? 'workspace.open' : 'workspace.create',
-        id ? { id } : params
-      )
-      if (token !== routeGeneration.current) return
-      setDoc(result)
-      setEditing(true)
-      setPage(route)
-      setLegacy('')
-    })
+    const result = await call<EditorDocument>(
+      id ? 'workspace.open' : 'workspace.create',
+      id ? { id } : params
+    )
+    if (token !== routeGeneration.current) return
+    setDoc(result)
+    setEditing(true)
+    setPage(route)
+    setLegacy('')
+  }, [])
+  function openWorkspace(params: object, route: Page, id?: string) {
+    void work('正在打开题目…', () => loadWorkspace(params, route, id))
   }
   async function choose(kind: 'tex' | 'pdf') {
     try {
@@ -185,20 +212,50 @@ export default function App() {
         if (routeGeneration.current === token) setLegacyPending(false)
       })
   }
-  async function image(file: File) {
-    const data = await new Promise<string>((resolve, reject) => {
-      const reader = new FileReader()
-      reader.onload = () => resolve(String(reader.result).split(',')[1])
-      reader.onerror = () => reject(reader.error)
-      reader.readAsDataURL(file)
+  const importImage = useCallback((read: () => Promise<ClipboardImage | null>) => {
+    const token = routeGeneration.current
+    if (busy || imageGeneration.current === token) return
+    imageGeneration.current = token
+    void work('正在读取图片…', async () => {
+      try {
+        const image = await read()
+        if (token !== routeGeneration.current) return
+        if (!image) throw new Error('剪贴板中没有图片。请先复制图片或截图。')
+        const { path } = await call<{ path: string }>('library.imageInput', image)
+        if (token !== routeGeneration.current) return
+        await loadWorkspace({ pdfPath: path, title: image.name, inputKind: 'image' }, 'entry')
+      } finally {
+        if (imageGeneration.current === token) imageGeneration.current = null
+      }
     })
-    const res = await call('library.imageInput', {
-      name: file.name,
-      type: file.type === 'image/jpeg' ? 'jpeg' : 'png',
-      data,
-    })
-    openWorkspace({ pdfPath: res.path, title: file.name }, 'entry')
-  }
+  }, [busy, loadWorkspace, work])
+  useEffect(() => {
+    if (page !== 'entry' || editing || legacy || legacyPending) return
+    function shortcut(event: KeyboardEvent) {
+      if (event.defaultPrevented || event.isComposing || event.altKey || event.shiftKey ||
+          !(event.ctrlKey || event.metaKey) || event.key.toLowerCase() !== 'v' ||
+          pasteGoesToControl(event.target)) return
+      event.preventDefault()
+      if (!event.repeat) importImage(window.utopia.readClipboardImage)
+    }
+    function pasteImage(event: ClipboardEvent) {
+      if (event.defaultPrevented || pasteGoesToControl(event.target)) return
+      const clip = event.clipboardData
+      if (!clip) return
+      const file = Array.from(clip.files).find(file => file.type.startsWith('image/')) ??
+        Array.from(clip.items).find(item => item.kind === 'file' && item.type.startsWith('image/'))?.getAsFile()
+      if (!file) return
+      event.preventDefault()
+      importImage(() => readImageFile(file))
+    }
+    window.addEventListener('keydown', shortcut)
+    window.addEventListener('paste', pasteImage)
+    return () => {
+      window.removeEventListener('keydown', shortcut)
+      window.removeEventListener('paste', pasteImage)
+    }
+  }, [editing, importImage, legacy, legacyPending, page])
+  const imageBusy = page === 'entry' && Boolean(busy)
   const actionProps = { open, add, basket }
   return (
     <div className={'app-shell' + (collapsed ? ' compact' : '')}>
@@ -246,6 +303,7 @@ export default function App() {
             <div>
               {doc && (
                 <button
+                  disabled={imageBusy}
                   onClick={() => {
                     setEditing(true)
                     setLegacy('')
@@ -348,7 +406,7 @@ export default function App() {
                     <>
                       <div className="page-head">
                         <h1>{pages[page].join(' ')}</h1>
-                        <button onClick={demo}>打开演示题 ↗</button>
+                        <button disabled={imageBusy} onClick={demo}>打开演示题 ↗</button>
                       </div>
                       <section className="mc-card intake">
                         <span aria-hidden="true">{pages[page][0]}</span>
@@ -364,33 +422,37 @@ export default function App() {
                             ? '先阅读原卷，再选择页码重建可编辑题目。'
                             : page === 'tex'
                               ? '载入文稿后，可在排版页上框选并修改。'
-                              : '从截图或扫描图片建立文稿，在原图与重建结果之间校对。'}
+                              : '按 Ctrl+V 粘贴截图，或选择 PNG、JPG 图片。打开后点击「开始识别图片」生成可编辑文稿。'}
                         </p>
-                        <button
-                          className="primary"
-                          onClick={() =>
-                            page === 'entry'
-                              ? fileInput.current?.click()
-                              : void choose(page === 'pdf' ? 'pdf' : 'tex')
-                          }
-                        >
-                          {page === 'entry'
-                            ? '选择图片'
-                            : page === 'pdf'
-                              ? '选择 PDF 文件'
-                              : '选择 TeX 文件'}
-                        </button>
-                        <input
-                          ref={fileInput}
-                          hidden
-                          type="file"
-                          accept="image/jpeg,image/png"
-                          onChange={(e) => {
-                            const f = e.target.files?.[0]
-                            if (f) void work('正在读取图片…', () => image(f))
-                            e.target.value = ''
-                          }}
-                        />
+                        {page === 'entry' ? (
+                          <div className="intake-actions">
+                            <button
+                              className="primary"
+                              disabled={imageBusy || legacyPending}
+                              onClick={() => importImage(window.utopia.readClipboardImage)}
+                            >
+                              粘贴图片
+                            </button>
+                            <button disabled={imageBusy || legacyPending} onClick={() => fileInput.current?.click()}>
+                              选择图片
+                            </button>
+                            <input
+                              ref={fileInput}
+                              hidden
+                              type="file"
+                              accept="image/jpeg,image/png"
+                              onChange={(event) => {
+                                const file = event.target.files?.[0]
+                                event.target.value = ''
+                                if (file) importImage(() => readImageFile(file))
+                              }}
+                            />
+                          </div>
+                        ) : (
+                          <button className="primary" onClick={() => void choose(page === 'pdf' ? 'pdf' : 'tex')}>
+                            {page === 'pdf' ? '选择 PDF 文件' : '选择 TeX 文件'}
+                          </button>
+                        )}
                       </section>
                       {page === 'tex' && (
                         <details className="mc-card">
@@ -419,12 +481,13 @@ export default function App() {
                           <button
                             key={r.id}
                             className="draft-link"
+                            disabled={imageBusy}
                             onClick={() =>
-                              openWorkspace({}, r.pdfPath ? 'pdf' : 'tex', r.id)
+                              openWorkspace({}, r.inputKind === 'image' ? 'entry' : r.pdfPath ? 'pdf' : 'tex', r.id)
                             }
                           >
                             <span>
-                              {r.pdfPath ? '📑' : '📄'}　{r.title}
+                              {r.inputKind === 'image' ? pages.entry[0] : r.pdfPath ? '📑' : '📄'}　{r.title}
                             </span>
                             <small>继续编辑 →</small>
                           </button>
@@ -556,7 +619,7 @@ export default function App() {
                   {page !== 'settings' && (
                     <button
                       className="advanced-link"
-                      disabled={legacyPending}
+                      disabled={legacyPending || imageBusy}
                       onClick={() => openLegacy(page)}
                     >
                       {legacyPending

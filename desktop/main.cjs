@@ -1,4 +1,4 @@
-const { app, BrowserWindow, dialog, ipcMain, Menu, net, protocol, session, shell } = require('electron');
+const { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, net, protocol, session, shell } = require('electron');
 const { execFileSync, spawn } = require('node:child_process');
 const { createHash, randomUUID } = require('node:crypto');
 const fs = require('node:fs');
@@ -7,7 +7,7 @@ const { createServer } = require('node:net');
 const path = require('node:path');
 const { createInterface } = require('node:readline');
 const { Readable } = require('node:stream');
-const { pathToFileURL } = require('node:url');
+const { fileURLToPath, pathToFileURL } = require('node:url');
 const { createEnvironment } = require('./environment.cjs');
 
 const PRODUCT_NAME = '乌托邦高中物理题库助手';
@@ -436,6 +436,34 @@ async function serveRenderer(request) {
   return new Response(response.body, { status: response.status, headers });
 }
 
+async function copiedImageFile(uriList) {
+  for (const entry of uriList.split(/\r?\n/)) {
+    const url = URL.parse(entry);
+    if (url?.protocol !== 'file:' || url.host) continue;
+    let handle;
+    try {
+      const file = fileURLToPath(url);
+      if (file.startsWith('\\\\')) continue;
+      const extension = path.extname(file).toLowerCase();
+      if (!['.png', '.jpg', '.jpeg'].includes(extension)) continue;
+      handle = await fsp.open(file, 'r');
+      if (!(await handle.stat()).isFile()) continue;
+      const signature = Buffer.alloc(8);
+      await handle.read(signature, 0, signature.length, 0);
+      const type = extension === '.png' ? 'png' : 'jpeg';
+      const prefix = type === 'png' ? '89504e470d0a1a0a' : 'ffd8ff';
+      if (!signature.toString('hex').startsWith(prefix)) continue;
+      const bytes = await handle.readFile();
+      return { name: path.basename(file), type, data: bytes.toString('base64') };
+    } catch {
+      // Ignore missing files and move on to the next copied image.
+    } finally {
+      await handle?.close();
+    }
+  }
+  return null;
+}
+
 function registerIpc() {
   function handle(channel, callback) {
     ipcMain.handle(`utopia:${channel}`, (event, ...args) => {
@@ -454,6 +482,30 @@ function registerIpc() {
   });
   handle('legacy', legacyUrl);
   handle('asset', assetUrl);
+  handle('read-clipboard-image', async () => {
+    try {
+      const items = await clipboard.read();
+      for (const item of items) {
+        for (const mime of ['image/png', 'image/jpeg']) {
+          if (!item.types.includes(mime)) continue;
+          const blob = await item.getType(mime);
+          if (!blob.size) continue;
+          const type = mime === 'image/png' ? 'png' : 'jpeg';
+          const data = Buffer.from(await blob.arrayBuffer()).toString('base64');
+          return { name: `剪贴板图片.${type}`, type, data };
+        }
+      }
+      // Electron maps Explorer's copied files (CF_HDROP) to a local file URI list.
+      for (const item of items) {
+        if (!item.types.includes('text/uri-list')) continue;
+        const image = await copiedImageFile(await (await item.getType('text/uri-list')).text());
+        if (image) return image;
+      }
+      return null;
+    } catch {
+      throw new Error('无法读取剪贴板图片，请重新复制图片后再粘贴。');
+    }
+  });
   handle('detect-environment', environment.detect);
   handle('install-environment-tool', environment.install);
   handle('open-environment-help', id => shell.openExternal(environment.helpUrl(id)));

@@ -23,7 +23,7 @@ from streamlit.testing.v1 import AppTest
 
 EXPECTED_OPTIONS = [
     "📊  数据统计",
-    "📝  智能录题",
+    "📝  图片识别",
     "📄  TeX录入",
     "🔍  全局浏览",
     "🖨️  组卷排版",

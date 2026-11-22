@@ -1,3 +1,5 @@
+import base64
+from io import BytesIO
 import json
 from pathlib import Path
 import shutil
@@ -7,8 +9,9 @@ import time
 
 import pymupdf
 import pytest
+from PIL import Image
 
-from services import desktop_revision, desktop_workspace, pdf_import_service
+from services import desktop_library, desktop_revision, desktop_workspace, pdf_import_service
 from services.local_process import run
 from utils.image_assets import graphics_references
 
@@ -91,6 +94,7 @@ def test_open_original_reconstruct_and_keep_real_crop(workspace, tmp_path, monke
     monkeypatch.setattr(pdf_import_service, 'run_local_codex_json', agent)
     created = workspace.create({'path': str(original)})
     assert created['pdfPageCount'] == 2
+    assert 'inputKind' not in created
     assert workspace.create({'path': str(original)})['id'] == created['id']
     original.unlink()
     queued = workspace.reconstruct({'id': created['id'], 'pages': [2]})
@@ -101,6 +105,50 @@ def test_open_original_reconstruct_and_keep_real_crop(workspace, tmp_path, monke
     ref = graphics_references(imported['source'])[0]['path']
     crop = Path(imported['sourcePath']).parent / ref
     assert crop.read_bytes().startswith(b'\x89PNG\r\n\x1a\n')
+
+
+def test_image_draft_persists_and_recognizes_editable_source(workspace, monkeypatch):
+    calls = []
+
+    def agent(prompt, schema, images):
+        calls.append(images)
+        assert len(images) == 1 and images[0].startswith(b'\x89PNG\r\n\x1a\n')
+        return dict(status='ok', fragments=[dict(question_id='q1', number='1', kind='stem', latex='图片题 [[FIG:f1]]')],
+                    figures=[dict(id='f1', rect=[0.25, 0.25, 0.75, 0.75])])
+
+    monkeypatch.setattr(pdf_import_service, 'run_local_codex_json', agent)
+    buffer = BytesIO()
+    Image.new('RGB', (320, 240), 'white').save(buffer, format='PNG')
+    handlers = desktop_library.create_library_handlers(workspace.library, workspace.state)
+    image = handlers['library.imageInput']({'data': base64.b64encode(buffer.getvalue()).decode(),
+                                            'type': 'png', 'name': '截图.png'})
+    created = workspace.create({'pdfPath': image['path'], 'inputKind': 'image', 'title': '截图'})
+    ident = created['id']
+    directory = Path(created['sourcePath']).parent
+    metadata = directory / 'document.json'
+    summary = directory / 'summary.json'
+    assert json.loads(metadata.read_text(encoding='utf-8'))['inputKind'] == 'image'
+    assert created['source'] == '' and calls == []
+
+    # Drafts created by the old image entry only stored the upload path.
+    for path in (metadata, summary):
+        old = json.loads(path.read_text(encoding='utf-8'))
+        old.pop('inputKind')
+        path.write_text(json.dumps(old), encoding='utf-8')
+    Path(image['path']).unlink()
+    assert workspace.resume({})['inputKind'] == 'image'
+    assert workspace.list({})[0]['inputKind'] == 'image'
+
+    queued = workspace.reconstruct({'id': ident, 'firstPage': 1, 'lastPage': 1})
+    task = wait_task(workspace.jobs.get, queued)
+    assert task['status'] == 'succeeded', task.get('error')
+    recognized = task['result']
+    assert recognized['inputKind'] == 'image' and len(calls) == 1
+    ref = graphics_references(recognized['source'])[0]['path']
+    with Image.open(directory / ref) as crop:
+        assert crop.size == (160, 120)
+    edited = workspace.save({'id': ident, 'source': recognized['source'].replace('图片题', '已修改')})
+    assert '已修改' in edited['source']
 
 
 def test_pdf_regions_reject_edits_outside_visible_text(workspace, monkeypatch):

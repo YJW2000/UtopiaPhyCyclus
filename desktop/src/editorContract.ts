@@ -48,6 +48,7 @@ export interface EditorDocument {
   previewPath?: string | null
   previewCurrent?: boolean
   chapter?: string
+  inputKind?: 'image'
   originalPage?: number
   pdfPageCount?: number
   sourcePath?: string | null

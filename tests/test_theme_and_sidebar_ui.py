@@ -93,7 +93,7 @@ class TestThemeAndSidebarUI(unittest.TestCase):
         # 验证导航名称已压缩到 4 字左右
         for short_label in (
             "📊  数据统计",
-            "📝  智能录题",
+            "📝  图片识别",
             "📄  TeX录入",
             "🔍  全局浏览",
             "🖨️  组卷排版",

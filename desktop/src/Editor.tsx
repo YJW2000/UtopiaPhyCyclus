@@ -124,7 +124,11 @@ function Workbench({ document, onChange, onClose }: Props) {
   const chatRun = useRef<ChatRun>(null)
   const compareRun = useRef<AbortController>(null)
   const compileRun = useRef(false)
+  const recognitionRun = useRef(false)
   const navigationStamp = useRef(0)
+  const imageInput = record.inputKind === 'image'
+  const originalLabel = imageInput ? '原图' : '原卷'
+  const recognitionLabel = imageInput ? '开始识别图片' : '识别原卷'
   const changed = useMemo(() => JSON.stringify(draft) !== JSON.stringify(documentDraft(record)), [draft, record])
   const sourceLineCount = useMemo(() => draft.source.split('\n').length, [draft.source])
   const sourceLines = useMemo(() => Array.from({ length: sourceLineCount }, (_, index) => <div key={index}>{index + 1}</div>), [sourceLineCount])
@@ -477,8 +481,8 @@ function Workbench({ document, onChange, onClose }: Props) {
   }
 
   function renderView(view: Exclude<View, 'compare'>) {
-    if (view === 'preview') return renderPdf('preview', preview.path, 'PDF 预览', draft.source.trim() ? '点击「编译 PDF」生成预览。' : '录入 LaTeX 或识别原卷后即可编译 PDF。', compiling)
-    if (view === 'original') return renderPdf('original', record.pdfPath, '原卷', '这道题没有附带原卷 PDF。')
+    if (view === 'preview') return renderPdf('preview', preview.path, 'PDF 预览', draft.source.trim() ? '点击「编译 PDF」生成预览。' : `录入 LaTeX 或识别${originalLabel}后即可编译 PDF。`, compiling)
+    if (view === 'original') return renderPdf('original', record.pdfPath, originalLabel, '这道题没有附带原卷 PDF。')
     return <section className="wb-source" aria-label="LaTeX 源码">
       <div className="wb-pdf-tools"><span className="wb-pdf-label">LaTeX 源码</span><div className="wb-pdf-actions">
         {!!draft.selections.length && <select aria-label="已标记源码选段" value={draft.activeSelectionId ?? ''} onChange={event => selectSource(event.target.value || null)}>
@@ -530,49 +534,71 @@ function Workbench({ document, onChange, onClose }: Props) {
     if (kind === 'library') void editorCall<string[]>('workspace.chapters').then(setChapters).catch(error => setSheetError(errorMessage(error)))
   }
 
+  async function recognize(firstPage: number, lastPage: number) {
+    if (recognitionRun.current) return
+    recognitionRun.current = true
+    setReconstructing(true)
+    setSheet(undefined)
+    setRecognitionProgress('')
+    setNotice('')
+    try {
+      await persist()
+      const next = await runTask<EditorDocument>('workspace.reconstruct', { firstPage, lastPage }, undefined, setRecognitionProgress)
+      const sourceChanged = next.source !== latestRecord.current.source
+      const userEdited = latestDraft.current.source !== latestRecord.current.source
+      accept(next, sourceChanged && !userEdited)
+      setNotice('识别完成')
+      if (sourceChanged && !userEdited) {
+        setLayout(previous => ({ ...previous, view: imageInput ? 'source' : 'original', pair: 'preview' }))
+        setNavigation({ original: { page: next.originalPage ?? firstPage, stamp: ++navigationStamp.current }, preview: { page: 1, stamp: ++navigationStamp.current } })
+        void compileCurrent(next.source)
+      } else if (next.proposals?.length) {
+        const newest = next.proposals.at(-1)
+        if (newest) compareProposal(newest)
+      }
+    } catch (error) {
+      setNotice(errorMessage(error))
+    } finally {
+      recognitionRun.current = false
+      setReconstructing(false)
+    }
+  }
+
+  function startRecognition() {
+    if (imageInput) void recognize(1, 1)
+    else openSheet('recognize')
+  }
+
   async function submitSheet(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     if (sheetBusy) return
     const data = new FormData(event.currentTarget)
+    if (sheet === 'recognize') {
+      const firstPage = Number(data.get('firstPage'))
+      const lastPage = Number(data.get('lastPage'))
+      if (!Number.isInteger(firstPage) || !Number.isInteger(lastPage) || lastPage < firstPage) {
+        setSheetError('请填写有效的页码范围。')
+        return
+      }
+      await recognize(firstPage, lastPage)
+      return
+    }
     setSheetBusy(true)
     setSheetError('')
     try {
       await persist()
-      if (sheet === 'recognize') {
-        const firstPage = Number(data.get('firstPage'))
-        const lastPage = Number(data.get('lastPage'))
-        if (!Number.isInteger(firstPage) || lastPage < firstPage) throw new Error('请填写有效的页码范围。')
-        setReconstructing(true)
+      const tags = String(data.get('tags') ?? '').split(/[,，、]/).map(value => value.trim()).filter(Boolean)
+      const result = await runTask<BankExport>('workspace.export', { source: latestDraft.current.source, chapter: data.get('chapter'), title: data.get('title'), kind: data.get('kind'), tags })
+      const failures = result.files.filter(item => item.status !== 'success')
+      if (!failures.length) {
         setSheet(undefined)
-        setRecognitionProgress('')
-        const next = await runTask<EditorDocument>('workspace.reconstruct', { firstPage, lastPage }, undefined, setRecognitionProgress)
-        const sourceChanged = next.source !== latestRecord.current.source
-        const userEdited = latestDraft.current.source !== latestRecord.current.source
-        accept(next, sourceChanged && !userEdited)
-        setNotice('识别完成')
-        if (sourceChanged && !userEdited) {
-          setLayout(previous => ({ ...previous, view: 'original', pair: 'preview' }))
-          setNavigation({ original: { page: next.originalPage ?? firstPage, stamp: ++navigationStamp.current }, preview: { page: 1, stamp: ++navigationStamp.current } })
-          void compileCurrent(next.source)
-        } else if (next.proposals?.length) {
-          const newest = next.proposals.at(-1)
-          if (newest) compareProposal(newest)
-        }
+        setNotice(`已另存 ${result.files.length} 道题到题库`)
       } else {
-        const tags = String(data.get('tags') ?? '').split(/[,，、]/).map(value => value.trim()).filter(Boolean)
-        const result = await runTask<BankExport>('workspace.export', { source: latestDraft.current.source, chapter: data.get('chapter'), title: data.get('title'), kind: data.get('kind'), tags })
-        const failures = result.files.filter(item => item.status !== 'success')
-        if (!failures.length) {
-          setSheet(undefined)
-          setNotice(`已另存 ${result.files.length} 道题到题库`)
-        } else {
-          setSheetError([`已另存 ${result.files.length - failures.length} 道题。`, ...failures.map(item => `${item.file}　${item.message}`)].join('\n'))
-        }
+        setSheetError([`已另存 ${result.files.length - failures.length} 道题。`, ...failures.map(item => `${item.file}　${item.message}`)].join('\n'))
       }
     } catch (error) {
-      if (sheet === 'recognize') setNotice(errorMessage(error))
       setSheetError(errorMessage(error))
-    } finally { setSheetBusy(false); setReconstructing(false) }
+    } finally { setSheetBusy(false) }
   }
 
   async function exportTex() {
@@ -610,14 +636,14 @@ function Workbench({ document, onChange, onClose }: Props) {
         <button type="button" className="wb-icon wb-back" onClick={() => void close()} aria-label="返回" title="返回"><WorkbenchIcon name="back" /></button>
         <div className="wb-title-block">
           <input aria-label="题目标题" value={draft.title} onChange={event => updateDraft({ ...latestDraft.current, title: event.target.value })} />
-          <span role="status">{saveState || (changed ? '保存中…' : document.sourcePath?.endsWith('.tex') || draft.source ? '工作稿已保存' : record.pdfPath ? '原卷已载入' : '工作稿')}</span>
+          <span role="status">{saveState || (changed ? '保存中…' : draft.source ? '工作稿已保存' : record.pdfPath ? `${originalLabel}已载入` : '工作稿')}</span>
         </div>
       </div>
       <nav className="wb-mode-switch" aria-label="编辑工作区模式">
         {modes.map(([mode, title, icon]) => <button type="button" key={mode} aria-pressed={layout.mode === mode} onClick={() => setLayout(previous => ({ ...previous, mode }))}><WorkbenchIcon name={icon} /> <span>{title}</span></button>)}
       </nav>
       <div className="wb-header-actions">
-        {record.pdfPath && !draft.source.trim() && <button type="button" className="wb-btn" disabled={reconstructing} onClick={() => openSheet('recognize')}>{reconstructing ? '正在识别…' : '识别原卷'}</button>}
+        {record.pdfPath && !draft.source.trim() && <button type="button" className="wb-btn" disabled={reconstructing} onClick={startRecognition}>{reconstructing ? '正在识别…' : recognitionLabel}</button>}
         <button type="button" className="wb-btn" title={preview.path && preview.source !== draft.source ? '源码已有变化，重新编译 PDF' : '编译 PDF'} disabled={compiling || !draft.source.trim()} onClick={() => void compileCurrent()}>
           <WorkbenchIcon name="refresh" /> <span>{compiling ? '正在编译…' : '编译 PDF'}</span>
         </button>
@@ -625,7 +651,7 @@ function Workbench({ document, onChange, onClose }: Props) {
         <div className="wb-popover-anchor">
           <button type="button" className="wb-icon" aria-label="更多操作" aria-expanded={commandsOpen} onClick={() => setCommandsOpen(value => !value)}>⋯</button>
           {commandsOpen && <div className="wb-popover" onBlur={event => { if (!event.currentTarget.parentElement?.contains(event.relatedTarget)) setCommandsOpen(false) }}>
-            {record.pdfPath && <button type="button" disabled={reconstructing} onClick={() => { setCommandsOpen(false); openSheet('recognize') }}>识别原卷</button>}
+            {record.pdfPath && <button type="button" disabled={reconstructing} onClick={() => { setCommandsOpen(false); startRecognition() }}>{recognitionLabel}</button>}
             <button type="button" disabled={exporting || !draft.source.trim()} onClick={() => void exportPdf()}>{exporting ? '正在导出…' : '导出 PDF'}</button>
             <button type="button" disabled={!draft.source.trim()} onClick={() => void exportTex()}>导出 LaTeX</button>
             <button type="button" disabled={!record.canUndo} onClick={() => { setCommandsOpen(false); void updateProposal('undo') }}>撤销上次采用</button>
@@ -634,12 +660,12 @@ function Workbench({ document, onChange, onClose }: Props) {
       </div>
     </header>
     {notice && <div className="wb-notice" role="status"><span>{notice}</span>{compileLog && <button type="button" className="wb-btn" onClick={() => setShowLog(true)}>编译日志</button>}<button type="button" className="wb-icon" aria-label="关闭提示" onClick={() => setNotice('')}>×</button></div>}
-    {reconstructing && <div className="wb-notice" role="status">{recognitionProgress || '正在识别所选页面，可继续查看原卷。'}</div>}
+    {reconstructing && <div className="wb-notice" role="status">{recognitionProgress || (imageInput ? '正在识别图片…' : '正在识别所选页面，可继续查看原卷。')}</div>}
     <div className="wb-body">
       <main className="wb-document" hidden={layout.mode === 'chat'}>
         <div className="wb-document-tools">
           <nav className="wb-view-switch" aria-label="题目面板">
-            {views.map(([id, title]) => <button type="button" key={id} aria-pressed={layout.view === id || layout.pair === id} onClick={() => changeView(id)}>{title}</button>)}
+            {views.map(([id, title]) => <button type="button" key={id} aria-pressed={layout.view === id || layout.pair === id} onClick={() => changeView(id)}>{id === 'original' ? originalLabel : title}</button>)}
           </nav>
           <div className="wb-layout-tools">
             {layout.pair && [layout.view, layout.pair].every(view => view === 'preview' || view === 'original') && <label className="wb-sync"><input type="checkbox" checked={layout.sync} onChange={event => setLayout(previous => ({ ...previous, sync: event.target.checked }))} /> 联动翻页</label>}
@@ -647,7 +673,7 @@ function Workbench({ document, onChange, onClose }: Props) {
               <button type="button" className="wb-btn" aria-expanded={pairOpen} onClick={() => setPairOpen(value => !value)}><WorkbenchIcon name="split" /> 并排 <span aria-hidden="true">⌄</span></button>
               {pairOpen && <div className="wb-popover" onBlur={event => { if (!event.currentTarget.parentElement?.contains(event.relatedTarget)) setPairOpen(false) }}>
                 <button type="button" onClick={() => { setLayout(previous => ({ ...previous, view: 'source', pair: 'preview' })); setPairOpen(false) }}>LaTeX ＋ PDF 预览</button>
-                <button type="button" onClick={() => { setLayout(previous => ({ ...previous, view: 'original', pair: 'preview' })); setPairOpen(false) }}>原卷 ＋ 重建 PDF</button>
+                <button type="button" onClick={() => { setLayout(previous => ({ ...previous, view: 'original', pair: 'preview' })); setPairOpen(false) }}>{originalLabel} ＋ 重建 PDF</button>
                 <button type="button" onClick={() => changeView('compare')}>修改前 ＋ 修改后</button>
                 {layout.pair && <button type="button" onClick={() => changeView(layout.view)}>关闭并排</button>}
               </div>}
