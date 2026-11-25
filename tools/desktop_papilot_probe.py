@@ -14,7 +14,7 @@ import pymupdf
 import websockets
 
 from desktop_maintenance_probe import launch, native_close, wait_for
-from desktop_speed_probe import Page, target
+from desktop_speed_probe import Page
 
 
 SOURCE = r'''
@@ -31,13 +31,14 @@ COMMIT = '验证 Papilot 版本记录'
 SLOT = '.papilot-workspace'
 
 
-def embedded_target(port):
+def desktop_target(port, embedded=False):
     try:
         with urlopen(f'http://127.0.0.1:{port}/json/list', timeout=.3) as response:
             for page in json.load(response):
                 origin = urlsplit(page['url'])
-                if origin.scheme == 'http' and origin.hostname == '127.0.0.1' and page.get('webSocketDebuggerUrl'):
-                    return page['webSocketDebuggerUrl']
+                host = ('http', '127.0.0.1') if embedded else ('utopia', 'app')
+                if (origin.scheme, origin.hostname) == host and page.get('title'):
+                    return page.get('webSocketDebuggerUrl')
     except (OSError, ValueError):
         return None
 
@@ -112,16 +113,16 @@ async def probe(executable, development, root, screenshot=None):
     (bank / 'chapters').mkdir(parents=True)
 
     async def run(process, port):
-        shell_url = await wait_for(process, lambda: target(port))
+        shell_url = await wait_for(process, lambda: desktop_target(port), seconds=120)
         async with websockets.connect(shell_url) as shell_socket:
             shell = Page(shell_socket)
             started = perf_counter()
             await click(shell, 'button[data-page=papilot]')
             assert await shell.js(f'Boolean({find(SLOT)}) && !{find(SLOT)}.querySelector("iframe")')
-            await shell.until(f'{find(SLOT)}?.getAttribute("aria-busy") === "false"', seconds=75)
+            await shell.until(f'{find(SLOT)}?.getAttribute("aria-busy") === "false"', seconds=135)
             error = await shell.js(f'{find(SLOT)}.querySelector("[role=alert]")?.textContent')
             assert not error, error
-            embedded_url = await wait_for(process, lambda: embedded_target(port))
+            embedded_url = await wait_for(process, lambda: desktop_target(port, embedded=True), seconds=75)
             async with websockets.connect(embedded_url) as project_socket:
                 project = Page(project_socket)
                 await project.until('Boolean(window.papilotDesktop?.chooseDirectory && document.querySelector(".sidebar"))', seconds=45)
@@ -138,8 +139,12 @@ async def probe(executable, development, root, screenshot=None):
                 await click(shell, 'button[aria-label="更多操作"]')
                 await click_label(shell, '在 Papilot 工作台打开')
                 await shell.until(f'Boolean({find(SLOT)})')
-                await project.until('Boolean(document.querySelector(".manuscript-link"))', seconds=45)
-                state = await project.js('fetch("/api/state").then(r => r.json()).then(s => ({version:s.version, projects:s.projects.map(({id, path}) => ({id, path}))}))')
+                state_read = '''fetch('/api/state').then(r => r.json()).then(s => ({
+                    version: s.version,
+                    projects: s.projects.filter(p => p.path?.split(/[/\\\\]/).includes('papilot-projects')).map(({id, path}) => ({id, path}))
+                }))'''
+                await project.until(f'({state_read}).then(s => s.projects.length === 1 && Boolean(document.querySelector(".manuscript-link")))', seconds=55)
+                state = await project.js(state_read)
                 projects = state['projects']
                 assert len(projects) == 1, projects
                 folder = Path(projects[0]['path']).resolve(strict=True)

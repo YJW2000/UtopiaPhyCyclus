@@ -7,7 +7,7 @@ const path = require('node:path');
 const { setTimeout: delay } = require('node:timers/promises');
 const { pathToFileURL } = require('node:url');
 
-const READY_TIMEOUT = 60_000;
+const READY_TIMEOUT = 120_000;
 const SHUTDOWN_TIMEOUT = 4_000;
 const LOG_LIMIT = 5 * 1024 * 1024;
 
