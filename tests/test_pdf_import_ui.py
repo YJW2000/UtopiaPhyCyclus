@@ -25,7 +25,8 @@ class Upload:
     def getvalue(self):
         return b"fixture"
 
-def recognize(pdf, *, resource_dir, first_page, last_page, defaults, on_progress):
+def recognize(pdf, *, resource_dir, first_page, last_page, defaults, on_progress, prompt_library=None):
+    assert prompt_library == st.session_state["project"]
     st.session_state.setdefault("recognitions", []).append((first_page, last_page, str(resource_dir)))
     (resource_dir / "figure.png").write_bytes(b"figure")
     on_progress(first_page, last_page - first_page + 1)
