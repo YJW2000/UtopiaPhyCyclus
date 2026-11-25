@@ -200,6 +200,25 @@ summary:focus-visible {
 .workspace-body {
   display: flex;
 }
+.browse-workbench {
+  flex: 0 0 auto;
+  min-width: 0;
+  overflow: hidden;
+}
+.workspace-with-dock .page-content {
+  padding-inline: clamp(12px, 1.6vw, 24px);
+}
+.workspace-with-dock .filters {
+  flex-wrap: wrap;
+}
+.question-link[aria-current='true'] {
+  box-shadow: inset 3px 0 var(--mc-action);
+  background: var(--mc-accent-soft);
+}
+.question-file-info > .filepath {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
 .workspace-body:has(> .pane-divider[data-dragging]) iframe {
   pointer-events: none;
 }

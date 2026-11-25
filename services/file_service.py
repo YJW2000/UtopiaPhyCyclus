@@ -14,13 +14,13 @@ def _same_filesystem_temp_path(target_path: str) -> str:
     return temp_path
 
 
-def backup_existing_file(path: str, backup_root: str = ".backups") -> str:
-    """Copy the existing file to a timestamped backup path and return it."""
+def backup_existing_file(path: str, backup_root: str = ".backups", *, project_dir=None) -> str:
+    """Copy a file to a timestamped backup, relative to the project or working directory."""
     if not path or not os.path.isfile(path):
         return ""
 
     abs_path = os.path.abspath(path)
-    root_dir = os.getcwd()
+    root_dir = os.path.abspath(project_dir) if project_dir is not None else os.getcwd()
     try:
         rel_path = os.path.relpath(abs_path, root_dir)
         if rel_path.startswith(".."):
@@ -46,9 +46,12 @@ def file_change_token(path: str):
     return (getattr(stat, "st_mtime_ns", int(stat.st_mtime * 1_000_000_000)), stat.st_size)
 
 
-def _replace_with_retry(temp_path: str, target_path: str, attempts: int = 8, delay: float = 0.25) -> None:
+def _replace_with_retry(temp_path: str, target_path: str, attempts: int = 8, delay: float = 0.25,
+                        *, before_replace=None) -> None:
     last_error = None
     for attempt in range(attempts):
+        if before_replace is not None:
+            before_replace()
         try:
             os.replace(temp_path, target_path)
             return
@@ -62,6 +65,23 @@ def _replace_with_retry(temp_path: str, target_path: str, attempts: int = 8, del
         f"无法写入文件：{target_path}。该文件可能正被 Excel/WPS、编辑器、杀毒软件或另一个程序占用；"
         "请关闭占用后重试。"
     ) from last_error
+
+
+def atomic_write_bytes(path: str, content: bytes, *, before_replace=None) -> None:
+    """Replace a file with exact bytes, optionally rechecking it before each attempt."""
+    temp_path = _same_filesystem_temp_path(path)
+    try:
+        with open(temp_path, 'wb') as handle:
+            handle.write(content)
+            handle.flush()
+            os.fsync(handle.fileno())
+        _replace_with_retry(temp_path, path, before_replace=before_replace)
+    finally:
+        if os.path.exists(temp_path):
+            try:
+                os.remove(temp_path)
+            except OSError:
+                pass
 
 
 def atomic_write_text(path: str, content: str, encoding: str = "utf-8", backup: bool = False) -> None:

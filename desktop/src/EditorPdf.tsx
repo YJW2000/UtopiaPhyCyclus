@@ -4,6 +4,8 @@ import type { PDFDocumentLoadingTask, PDFDocumentProxy, RenderTask } from 'pdfjs
 import workerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url'
 import { errorMessage } from './editorContract'
 import type { EditorAttachment, PdfPanel } from './editorContract'
+import { inkBounds, InkOverlay, inkSnapshot, MagicNote, MAX_INK_POINTS, readMarks, saveMarks } from './PdfMagicPen'
+import type { InkPoint, InkRect, PdfMark } from './PdfMagicPen'
 
 export interface PdfPosition { page: number; offset: number; zoom: number }
 export interface PdfNavigation { page: number; offset?: number; stamp: number }
@@ -19,6 +21,8 @@ interface PdfProps {
   crop: boolean
   onCropToggle: () => void
   onCapture: (capture: EditorAttachment) => void
+  annotationKey?: string
+  onAnnotation?: (capture: EditorAttachment, note: string) => void
   onNavigate: (page: number, offset: number, fromScroll: boolean) => void
   onZoom: (zoom: number) => void
 }
@@ -39,13 +43,28 @@ function loadPdf() {
 const PAGE_GAP = 16
 const DEFAULT_ASPECT = Math.sqrt(2)
 
-export function EditorPdf({ path, label, panel, position, navigation, pending, empty, crop, onCropToggle, onCapture, onNavigate, onZoom }: PdfProps) {
+interface MarkDraft {
+  path: string
+  mark: PdfMark
+  anchor: InkPoint
+  capture?: EditorAttachment
+}
+
+export function EditorPdf({ path, label, panel, position, navigation, pending, empty, crop, onCropToggle, onCapture, annotationKey, onAnnotation, onNavigate, onZoom }: PdfProps) {
   const [loaded, setReader] = useState<PdfReader>()
   const reader = loaded?.path === path ? loaded : undefined
   const [failure, setFailure] = useState('')
   const [size, setSize] = useState({ width: 0, height: 0 })
   const [skip, setSkip] = useState(1)
   const [pageDraft, setPageDraft] = useState<string | null>(null)
+  const [magic, setMagic] = useState(false)
+  const [markDraft, setMarkDraft] = useState<MarkDraft>()
+  const [annotationError, setAnnotationError] = useState('')
+  const marksKey = annotationKey ? `utopia.pdf-marks.${annotationKey}.${panel}` : undefined
+  const [markStore, setMarkStore] = useState(() => readMarks(marksKey))
+  const previousMarksKey = useRef(marksKey)
+  const marks = markStore.find(item => item.path === path)?.marks ?? []
+  const pageMarks = marks.filter(mark => mark.page === position.page)
   const scroller = useRef<HTMLDivElement>(null)
   const navigate = useRef(onNavigate)
   const positionRef = useRef(position)
@@ -54,6 +73,14 @@ export function EditorPdf({ path, label, panel, position, navigation, pending, e
   const pageInput = useRef<HTMLInputElement>(null)
   navigate.current = onNavigate
   positionRef.current = position
+
+  useLayoutEffect(() => {
+    if (previousMarksKey.current === marksKey) return
+    previousMarksKey.current = marksKey
+    setMarkStore(readMarks(marksKey))
+    setMarkDraft(undefined)
+    setMagic(false)
+  }, [marksKey])
 
   useEffect(() => {
     let active = true
@@ -164,6 +191,41 @@ export function EditorPdf({ path, label, panel, position, navigation, pending, e
     navigate.current(page, 0, true)
   }
 
+  function attachment(page: number, dataUrl: string, rect: InkRect, annotated = false): EditorAttachment {
+    return { id: crypto.randomUUID(), title: `${label} · 第 ${page} 页${annotated ? '批注' : ''}`, page, panel, dataUrl, rect }
+  }
+
+  function openMark(mark: PdfMark, anchor: InkPoint, capture?: EditorAttachment) {
+    if (!path) return
+    setAnnotationError('')
+    setMarkDraft({ path, mark, anchor, capture })
+  }
+
+  function updateMarks(next: PdfMark[]) {
+    if (path) setMarkStore(saveMarks(marksKey, path, markStore, next))
+  }
+
+  function saveMark(note: string, includeInChat: boolean) {
+    if (!markDraft || markDraft.path !== path) return
+    const { mark, capture } = markDraft
+    if (includeInChat && (!capture || !onAnnotation)) {
+      setAnnotationError('当前 PDF 页还未绘制完成，稍后可重新打开批注并加入对话。')
+      return
+    }
+    updateMarks(marks.some(item => item.id === mark.id)
+      ? marks.map(item => item.id === mark.id ? { ...mark, note } : item)
+      : [...marks, { ...mark, note }])
+    setMarkDraft(undefined)
+    if (includeInChat && capture) onAnnotation?.(capture, `第 ${mark.page} 页批注：${note}`)
+  }
+
+  function toggleMagic() {
+    setMarkDraft(undefined)
+    if (crop) onCropToggle()
+    setMagic(active => !active)
+    scroller.current?.focus({ preventScroll: true })
+  }
+
   return <section className="wb-pdf" aria-label={label}>
     <div className="wb-pdf-tools">
       <span className="wb-pdf-label">{label}</span>
@@ -182,14 +244,34 @@ export function EditorPdf({ path, label, panel, position, navigation, pending, e
           <button type="button" className="wb-icon" title="缩小" aria-label={`${label}缩小`} disabled={position.zoom <= 0.55} onClick={() => onZoom(Math.max(0.55, position.zoom - 0.15))}>−</button>
           <button type="button" className="wb-zoom" title="适应宽度" onClick={() => onZoom(1)}>{Math.round(position.zoom * 100)}%</button>
           <button type="button" className="wb-icon" title="放大" aria-label={`${label}放大`} disabled={position.zoom >= 2.5} onClick={() => onZoom(Math.min(2.5, position.zoom + 0.15))}>+</button>
-          <button type="button" className="wb-btn wb-crop-toggle" aria-pressed={crop} title="拖动框选 PDF 区域，添加为聊天截图" onClick={onCropToggle}>
+          <button type="button" className="wb-btn wb-crop-toggle" aria-pressed={crop} title="拖动框选 PDF 区域，添加为聊天截图" onClick={() => {
+            setMagic(false)
+            onCropToggle()
+          }}>
             <CropIcon /> <span>{crop ? '退出框选' : '框选截图'}</span>
           </button>
+          {annotationKey && <button type="button" className="wb-btn wb-magic-toggle" aria-pressed={magic && !crop}
+            aria-keyshortcuts="Q" title="在 PDF 上点一下或划过需要修改的位置（Q）" onClick={toggleMagic}>
+            <PenIcon /> <span>魔法笔</span>
+          </button>}
         </div>
       </>}
     </div>
-    <div className={`wb-pdf-scroll${crop ? ' wb-pdf-cropping' : ''}`} ref={scroller} onScroll={scrolled} tabIndex={0} aria-label={`${label}滚动区`} onKeyDown={event => {
-      if (event.key === 'Escape' && crop) onCropToggle()
+    {magic && !crop && count > 0 && <div className="wb-magic-controls">
+      <span role="status">点一下或划过 PDF，添加批注</span>
+      <button type="button" className="wb-btn" disabled={!pageMarks.length}
+        onClick={() => updateMarks(marks.filter(mark => mark.id !== pageMarks.at(-1)?.id))}>撤销本页最后一笔</button>
+      <button type="button" className="wb-btn" disabled={!pageMarks.length}
+        onClick={() => updateMarks(marks.filter(mark => mark.page !== position.page))}>清除本页批注</button>
+    </div>}
+    <div className={`wb-pdf-scroll${crop ? ' wb-pdf-cropping' : magic ? ' wb-pdf-marking' : ''}`} ref={scroller} onScroll={scrolled} tabIndex={0} aria-label={`${label}滚动区`} onKeyDown={event => {
+      if (event.key === 'Escape') {
+        if (crop) onCropToggle()
+        else if (magic) setMagic(false)
+      }
+      if (annotationKey && count && event.key.toLowerCase() === 'q' && !event.ctrlKey && !event.altKey && !event.metaKey && event.target === event.currentTarget) {
+        event.preventDefault(); toggleMagic()
+      }
       if (event.key === 'PageDown' || event.key === 'PageUp') {
         event.preventDefault()
         stepPage(Math.min(count, Math.max(1, position.page + (event.key === 'PageDown' ? 1 : -1))))
@@ -201,12 +283,20 @@ export function EditorPdf({ path, label, panel, position, navigation, pending, e
       </div>}
       {reader && count > 0 && <div className="wb-pdf-stack" style={{ '--wb-paper-width': `${pageWidth}px`, height: count * step + Math.max(PAGE_GAP, size.height - step) } as CSSProperties}>
         {Array.from({ length: Math.max(0, last - first + 1) }, (_, index) => first + index).map(page => <PdfPage
-          document={reader.document} key={page} page={page} width={pageWidth} height={pageHeight} top={(page - 1) * step}
+          document={reader.document} key={`${reader.path}:${page}`} page={page} width={pageWidth} height={pageHeight} top={(page - 1) * step}
           rasterWidth={rasterWidth} rasterHeight={Math.ceil(rasterWidth * pageAspect)}
-          crop={crop} onCapture={(dataUrl, rect) => onCapture({ id: globalThis.crypto.randomUUID(), title: `${label} · 第 ${page} 页`, page, panel, dataUrl, rect })}
+          crop={crop} magic={magic && !crop}
+          marks={marks.filter(mark => mark.page === page)}
+          onCapture={(dataUrl, rect) => onCapture(attachment(page, dataUrl, rect))}
+          onMark={(mark, anchor, capture) => openMark(mark, anchor, capture && attachment(page, capture.dataUrl, capture.rect, true))}
         />)}
       </div>}
     </div>
+    {markDraft && markDraft.path === path && <MagicNote key={markDraft.mark.id} anchor={markDraft.anchor} initial={markDraft.mark.note}
+      error={annotationError} onClose={() => {
+        setMarkDraft(undefined)
+        scroller.current?.focus({ preventScroll: true })
+      }} onSave={saveMark} />}
   </section>
 }
 
@@ -219,16 +309,35 @@ interface PdfPageProps {
   rasterHeight: number
   top: number
   crop: boolean
-  onCapture: (dataUrl: string, rect: [number, number, number, number]) => void
+  magic: boolean
+  marks: PdfMark[]
+  onCapture: (dataUrl: string, rect: InkRect) => void
+  onMark: (mark: PdfMark, anchor: InkPoint, capture?: PageCapture) => void
 }
 
-interface Point { x: number; y: number }
-interface Rect extends Point { width: number; height: number }
+interface Rect extends InkPoint { width: number; height: number }
+interface PageCapture { dataUrl: string; rect: InkRect }
 
-function PdfPage({ document, page, width, height, rasterWidth, rasterHeight, top, crop, onCapture }: PdfPageProps) {
+function captureRegion(source: HTMLCanvasElement, rect: InkRect, points?: InkPoint[]): PageCapture | undefined {
+  const [left, top, right, bottom] = rect
+  const widthPx = (right - left) * source.width
+  const heightPx = (bottom - top) * source.height
+  const scale = Math.min(1, 1800 / Math.max(widthPx, heightPx))
+  const snapshot = window.document.createElement('canvas')
+  snapshot.width = Math.max(1, Math.round(widthPx * scale))
+  snapshot.height = Math.max(1, Math.round(heightPx * scale))
+  const context = snapshot.getContext('2d')
+  if (!context) return undefined
+  context.drawImage(source, left * source.width, top * source.height, widthPx, heightPx, 0, 0, snapshot.width, snapshot.height)
+  if (points) inkSnapshot(context, points, rect)
+  return { dataUrl: snapshot.toDataURL('image/jpeg', 0.91), rect }
+}
+
+function PdfPage({ document, page, width, height, rasterWidth, rasterHeight, top, crop, magic, marks, onCapture, onMark }: PdfPageProps) {
   const canvas = useRef<HTMLCanvasElement>(null)
-  const pointer = useRef<Point | null>(null)
+  const pointer = useRef<{ id: number; kind: 'crop' | 'magic'; points: InkPoint[] } | undefined>(undefined)
   const [selection, setSelection] = useState<Rect>()
+  const [drawing, setDrawing] = useState<InkPoint[]>([])
   const [rendered, setRendered] = useState<{ aspect?: number; error: string }>({ error: '' })
   const displayedWidth = rendered.aspect ? Math.min(width, height / rendered.aspect) : width
   const displayedHeight = rendered.aspect ? displayedWidth * rendered.aspect : height
@@ -262,55 +371,83 @@ function PdfPage({ document, page, width, height, rasterWidth, rasterHeight, top
     return () => { active = false; render?.cancel() }
   }, [document, page, rasterWidth, rasterHeight])
 
-  function getPoint(event: PointerEvent<HTMLDivElement>): Point {
+  function getPoint(event: PointerEvent<HTMLDivElement>): InkPoint {
     const area = event.currentTarget.getBoundingClientRect()
     return {
-      x: Math.max(0, Math.min(1, (event.clientX - area.left) / area.width)),
-      y: Math.max(0, Math.min(1, (event.clientY - area.top) / area.height)),
+      x: Math.max(0, Math.min(1, (event.clientX - area.left) / Math.max(1, area.width))),
+      y: Math.max(0, Math.min(1, (event.clientY - area.top) / Math.max(1, area.height))),
     }
   }
 
   function getSelection(event: PointerEvent<HTMLDivElement>): Rect | undefined {
-    const start = pointer.current
+    const start = pointer.current?.points[0]
     if (!start) return undefined
     const end = getPoint(event)
     return { x: Math.min(start.x, end.x), y: Math.min(start.y, end.y), width: Math.abs(start.x - end.x), height: Math.abs(start.y - end.y) }
   }
 
-  function endSelection(event: PointerEvent<HTMLDivElement>) {
-    const bounds = getSelection(event)
-    pointer.current = null
+  function clearGesture() {
+    pointer.current = undefined
     setSelection(undefined)
+    setDrawing([])
+  }
+
+  function extendStroke(points: InkPoint[], next: InkPoint) {
+    const last = points.at(-1)!
+    if (Math.hypot(next.x - last.x, next.y - last.y) < 0.002) return points
+    return [...points.slice(0, MAX_INK_POINTS - 1), next]
+  }
+
+  function pickMark(mark: PdfMark, anchor: InkPoint) {
     const source = canvas.current
-    if (!bounds || !source || bounds.width * displayedWidth < 8 || bounds.height * displayedHeight < 8) return
-    const widthPx = bounds.width * source.width
-    const heightPx = bounds.height * source.height
-    const scale = Math.min(1, 1800 / Math.max(widthPx, heightPx))
-    const snapshot = window.document.createElement('canvas')
-    snapshot.width = Math.max(1, Math.round(widthPx * scale))
-    snapshot.height = Math.max(1, Math.round(heightPx * scale))
-    const context = snapshot.getContext('2d')
-    if (!context) return
-    context.drawImage(source, bounds.x * source.width, bounds.y * source.height, widthPx, heightPx, 0, 0, snapshot.width, snapshot.height)
-    onCapture(snapshot.toDataURL('image/jpeg', 0.91), [
+    const rect = inkBounds(mark.points, displayedWidth, displayedHeight)
+    onMark(mark, anchor, source && rendered.aspect ? captureRegion(source, rect, mark.points) : undefined)
+  }
+
+  function endGesture(event: PointerEvent<HTMLDivElement>) {
+    const active = pointer.current
+    if (!active || active.id !== event.pointerId) return
+    const bounds = getSelection(event)
+    clearGesture()
+    if (active.kind === 'magic' && magic) {
+      const points = extendStroke(active.points, getPoint(event))
+      pickMark({ id: crypto.randomUUID(), page, points, note: '' }, { x: event.clientX, y: event.clientY })
+      return
+    }
+    const source = canvas.current
+    if (!crop || !bounds || !source || bounds.width * displayedWidth < 8 || bounds.height * displayedHeight < 8) return
+    const capture = captureRegion(source, [
       bounds.x, bounds.y, Math.min(1, bounds.x + bounds.width), Math.min(1, bounds.y + bounds.height),
     ])
+    if (capture) onCapture(capture.dataUrl, capture.rect)
   }
 
   return <div className="wb-paper-slot" style={{ top, height }} aria-label={`第 ${page} 页`}>
     <div className="wb-paper" style={{ width: displayedWidth, height: displayedHeight }}
       onPointerDown={event => {
-        if (!crop || !rendered.aspect || event.button !== 0) return
+        if ((!crop && !magic) || !rendered.aspect || !event.isPrimary || event.button !== 0) return
         event.preventDefault()
         event.currentTarget.setPointerCapture(event.pointerId)
-        pointer.current = getPoint(event)
-        setSelection(getSelection(event))
+        const points = [getPoint(event)]
+        pointer.current = { id: event.pointerId, kind: crop ? 'crop' : 'magic', points }
+        if (crop) setSelection(getSelection(event))
+        else setDrawing(points)
       }}
-      onPointerMove={event => { if (pointer.current) setSelection(getSelection(event)) }}
-      onPointerUp={endSelection}
-      onPointerCancel={() => { pointer.current = null; setSelection(undefined) }}>
+      onPointerMove={event => {
+        const active = pointer.current
+        if (!active || active.id !== event.pointerId) return
+        if (active.kind === 'crop') setSelection(getSelection(event))
+        else {
+          active.points = extendStroke(active.points, getPoint(event))
+          setDrawing(active.points)
+        }
+      }}
+      onPointerUp={endGesture}
+      onPointerCancel={clearGesture}
+      onLostPointerCapture={clearGesture}>
       <canvas ref={canvas} style={{ visibility: rendered.aspect ? 'visible' : 'hidden' }} />
       {rendered.error && <p className="wb-page-error">{rendered.error}</p>}
+      <InkOverlay marks={marks} drawing={magic ? drawing : []} onPick={pickMark} />
       {crop && selection && <div className="wb-crop-area" style={{ left: `${selection.x * 100}%`, top: `${selection.y * 100}%`, width: `${selection.width * 100}%`, height: `${selection.height * 100}%` }} />}
     </div>
   </div>
@@ -318,6 +455,10 @@ function PdfPage({ document, page, width, height, rasterWidth, rasterHeight, top
 
 function CropIcon() {
   return <svg width="15" height="15" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round"><path d="M8 3H4v5m12-5h4v5M4 16v5h4m12-5v5h-4M9 9h6v6H9z" /></svg>
+}
+
+function PenIcon() {
+  return <svg width="15" height="15" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d="m4 20 12-12 2 2L6 22Zm9-9 2 2m5-10v4m-2-2h4M8 4v4M6 6h4" /></svg>
 }
 
 function PdfIcon() {

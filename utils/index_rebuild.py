@@ -3,6 +3,7 @@ import datetime
 import os
 from collections import Counter
 
+from services.tex_import_service import read_tex
 from utils.index_schema import CSV_HEADERS
 
 
@@ -46,8 +47,7 @@ def collect_rows(chapters_dir, previous_rows):
                 continue
             path = os.path.join(root, filename)
             rel_path = os.path.relpath(path, chapters_dir)
-            with open(path, encoding='utf-8') as handle:
-                content = handle.read()
+            content = read_tex(path)
             old = by_path.get(_key(rel_path), by_name.get(filename[:-4], {}))
             rows.append(row_from_tex(content, rel_path, os.stat(path), old))
     reserved = [int(row.get('题目ID') or 0) for row in [*previous_rows, *rows]

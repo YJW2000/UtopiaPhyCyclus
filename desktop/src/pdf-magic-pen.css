@@ -1,0 +1,90 @@
+.wb-pdf-marking .wb-paper { cursor: crosshair; touch-action: none; }
+.wb-magic-toggle { flex-shrink: 0; white-space: nowrap; }
+.wb-magic-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--mc-border);
+  color: var(--mc-muted);
+  font-size: 12px;
+}
+.wb-workbench .wb-magic-controls > button { min-height: 24px; }
+.wb-ink-layer {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  fill: none;
+  stroke: #b54128;
+  stroke-width: 2.6px;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.wb-ink-active { opacity: .8; }
+.wb-ink-pin {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  display: grid;
+  place-items: center;
+  width: 21px;
+  height: 21px;
+  padding: 0;
+  border: 1px solid white;
+  border-radius: 50%;
+  background: #b54128;
+  color: white;
+  cursor: pointer;
+  font: 600 11px/1 system-ui, sans-serif;
+}
+.wb-pdf-cropping .wb-ink-pin { pointer-events: none; }
+.wb-magic-shade { position: fixed; inset: 0; z-index: 50; }
+.wb-magic-note {
+  position: fixed;
+  box-sizing: border-box;
+  width: min(300px, calc(100vw - 24px));
+  max-height: calc(100vh - 24px);
+  overflow: auto;
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  background: var(--mc-surface, #fffdf9);
+  color: var(--mc-text, #26231e);
+  border: 1px solid var(--mc-border, #ded3c5);
+  border-radius: 12px;
+  box-shadow: 0 6px 26px #0003;
+  font-size: 13px;
+}
+.wb-magic-note:focus { outline: none; }
+.wb-magic-note-heading, .wb-magic-presets, .wb-magic-note-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 5px;
+}
+.wb-magic-note-heading { justify-content: space-between; }
+.wb-magic-note-actions { justify-content: flex-end; }
+.wb-magic-note button {
+  padding: 4px 8px;
+  background: transparent;
+  color: inherit;
+  border: 1px solid var(--mc-border);
+  border-radius: 6px;
+  cursor: pointer;
+}
+.wb-magic-note button:enabled:hover { background: var(--mc-accent-soft); }
+.wb-magic-note button:disabled { opacity: .48; cursor: default; }
+.wb-magic-note .wb-magic-primary { border-color: var(--mc-accent); color: var(--mc-text); }
+.wb-magic-note textarea {
+  width: 100%;
+  box-sizing: border-box;
+  resize: vertical;
+  padding: 7px;
+  background: var(--mc-input-bg, #fffdf9);
+  color: inherit;
+  border: 1px solid var(--mc-border);
+  border-radius: 6px;
+}
+.wb-magic-error { color: var(--mc-danger, #b54128); margin: 0; }

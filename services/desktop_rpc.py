@@ -55,9 +55,21 @@ def main(argv=None):
     from services.desktop_library import create_library_handlers
     from services.desktop_model import selected_provider
     from services.desktop_workspace import DesktopWorkspace
+    from services.tex_environment_check import check_latex_environment
 
     workspace = DesktopWorkspace(library, state)
     handlers = {**create_library_handlers(library, state), **workspace.handlers}
+    handlers.update({'workspace.fileInfo': workspace.file_info, 'workspace.saveFileInfo': workspace.save_file_info})
+
+    def check_latex(_params):
+        def test_layout(job):
+            job.progress('正在测试 XeLaTeX 中文排版')
+            result = check_latex_environment(state, workspace.runtime, workspace.pdf_lock)
+            job.publish(lambda: result)
+
+        return workspace.jobs.submit(test_layout)
+
+    handlers['system.check_latex'] = check_latex
     if 'library.imageInput' in handlers:
         image_input = handlers['library.imageInput']
 

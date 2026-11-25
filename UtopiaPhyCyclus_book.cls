@@ -134,6 +134,40 @@
 \RequirePackage{fontspec}
 \IfFontExistsTF{Times New Roman}{\setmainfont{Times New Roman}[ItalicFont=Times New Roman Italic]}{\setmainfont{TeX Gyre Termes}}
 
+% Prefer the document's CJK font. Consult installed fonts only for missing glyphs.
+\ifdefined\setCJKfallbackfamilyfont
+  \providecommand\UtopiaSystemFontDir{C:/Windows/Fonts/}
+  \def\utopia@cjkfallbacks{}
+  \newcommand\utopia@addcjkfallback[1]{%
+    \IfFileExists{\UtopiaSystemFontDir#1}{%
+      \ifx\utopia@cjkfallbacks\@empty
+        \def\utopia@cjkfallbacks{#1}%
+      \else
+        \edef\utopia@cjkfallbacks{\utopia@cjkfallbacks,#1}%
+      \fi
+    }{}%
+  }
+  \utopia@addcjkfallback{NotoSerifSC-VF.ttf}
+  \utopia@addcjkfallback{simsun.ttc}
+  \utopia@addcjkfallback{simsunb.ttf}
+  \utopia@addcjkfallback{mingliub.ttc}
+  \utopia@addcjkfallback{seguisym.ttf}
+  \newcommand\utopia@setcjkfallbacks[1]{%
+    \setCJKfallbackfamilyfont{\CJKrmdefault}[Path=\UtopiaSystemFontDir]{#1}%
+    \setCJKfallbackfamilyfont{\CJKsfdefault}[Path=\UtopiaSystemFontDir]{#1}%
+    \setCJKfallbackfamilyfont{\CJKttdefault}[Path=\UtopiaSystemFontDir]{#1}%
+  }
+  \ifx\utopia@cjkfallbacks\@empty\else
+    \expandafter\utopia@setcjkfallbacks\expandafter{\utopia@cjkfallbacks}
+    \xeCJKsetup{AutoFallBack=true}
+    % Plain-text symbols from copied questions can use the same font fallback.
+    % They keep normal category codes, including when used in figure filenames.
+    \xeCJKDeclareCharClass{CJK}{%
+      "2070, "2074 -> "207B, "2080 -> "2089, "2160 -> "217F, "2460 -> "2473%
+    }
+  \fi
+\fi
+
 \usepgfplotslibrary{polar,colormaps,colorbrewer}
 \pgfplotsset{compat=1.16}
 \usetikzlibrary{calc,decorations.markings}

@@ -16,6 +16,9 @@ type Sheet = 'library' | 'recognize'
 
 interface Props {
   document: EditorDocument
+  docked?: boolean
+  onExpand?: () => void
+  onEditFileInfo?: (document: EditorDocument) => void
   onChange: (document: EditorDocument) => void
   onClose: () => void
 }
@@ -67,12 +70,17 @@ function storeValue(key: string, value?: unknown) {
   } catch { /* The mounted editor still retains the state. */ }
 }
 
-function initialLayout(document: EditorDocument): Layout {
+function dockLayout(layout: Layout, document: EditorDocument): Layout {
+  return { ...layout, mode: 'review', view: document.pdfPath && !document.source ? 'original' : 'preview', pair: undefined }
+}
+
+function initialLayout(document: EditorDocument, layoutKey: string, docked: boolean): Layout {
   const position = (page = 1): PdfPosition => ({ page, offset: 0, zoom: 1 })
-  return parseStored<Layout>(`utopia-workbench-layout-${document.id}`) ?? {
+  const layout: Layout = parseStored<Layout>(layoutKey) ?? {
     mode: 'split', view: document.pdfPath && !document.source ? 'original' : 'preview', sync: false, chatWidth: 385, documentWidth: 50,
     pdf: { preview: position(), original: position(document.originalPage), before: position(), after: position() }, sourceScroll: 0, compareText: false,
   }
+  return docked ? dockLayout(layout, document) : layout
 }
 
 export default function Editor(props: Props) {
@@ -81,15 +89,15 @@ export default function Editor(props: Props) {
 
 export { Editor }
 
-function Workbench({ document, onChange, onClose }: Props) {
+function Workbench({ document, docked = false, onExpand, onEditFileInfo, onChange, onClose }: Props) {
   const draftKey = `utopia-workbench-draft-${document.id}`
-  const layoutKey = `utopia-workbench-layout-${document.id}`
+  const layoutKey = `utopia-workbench-${docked ? 'dock-layout' : 'layout'}-${document.id}`
   const [record, setRecord] = useState(document)
   const [draft, setDraft] = useState(() => {
     const cached = parseStored<{ baseRevision?: number; draft: Draft }>(draftKey)
     return cached && cached.baseRevision === document.revision ? cached.draft : documentDraft(document)
   })
-  const [layout, setLayout] = useState(() => initialLayout(document))
+  const [layout, setLayout] = useState(() => initialLayout(document, layoutKey, docked))
   const [preview, setPreview] = useState(() => ({ path: document.previewPath, source: document.previewCurrent === false ? undefined : document.source }))
   const [compiling, setCompiling] = useState(false)
   const [reconstructing, setReconstructing] = useState(false)
@@ -124,7 +132,9 @@ function Workbench({ document, onChange, onClose }: Props) {
   const chatRun = useRef<ChatRun>(null)
   const compareRun = useRef<AbortController>(null)
   const compileRun = useRef(false)
+  const queuedCompileSource = useRef<string>(undefined)
   const recognitionRun = useRef(false)
+  const wasDocked = useRef(docked)
   const navigationStamp = useRef(0)
   const imageInput = record.inputKind === 'image'
   const originalLabel = imageInput ? '原图' : '原卷'
@@ -173,6 +183,19 @@ function Workbench({ document, onChange, onClose }: Props) {
     onChange(next)
   }
 
+  useEffect(() => {
+    const previous = latestRecord.current
+    if (document === previous || document.revision === undefined || (previous.revision ?? -1) >= document.revision) return
+    // The file-info dialog persists the draft before submitting its own change.
+    if (JSON.stringify(latestDraft.current) !== JSON.stringify(documentDraft(previous))) return
+    accept(document, true)
+    setPreview({ path: document.previewPath, source: document.previewCurrent === false ? undefined : document.source })
+    if (docked && document.source !== previous.source && document.previewCurrent === false) {
+      if (compileRun.current) queuedCompileSource.current = document.source
+      else void compileCurrent(document.source)
+    }
+  }, [document])
+
   function updateDraft(next: Draft) {
     latestDraft.current = next
     setDraft(next)
@@ -220,9 +243,15 @@ function Workbench({ document, onChange, onClose }: Props) {
   }, [document.id, prompt, attachments])
 
   useEffect(() => {
-    if (!document.previewPath && document.source.trim()) void compileCurrent()
-    // A workspace with a saved preview opens directly; later edits compile on demand.
+    if ((!document.previewPath || (docked && document.previewCurrent === false)) && document.source.trim()) {
+      void compileCurrent()
+    }
   }, [document.id])
+
+  useEffect(() => {
+    if (docked && !wasDocked.current) setLayout(previous => dockLayout(previous, latestRecord.current))
+    wasDocked.current = docked
+  }, [docked])
 
   useEffect(() => {
     const key = (event: globalThis.KeyboardEvent) => {
@@ -238,6 +267,9 @@ function Workbench({ document, onChange, onClose }: Props) {
   async function runTask<T>(method: string, params: Record<string, unknown>, signal = lifecycle.current?.signal, onProgress?: (progress: string) => void) {
     const job = await editorCall<{ taskId: string }>(method, { id: document.id, ...params })
     const task = await pollEditorTask<T>(job.taskId, signal ?? new AbortController().signal, onProgress)
+    if (docked && method === 'workspace.compile' && signal?.aborted) {
+      void editorCall('task.cancel', { id: job.taskId }).catch(() => {})
+    }
     if (task.status !== 'succeeded' || task.result === undefined) {
       throw new Error([task.error || task.message || (task.status === 'cancelled' ? '操作已停止' : '操作失败'), task.log].filter(Boolean).join('\n\n'))
     }
@@ -253,7 +285,7 @@ function Workbench({ document, onChange, onClose }: Props) {
     try {
       await persist()
       const result = await runTask<EditorCompileResult>('workspace.compile', { source })
-      setPreview({ path: result.previewPath, source: result.source ?? source })
+      if (!queuedCompileSource.current) setPreview({ path: result.previewPath, source: result.source ?? source })
       accept(await editorCall<EditorDocument>('workspace.open', { id: document.id }))
     } catch (error) {
       const log = errorMessage(error)
@@ -262,6 +294,9 @@ function Workbench({ document, onChange, onClose }: Props) {
     } finally {
       compileRun.current = false
       setCompiling(false)
+      const queued = queuedCompileSource.current
+      queuedCompileSource.current = undefined
+      if (queued && !lifecycle.current?.signal.aborted) void compileCurrent(queued)
     }
   }
 
@@ -314,6 +349,13 @@ function Workbench({ document, onChange, onClose }: Props) {
     setAttachments(previous => previous.length >= 8 ? previous : [...previous, capture])
     if (attachments.length >= 8) setChatStatus('每轮最多可附带 8 张截图或参考图片。')
     if (layout.mode === 'review') setLayout(previous => ({ ...previous, mode: 'split' }))
+  }
+
+  function annotatePdf(item: EditorAttachment, note: string) {
+    addCapture(item)
+    if (attachments.length < 8) {
+      setPrompt(previous => previous.trim() ? `${previous.trimEnd()}\n${note}` : note)
+    }
   }
 
   async function attachFiles(files: File[]) {
@@ -476,6 +518,7 @@ function Workbench({ document, onChange, onClose }: Props) {
   function renderPdf(panel: PdfPanel, path: string | null | undefined, label: string, empty: string, waiting = false) {
     return <EditorPdf path={path} label={label} panel={panel} position={layout.pdf[panel]} navigation={navigation[panel]} pending={waiting} empty={empty} crop={cropPanel === panel}
       onCropToggle={() => setCropPanel(current => current === panel ? undefined : panel)} onCapture={addCapture}
+      annotationKey={record.id} onAnnotation={annotatePdf}
       onNavigate={(page, offset, fromScroll) => setPdfPosition(panel, page, offset, fromScroll)}
       onZoom={zoom => setLayout(previous => ({ ...previous, pdf: { ...previous.pdf, [panel]: { ...previous.pdf[panel], zoom } } }))} />
   }
@@ -630,14 +673,21 @@ function Workbench({ document, onChange, onClose }: Props) {
     catch { /* Keep the editor open with its failed save visible. */ }
   }
 
-  return <div className={`wb-workbench wb-mode-${layout.mode}`}>
+  async function editFileInfo() {
+    setCommandsOpen(false)
+    try { onEditFileInfo?.(await persist()) }
+    catch { /* The save status already shows the error. */ }
+  }
+
+  return <div className={`wb-workbench wb-mode-${layout.mode}${docked ? ' wb-docked' : ''}`}>
     <header className="wb-header">
       <div className="wb-document-title">
-        <button type="button" className="wb-icon wb-back" onClick={() => void close()} aria-label="返回" title="返回"><WorkbenchIcon name="back" /></button>
+        <button type="button" className="wb-icon wb-back" onClick={() => void close()} aria-label={docked ? '关闭题目详情' : '返回'} title={docked ? '关闭题目详情' : '返回'}><WorkbenchIcon name={docked ? 'close' : 'back'} /></button>
         <div className="wb-title-block">
           <input aria-label="题目标题" value={draft.title} onChange={event => updateDraft({ ...latestDraft.current, title: event.target.value })} />
           <span role="status">{saveState || (changed ? '保存中…' : draft.source ? '工作稿已保存' : record.pdfPath ? `${originalLabel}已载入` : '工作稿')}</span>
         </div>
+        {docked && onExpand && <button type="button" className="wb-icon" onClick={onExpand} aria-label="展开编辑工作区" title="展开编辑工作区"><WorkbenchIcon name="expand" /></button>}
       </div>
       <nav className="wb-mode-switch" aria-label="编辑工作区模式">
         {modes.map(([mode, title, icon]) => <button type="button" key={mode} aria-pressed={layout.mode === mode} onClick={() => setLayout(previous => ({ ...previous, mode }))}><WorkbenchIcon name={icon} /> <span>{title}</span></button>)}
@@ -651,6 +701,7 @@ function Workbench({ document, onChange, onClose }: Props) {
         <div className="wb-popover-anchor">
           <button type="button" className="wb-icon" aria-label="更多操作" aria-expanded={commandsOpen} onClick={() => setCommandsOpen(value => !value)}>⋯</button>
           {commandsOpen && <div className="wb-popover" onBlur={event => { if (!event.currentTarget.parentElement?.contains(event.relatedTarget)) setCommandsOpen(false) }}>
+            {onEditFileInfo && <button type="button" onClick={() => void editFileInfo()}>修改文件信息</button>}
             {record.pdfPath && <button type="button" disabled={reconstructing} onClick={() => { setCommandsOpen(false); startRecognition() }}>{recognitionLabel}</button>}
             <button type="button" disabled={exporting || !draft.source.trim()} onClick={() => void exportPdf()}>{exporting ? '正在导出…' : '导出 PDF'}</button>
             <button type="button" disabled={!draft.source.trim()} onClick={() => void exportTex()}>导出 LaTeX</button>
@@ -758,6 +809,7 @@ async function readAttachment(file: File): Promise<EditorAttachment> {
 
 function WorkbenchIcon({ name, size = 16 }: { name: string; size?: number }) {
   const paths: Record<string, string> = {
+    close: 'm6 6 12 12M6 18 18 6', expand: 'M9 4H4v5M15 4h5v5M20 15v5h-5M4 15v5h5',
     back: 'm12 6-6 6 6 6M6 12h13', file: 'M7 3h7l4 4v14H7zM14 3v5h4m-8 4h5m-5 4h5',
     split: 'M3 5h18v14H3zM12 5v14', chat: 'M20 11.5a7.5 7.5 0 0 1-7.5 7.5H5l1.7-3A7.5 7.5 0 1 1 20 11.5z',
     refresh: 'M19 11a7 7 0 0 0-12-4L4 10m0 0V5m0 5h5m-4 3a7 7 0 0 0 12 4l3-3m0 0v5m0-5h-5',

@@ -10,6 +10,7 @@ interface Props {
   minWidth: number
   maxWidth?: number
   maxFraction: number
+  remainingWidth?: number
   onToggle: () => void
   onWidthChange: (width: number) => void
 }
@@ -31,6 +32,7 @@ export default function PaneDivider({
   minWidth,
   maxWidth = Infinity,
   maxFraction,
+  remainingWidth = 0,
   onToggle,
   onWidthChange,
 }: Props) {
@@ -49,7 +51,7 @@ export default function PaneDivider({
     return () => observer.disconnect()
   }, [])
 
-  const maximum = Math.floor(Math.min(maxWidth, containerWidth * maxFraction))
+  const maximum = Math.max(0, Math.floor(Math.min(maxWidth, containerWidth * maxFraction, containerWidth - remainingWidth)))
   const minimum = Math.min(minWidth, maximum)
   const clamp = (value: number) =>
     Math.min(maximum, Math.max(minimum, Math.round(value)))

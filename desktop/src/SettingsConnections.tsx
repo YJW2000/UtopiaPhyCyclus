@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { pollEditorTask } from './editorContract'
 import type {
   EnvironmentStatus,
   EnvironmentTool,
@@ -108,9 +109,12 @@ export default function SettingsConnections({
   const [pendingInstall, setPendingInstall] = useState<EnvironmentToolId | null>(null)
   const [feedback, setFeedback] = useState<ToolActions['feedback']>({})
   const [loginFeedback, setLoginFeedback] = useState<Feedback & { provider: ProviderId }>()
+  const [testingLatex, setTestingLatex] = useState(false)
+  const [latexFeedback, setLatexFeedback] = useState<Feedback>()
   const checkRequest = useRef(0)
   const providerRequest = useRef(0)
   const environmentRequest = useRef(0)
+  const latexRequest = useRef<AbortController | null>(null)
 
   const loadProviders = useCallback(async () => {
     const request = ++providerRequest.current
@@ -145,6 +149,7 @@ export default function SettingsConnections({
   }, [loadProviders, loadEnvironment])
 
   useEffect(() => { void check() }, [check])
+  useEffect(() => () => latexRequest.current?.abort(), [])
 
   const nativeInstalling = Object.values(environment?.tools || {}).some((tool) => tool.installing)
   const active = nativeInstalling || pendingInstall !== null
@@ -213,6 +218,33 @@ export default function SettingsConnections({
       setLoginFeedback({ provider, error: false, message: '已复制登录命令。' })
     } catch (error) {
       setLoginFeedback({ provider, error: true, message: `复制失败。${errorMessage(error)}` })
+    }
+  }
+
+  async function testLatex() {
+    if (latexRequest.current) return
+    const request = new AbortController()
+    latexRequest.current = request
+    setTestingLatex(true)
+    setLatexFeedback(undefined)
+    let taskId: string | undefined
+    try {
+      const task = await window.utopia.call<{ taskId: string }>('system.check_latex')
+      taskId = task.taskId
+      const result = await pollEditorTask<{ message: string }>(taskId, request.signal)
+      if (request.signal.aborted) return
+      if (result.status !== 'succeeded' || !result.result) {
+        throw new Error(result.error ?? '排版测试未完成。')
+      }
+      setLatexFeedback({ error: false, message: result.result.message })
+    } catch (error) {
+      if (!request.signal.aborted) setLatexFeedback({ error: true, message: errorMessage(error) })
+    } finally {
+      if (request.signal.aborted && taskId) {
+        void window.utopia.call('task.cancel', { id: taskId }).catch(() => {})
+      }
+      latexRequest.current = null
+      if (!request.signal.aborted) setTestingLatex(false)
     }
   }
 
@@ -355,6 +387,22 @@ export default function SettingsConnections({
               </div>
               {tool && <ToolControls tool={tool} {...actions} />}
               <ToolDetails tool={tool} />
+              {id === 'latex' && tool?.installed && (
+                <>
+                  <div className="settings-row-actions">
+                    <button type="button" disabled={testingLatex || active} onClick={() => void testLatex()}>
+                      {testingLatex ? '正在测试中文排版…' : '测试中文排版'}
+                    </button>
+                  </div>
+                  {(testingLatex || latexFeedback) && (
+                    <div className="settings-row-message">
+                      {testingLatex
+                        ? <p role="status">正在编译测试题…</p>
+                        : <p role={latexFeedback?.error ? 'alert' : 'status'}>{latexFeedback?.message}</p>}
+                    </div>
+                  )}
+                </>
+              )}
             </div>
           )
         })}

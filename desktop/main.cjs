@@ -28,6 +28,8 @@ const MIME_TYPES = new Map(Object.entries({
 }));
 const METHODS = new Set([
   'system.ping', 'library.demo', 'library.summary', 'library.search', 'library.assemble', 'library.imageInput',
+  'system.check_latex',
+  'workspace.fileInfo', 'workspace.saveFileInfo',
   'library.check', 'library.maintenanceStatus', 'context.chat', 'ui.load', 'ui.save', 'ui.providers',
   'workspace.list', 'workspace.open', 'workspace.resume', 'workspace.create',
   'workspace.save', 'workspace.import_pdf', 'workspace.reconstruct', 'workspace.compile', 'workspace.chat',

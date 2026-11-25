@@ -1,12 +1,18 @@
-import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useId, useRef, useState } from 'react'
 import logo from '../../static/sidebar.webp'
 import { Browse, Dashboard, emptySummary, Paper } from './Bank'
 import type { Question, Summary } from './Bank'
 import ContextChat from './ContextChat'
+import FileInfoDialog from './FileInfoDialog'
+import type { QuestionFileInfo } from './FileInfoDialog'
+import PaneDivider from './PaneDivider'
 import SettingsConnections from './SettingsConnections'
 import type { ClipboardImage } from './bridge'
 import type { EditorDocument } from './editorContract'
 
+const WORKBENCH_MIN = 400
+const BROWSE_MIN = 170
+const WORKBENCH_FRACTION = 0.82
 const Editor = lazy(() => import('./Editor'))
 const ArchitectureGuide = lazy(() => import('./ArchitectureGuide'))
 const pages = {
@@ -77,6 +83,15 @@ export default function App() {
   const [doc, setDoc] = useState<EditorDocument | null>(null),
     [editing, setEditing] = useState(false),
     [recent, setRecent] = useState<EditorDocument[]>([])
+  const [workbenchQuestion, setWorkbenchQuestion] = useState<Question>()
+  const [workbenchOpen, setWorkbenchOpen] = useState(false)
+  const [workbenchWidth, setWorkbenchWidth] = useState(() => {
+    const stored = Number(localStorage.getItem('browse.workbench.width'))
+    return stored > 0 && Number.isFinite(stored) ? stored : 780
+  })
+  const [fileInfo, setFileInfo] = useState<{ path: string; document: EditorDocument }>()
+  const [browseRevision, setBrowseRevision] = useState(0)
+  const workbenchId = useId()
   const [busy, setBusy] = useState(''),
     [error, setError] = useState(''),
     [collapsed, setCollapsed] = useState(
@@ -138,6 +153,10 @@ export default function App() {
   useEffect(() => {
     if (['tex', 'pdf', 'entry'].includes(page) && !editing) void drafts()
   }, [page, editing, drafts])
+  useEffect(() => {
+    const timer = setTimeout(() => localStorage.setItem('browse.workbench.width', String(workbenchWidth)), 150)
+    return () => clearTimeout(timer)
+  }, [workbenchWidth])
   const showingSettings = page === 'settings' && !editing && !legacy
   useEffect(() => {
     if (!showingSettings) return
@@ -175,7 +194,7 @@ export default function App() {
       if (token === routeGeneration.current) setBusy('')
     }
   }, [])
-  const loadWorkspace = useCallback(async (params: object, route: Page, id?: string) => {
+  const loadWorkspace = useCallback(async (params: object, route: Page, id?: string, question?: Question) => {
     performance.clearMarks('document-open')
     performance.mark('document-open')
     const token = routeGeneration.current
@@ -185,7 +204,9 @@ export default function App() {
     )
     if (token !== routeGeneration.current) return
     setDoc(result)
-    setEditing(true)
+    setWorkbenchQuestion(question)
+    setWorkbenchOpen(Boolean(question))
+    setEditing(!question)
     setPage(route)
     setLegacy('')
   }, [])
@@ -220,8 +241,29 @@ export default function App() {
   function add(row: Question) {
     if (!basket.some((r) => r.path === row.path)) changeBasket([...basket, row])
   }
-  const open = (row: Question) =>
-    openWorkspace({ questionPath: row.path }, 'browse')
+  function open(row: Question) {
+    if (page !== 'browse' && page !== 'search') {
+      openWorkspace({ questionPath: row.path }, 'browse')
+      return
+    }
+    routeGeneration.current++
+    setFileInfo(undefined)
+    void work('正在打开题目…', () => loadWorkspace({ questionPath: row.path }, page, undefined,
+      row))
+  }
+  function savedFileInfo(file: QuestionFileInfo, document: EditorDocument) {
+    const previousPath = fileInfo?.path
+    const update = (question: Question) => question.path === previousPath ? {
+      ...question, path: file.path, year: file.year, paper: file.paper,
+      number: file.number, subject: file.subject, tags: file.tags,
+    } : question
+    setWorkbenchQuestion((question) => question && update(question))
+    setDoc(document)
+    changeBasket(basket.map(update))
+    setFileInfo(undefined)
+    setBrowseRevision((revision) => revision + 1)
+    void summaryLoad()
+  }
   function openLegacy(route: Page | 'tools' | 'tags') {
     const token = ++routeGeneration.current
     setLegacyPending(true)
@@ -283,6 +325,10 @@ export default function App() {
   }, [editing, importImage, legacy, legacyPending, page])
   const imageBusy = page === 'entry' && Boolean(busy)
   const actionProps = { open, add, basket }
+  const docking = Boolean(doc && workbenchQuestion && !legacy && (page === 'browse' || page === 'search'))
+  const rightVisible = !editing && docking && workbenchOpen
+  const maximumDock = `min(${WORKBENCH_FRACTION * 100}%, calc(100% - ${BROWSE_MIN}px))`
+  const dockSize = `clamp(min(${WORKBENCH_MIN}px, ${maximumDock}), ${workbenchWidth}px, ${maximumDock})`
   return (
     <div className={'app-shell' + (collapsed ? ' compact' : '')}>
       <aside className="app-nav">
@@ -354,26 +400,8 @@ export default function App() {
             {busy}
           </div>
         )}
-        {doc && (
-          <div
-            className="editor-mount"
-            style={{ display: editing ? 'flex' : 'none' }}
-          >
-            <Suspense fallback={<p>正在载入编辑器…</p>}>
-              <Editor
-                key={doc.id}
-                document={doc}
-                onChange={setDoc}
-                onClose={() => {
-                  setEditing(false)
-                  void summaryLoad()
-                }}
-              />
-            </Suspense>
-          </div>
-        )}
-        {!editing && (
-          <div className="workspace-body">
+        <div className={'workspace-body' + (rightVisible ? ' workspace-with-dock' : '')}>
+          {!editing && <>
             <div ref={mainScroll} className={'main-scroll' + (legacy ? ' embedded' : '')}>
               {legacy ? (
                 <>
@@ -409,6 +437,8 @@ export default function App() {
                       {...{ summary, query, setQuery }}
                       search={page === 'search'}
                       onRows={setRows}
+                      revision={browseRevision}
+                      previewPath={docking ? workbenchQuestion?.path : undefined}
                     />
                   )}
                   {page === 'exam' && (
@@ -693,7 +723,19 @@ export default function App() {
                 </div>
               )}
             </div>
-            <ContextChat
+            {docking ? (
+              <PaneDivider
+                open={workbenchOpen}
+                panelId={workbenchId}
+                label="题目工作台"
+                width={workbenchWidth}
+                minWidth={WORKBENCH_MIN}
+                maxFraction={WORKBENCH_FRACTION}
+                remainingWidth={BROWSE_MIN}
+                onToggle={() => setWorkbenchOpen((open) => !open)}
+                onWidthChange={setWorkbenchWidth}
+              />
+            ) : <ContextChat
               name={pages[page][1]}
               storageKey={'chat:' + prefs?.library + ':' + page}
               context={{
@@ -724,8 +766,41 @@ export default function App() {
                   ])
                 }
               }}
-            />
+            />}
+          </>}
+        {doc && (
+          <div
+            id={workbenchId}
+            className={'editor-mount' + (rightVisible ? ' browse-workbench' : '')}
+            role={rightVisible ? 'region' : undefined}
+            aria-label={rightVisible ? '题目工作台' : undefined}
+            style={{ display: editing || rightVisible ? 'flex' : 'none', width: rightVisible ? dockSize : undefined }}
+          >
+            <Suspense fallback={<p>正在载入编辑器…</p>}>
+              <Editor
+                key={doc.id}
+                document={doc}
+                docked={docking && !editing}
+                onExpand={rightVisible ? () => setEditing(true) : undefined}
+                onEditFileInfo={workbenchQuestion ? (document) => setFileInfo({ path: workbenchQuestion.path, document }) : undefined}
+                onChange={setDoc}
+                onClose={() => {
+                  if (!editing) setWorkbenchOpen(false)
+                  setEditing(false)
+                  void summaryLoad()
+                }}
+              />
+            </Suspense>
           </div>
+        )}
+        </div>
+        {fileInfo && (
+          <FileInfoDialog
+            key={fileInfo.path}
+            {...fileInfo}
+            onClose={() => setFileInfo(undefined)}
+            onSaved={({ file, document }) => savedFileInfo(file, document)}
+          />
         )}
       </main>
     </div>

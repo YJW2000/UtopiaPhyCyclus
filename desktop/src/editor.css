@@ -219,6 +219,41 @@
 .wb-form-actions { justify-content: flex-end; }
 .wb-form-error { max-width: 68vw; margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--mc-accent, #a64732); font-size: 12px; }
 
+.wb-docked { container: docked-workbench / inline-size; }
+.wb-docked .wb-header {
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-areas: "title modes" "actions actions";
+  gap: 5px 8px;
+  padding: 7px 9px;
+}
+.wb-docked .wb-document-title { grid-area: title; }
+.wb-docked .wb-mode-switch { grid-area: modes; }
+.wb-docked .wb-mode-switch button { padding-inline: 6px !important; }
+.wb-docked .wb-header-actions { grid-area: actions; flex-wrap: wrap; gap: 5px; }
+.wb-docked .wb-header-actions > .wb-btn { padding-inline: 6px; }
+.wb-docked .wb-document { container: docked-document / inline-size; }
+.wb-docked .wb-document-tools { gap: 4px 8px; padding-inline: 6px; }
+.wb-docked .wb-view-switch { flex-wrap: wrap; }
+.wb-docked .wb-view-switch button { padding-inline: 6px !important; }
+.wb-docked .wb-comparison-tools { flex-wrap: wrap; }
+.wb-docked .wb-empty { min-height: 0; }
+
+@container docked-workbench (width < 640px) {
+  .wb-docked.wb-mode-split .wb-body { flex-direction: column; }
+  .wb-docked .wb-body > .pane-divider { display: none; }
+  .wb-docked.wb-mode-split .wb-document { flex: 3 1 0; }
+  .wb-docked.wb-mode-split .wb-chat-pane {
+    width: 100% !important;
+    flex: 2 1 0;
+    border-top: 1px solid var(--mc-border, #ded3c5);
+  }
+}
+
+@container docked-document (width < 520px) {
+  .wb-docked .wb-document-panes { flex-direction: column; }
+  .wb-docked .wb-document-panes > .wb-divider { display: none; }
+}
+
 @media (max-width: 980px) {
   .wb-header { gap: 7px; padding: 7px 9px; }
   .wb-mode-switch button { padding-inline: 6px !important; }

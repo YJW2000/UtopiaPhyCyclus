@@ -34,7 +34,9 @@ from services.question_service import (
     question_fingerprint,
     scan_duplicate_pairs,
 )
-from services.tex_import_service import decode_tex, parse_tex_questions, detect_tex_questions, repair_problem_headers, join_tex_questions
+from services.tex_import_service import (
+    decode_tex, detect_tex_questions, join_tex_questions, parse_tex_questions, read_tex, repair_problem_headers,
+)
 from services.tex_compile_service import cleanup_preview_cache, compile_tex_preview
 from services.question_image_ui import apply_pending_diagram_update, queue_diagram_update, render_question_image_upload
 from utils.image_assets import copy_graphics, graphics_fingerprint
@@ -158,8 +160,7 @@ def _latex_markdown_cached(content: str, show_title: bool, render_token, source_
 
 @st.cache_data(show_spinner=False, max_entries=512)
 def _read_question_text_cached(fpath: str, change_token):
-    with open(fpath, "r", encoding="utf-8") as question_file:
-        return question_file.read()
+    return read_tex(fpath)
 
 
 def read_question_text(fpath: str):
@@ -168,8 +169,7 @@ def read_question_text(fpath: str):
 
 @st.cache_data(show_spinner=False, max_entries=512)
 def _load_question_editor_assets_cached(fpath: str, change_token, render_token):
-    with open(fpath, "r", encoding="utf-8") as question_file:
-        content = question_file.read()
+    content = _read_question_text_cached(fpath, change_token)
     meta, _ = parse_meta_data(content)
     return {
         "content": content,

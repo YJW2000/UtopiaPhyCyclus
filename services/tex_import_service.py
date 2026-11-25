@@ -2,7 +2,9 @@
 from __future__ import annotations
 
 import re
+from codecs import BOM_UTF8, BOM_UTF16_BE, BOM_UTF16_LE, BOM_UTF32_BE, BOM_UTF32_LE
 from dataclasses import dataclass
+from pathlib import Path
 
 
 @dataclass
@@ -23,14 +25,34 @@ class TexQuestion:
 
 
 def decode_tex(data: bytes) -> str:
-    if b'\x00' in data and not data.startswith((b'\xff\xfe', b'\xfe\xff')):
-        raise ValueError('文件包含二进制内容，请上传 TeX 文本文件。')
-    for encoding in (('utf-16',) if data.startswith((b'\xff\xfe', b'\xfe\xff')) else ('utf-8-sig', 'gb18030')):
+    if data.startswith((BOM_UTF32_LE, BOM_UTF32_BE)):
+        raise ValueError('TeX 文件使用了 UTF-32，请转换为 UTF-8 后重试。')
+    if data.startswith(BOM_UTF8):
+        encodings = ('utf-8-sig',)
+    elif data.startswith((BOM_UTF16_LE, BOM_UTF16_BE)):
+        encodings = ('utf-16',)
+    else:
+        if b'\x00' in data:
+            raise ValueError('文件包含二进制内容，请上传 TeX 文本文件。')
+        encodings = ('utf-8', 'gb18030')
+    for encoding in encodings:
         try:
-            return data.decode(encoding).replace('\r\n', '\n').replace('\r', '\n')
-        except UnicodeError:
-            pass
-    raise ValueError('无法解码文件，请使用 UTF-8 或 GB18030 编码。')
+            content = data.decode(encoding)
+        except UnicodeDecodeError:
+            continue
+        if '\x00' in content:
+            raise ValueError('文件包含二进制内容，请上传 TeX 文本文件。')
+        return content.replace('\r\n', '\n').replace('\r', '\n')
+    raise ValueError('无法解码 TeX 文件，请使用 UTF-8、GB18030 或带字节顺序标记的 UTF-16。')
+
+
+def read_tex(path: str | Path) -> str:
+    """Read a TeX source with the same encoding rules as a file upload."""
+    file = Path(path)
+    try:
+        return decode_tex(file.read_bytes())
+    except ValueError as error:
+        raise ValueError(f'{file.name}：{error}') from None
 
 
 def _mask_comments(text: str) -> str:

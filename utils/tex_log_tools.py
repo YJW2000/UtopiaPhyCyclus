@@ -318,7 +318,7 @@ def _decode_bytes(data):
         return ""
 
 
-def _to_text(raw):
+def decode_tex_log(raw):
     """把任意输入安全地转成文本；绝不抛异常。"""
     if raw is None:
         return ""
@@ -342,7 +342,7 @@ def _normalize_text(text, strip_trailing=True):
     决定了上下两行拼接时是否需要补空格（TeX 在单词中间换行不会保留空格）。
     """
     if not isinstance(text, str):
-        text = _to_text(text)
+        text = decode_tex_log(text)
     try:
         text = text.replace("\r\n", "\n").replace("\r", "\n").replace("\x0c", "\n")
         text = _ANSI_RE.sub("", text)
@@ -378,7 +378,7 @@ def _truncate(text, max_chars):
     致命错误，导致 compile.* 漏判；这里把中段匹配致命错误模式的行额外抽取保留。
     """
     if not isinstance(text, str):
-        text = _to_text(text)
+        text = decode_tex_log(text)
     try:
         limit = int(max_chars)
     except (TypeError, ValueError):
@@ -417,7 +417,7 @@ def _truncate(text, max_chars):
 
 def _tail(text, limit):
     if not isinstance(text, str):
-        text = _to_text(text)
+        text = decode_tex_log(text)
     try:
         limit = int(limit)
     except (TypeError, ValueError):
@@ -458,12 +458,12 @@ def clean_tex_log(raw: str, max_chars: int = 20000) -> str:
     - 超长时保留头 + 尾（尾部通常包含真正的致命错误）。
     """
     try:
-        text = _normalize_text(_to_text(raw))
+        text = _normalize_text(decode_tex_log(raw))
         text = _strip_progress_noise(text)
         return _truncate(text, max_chars)
     except Exception:  # pragma: no cover - 防御
         try:
-            return _truncate(_to_text(raw), max_chars)
+            return _truncate(decode_tex_log(raw), max_chars)
         except Exception:
             return ""
 
@@ -677,7 +677,7 @@ def extract_tex_errors(raw: str) -> list[dict]:
     任何输入都不会抛异常，无法解析时返回 ``[]``。
     """
     try:
-        text = _normalize_text(_to_text(raw), strip_trailing=False)
+        text = _normalize_text(decode_tex_log(raw), strip_trailing=False)
         if not text.strip():
             return []
         # 超长日志只保留尾部 2M 字符，避免病态输入拖垮解析（错误通常在尾部）
@@ -735,7 +735,7 @@ def classify_tex_error(raw: str) -> tuple[str, str]:
     这类后果性条目）；没有错误块时退化为全文正则扫描。
     """
     try:
-        text = _normalize_text(_to_text(raw), strip_trailing=False)
+        text = _normalize_text(decode_tex_log(raw), strip_trailing=False)
         if not text.strip():
             return "unknown", "日志为空，无法分类；请确认 xelatex 已安装且命令包含 -file-line-error。"
         blocks = _parse_error_blocks(text)
@@ -846,7 +846,7 @@ def _source_label(source):
 
 def _one_line(text, limit=400):
     if not isinstance(text, str):
-        text = _to_text(text)
+        text = decode_tex_log(text)
     text = re.sub(r"\s+", " ", text or "").strip()
     if len(text) > limit:
         text = text[: limit - 1] + "…"
@@ -906,7 +906,7 @@ def summarize_tex_log(raw: str, source: str | None = None, max_chars: int = 4000
         return _truncate("\n".join(lines), max_chars)
     except Exception:  # pragma: no cover - 防御
         try:
-            return _truncate(_to_text(raw), max_chars)
+            return _truncate(decode_tex_log(raw), max_chars)
         except Exception:
             return ""
 
@@ -1008,7 +1008,7 @@ def filter_with_texlogsieve(raw: str) -> str:
     - 日志本身的成败判定应解析返回摘要中的 "There were errors during processing"
       与 "No important messages to show"，见 docs/harness_v2_contract.md。
     """
-    original = _to_text(raw)
+    original = decode_tex_log(raw)
     try:
         executable = _find_tool("texlogsieve")
         if not executable or not original.strip():
@@ -1137,7 +1137,7 @@ def run_chktex_lint(tex_source: str, timeout: int = 20) -> list[dict]:
         executable = _find_tool("chktex")
         if not executable:
             return []
-        source = _to_text(tex_source)
+        source = decode_tex_log(tex_source)
         if not source.strip():
             return []
         try:

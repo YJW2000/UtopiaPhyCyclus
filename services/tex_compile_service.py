@@ -12,9 +12,9 @@ import uuid
 
 from services.local_process import run
 from services.desktop_tool_paths import find_desktop_tool
-from services.tex_import_service import parse_tex_questions
+from services.tex_import_service import parse_tex_questions, read_tex
 from services.pdf_selection_edit import build_source_map
-from utils.tex_log_tools import extract_tex_errors, summarize_tex_log
+from utils.tex_log_tools import decode_tex_log, extract_tex_errors, summarize_tex_log
 from utils.tikz_ops import _driver_tmp_env
 from utils.image_assets import graphics_references, resolve_image
 
@@ -117,6 +117,12 @@ _TIKZ_UNKNOWN_KEY_RE = re.compile(r"I do not know the key '(/tikz/([^']+))'", re
 #: ``LaTeX Error: Environment methodbox undefined.``（AI 生成的专题卷常用 tcolorbox 盒子环境）
 _UNDEFINED_ENV_RE = re.compile(r"Environment\s+([A-Za-z@]+\*?)\s+undefined", re.IGNORECASE)
 _FULL_DOCUMENT_RE = re.compile(r'(?m)^\s*\\documentclass\b')
+_INPUT_ENCODING = re.compile(
+    r'(?im)^([ \t]*\\XeTeXinputencoding[ \t]+)"(?:GBK|GB18030|GB2312|CP936|UTF-16(?:LE|BE)?)"'
+)
+_TEXT_LOSS = re.compile(
+    r'(?im)^[ \t]*(?:Missing character:|(?:Error: )?Invalid UTF-8(?: byte| sequence)?)[^\r\n]*'
+)
 _MAX_DIAGNOSIS_CHARS = 4000
 
 
@@ -233,7 +239,7 @@ def build_preview_document(source: str, project_dir: str, defaults: dict) -> str
         return source
     questions = parse_tex_questions(source, '草稿.tex', defaults)
     main = Path(project_dir) / 'main.tex'
-    preamble = (main.read_text(encoding='utf-8').split(r'\begin{document}', 1)[0]
+    preamble = (read_tex(main).split(r'\begin{document}', 1)[0]
                 if main.is_file() else r'\documentclass[12pt,UTF-8]{UtopiaPhyCyclus_book}')
     # The bank class supplies these environments; main.tex may carry older
     # custom definitions. Preserve those definitions by renewing the defaults.
@@ -262,10 +268,17 @@ def compile_tex_preview(source: str, project_dir: str, defaults: dict,
     output = ''
     directory = None
     try:
+        if '\ufffd' in source:
+            raise ValueError('源码含有无法还原的替换字符（U+FFFD）。请核对原文件编码或更正该字符后重新编译。')
         document = build_preview_document(source, project_dir, defaults)
         # Inverse search uses the editor's image path spelling. Compilers get
         # the actual working-directory-relative filenames below.
         original_document = document
+        if engine == 'xelatex':
+            # This staged file is always UTF-8, even if the uploaded file was
+            # decoded from GBK or UTF-16. Leave child-file defaults untouched.
+            header, separator, body = document.partition(r'\begin{document}')
+            document = _INPUT_ENCODING.sub(r'\1"UTF-8"', header) + separator + body
         cache = Path(cache_dir).resolve() if cache_dir else Path(project_dir) / '.tikz_cache' / 'tex-entry'
         cache.mkdir(parents=True, exist_ok=True)
         # 每次编译独占唯一目录（旧 PDF 不可能误判成功）。这里**不用** tempfile.TemporaryDirectory：
@@ -327,10 +340,18 @@ def compile_tex_preview(source: str, project_dir: str, defaults: dict,
                      '-halt-on-error', '-file-line-error', '-synctex=1',
                      '-output-directory=' + _tex_relative_path(directory, compiler_dir), _tex_relative_path(tex, compiler_dir)],
                     cwd=compiler_dir, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                    encoding='utf-8', errors='replace', timeout=timeout,
+                    timeout=timeout,
                     creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0,
                 )
-                output += completed.stdout or ''
+                output += decode_tex_log(completed.stdout)
+                tex_log = directory / 'preview.log'
+                diagnostic_log = decode_tex_log(tex_log.read_bytes()) if tex_log.is_file() else ''
+                loss = [*dict.fromkeys(_TEXT_LOSS.findall(output + '\n' + diagnostic_log))]
+                if loss:
+                    error = '编译发现缺字或文本编码错误，已停止生成预览。请检查日志中列出的字体、符号或子文件编码。'
+                    detail = '\n'.join(loss[:8])
+                    return dict(ok=False, error=error, log=(output[-21600:] + '\n' + detail[:2400]),
+                                diagnosis=error + '\n' + detail[:3600])
                 if completed.returncode:
                     diagnosis = diagnose_tex_compile_failure(source, output)
                     error = _one_line(diagnosis) or '编译失败，请查看日志中的文件名和行号。'
@@ -343,9 +364,8 @@ def compile_tex_preview(source: str, project_dir: str, defaults: dict,
                                                     original_document, directory / 'preview.synctex.gz'))
     except subprocess.TimeoutExpired as exc:
         partial = exc.stdout or b''
-        if isinstance(partial, bytes):
-            partial = partial.decode('utf-8', errors='replace')
-        return dict(ok=False, error=f'本地编译超过 {timeout} 秒，已中断；源码仍保留。', log=(output + partial)[-24000:])
+        return dict(ok=False, error=f'本地编译超过 {timeout} 秒，已中断；源码仍保留。',
+                    log=(output + decode_tex_log(partial))[-24000:])
     except (ValueError, OSError) as exc:
         return dict(ok=False, error=str(exc), log=output[-24000:])
 

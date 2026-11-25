@@ -41,15 +41,16 @@ interface RowActions {
 }
 export function QuestionList({
   rows,
+  previewPath,
   open,
   add,
   basket,
-}: { rows: Question[] } & RowActions) {
+}: { rows: Question[]; previewPath?: string } & RowActions) {
   return (
     <div className="question-list">
       {rows.map((row) => (
         <article key={row.path}>
-          <button className="question-link" onClick={() => open(row)}>
+          <button className="question-link" aria-current={previewPath === row.path || undefined} onClick={() => open(row)}>
             <strong>{questionTitle(row)}</strong>
             <span>{row.stem || row.path}</span>
             <small>
@@ -140,6 +141,8 @@ export function Browse({
   setQuery,
   search,
   onRows,
+  revision,
+  previewPath,
   ...actions
 }: {
   summary: Summary
@@ -147,6 +150,8 @@ export function Browse({
   setQuery: (q: string) => void
   search: boolean
   onRows: (rows: Question[]) => void
+  revision: number
+  previewPath?: string
 } & RowActions) {
   const [subject, setSubject] = useState(''),
     [type, setType] = useState(''),
@@ -195,7 +200,7 @@ export function Browse({
       live = false
       clearTimeout(timeout)
     }
-  }, [query, subject, type, year, page, mode, search, onRows])
+  }, [query, subject, type, year, page, mode, search, onRows, revision])
   return (
     <>
       <h1>{search ? '🔎 题目查找' : '🔍 全局浏览'}</h1>
@@ -248,7 +253,7 @@ export function Browse({
           </small>
         </div>
         {error && <p role="alert">{error}</p>}
-        <QuestionList rows={data?.rows || []} {...actions} />
+        <QuestionList rows={data?.rows || []} previewPath={previewPath} {...actions} />
         {data && !data.total && <p>没有匹配题目，可调整关键词或筛选条件。</p>}
         {data && data.pages > 1 && (
           <div className="pager">

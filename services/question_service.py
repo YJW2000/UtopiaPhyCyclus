@@ -11,6 +11,7 @@ from difflib import SequenceMatcher
 
 from services.file_service import atomic_write_text
 from services.operation_log import record_operation
+from services.tex_import_service import read_tex
 from utils.core_config import CHAPTERS_DIR
 from utils.csv_ops import CSV_HEADERS, add_to_csv_index, read_csv_index
 
@@ -158,9 +159,8 @@ def _row_stem(row: dict) -> str:
     if not path or not os.path.isfile(path):
         return ""
     try:
-        with open(path, "r", encoding="utf-8") as question_file:
-            return normalize_question_text(question_file.read())
-    except (OSError, UnicodeError):
+        return normalize_question_text(read_tex(path))
+    except (OSError, ValueError):
         return ""
 
 

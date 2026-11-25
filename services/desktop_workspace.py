@@ -394,6 +394,44 @@ class DesktopWorkspace:
         created = self.create({'path': params['path'], 'title': params.get('title')})
         return self.reconstruct({**params, 'id': created['id']})
 
+    def _linked_bank_file(self, document, relative_path):
+        if not isinstance(relative_path, str) or not relative_path:
+            raise ValueError('题库文件路径无效。')
+        path, _ = self._question(relative_path)
+        if document.get('_origin') != os.path.normcase(str(path)):
+            raise ValueError('当前工作稿没有关联到该题库文件。')
+        return path
+
+    def file_info(self, params):
+        from services.desktop_file_info import read_file_info
+
+        with self.lock:
+            document = self._read(params.get('id'))
+            self._linked_bank_file(document, params.get('path'))
+            return read_file_info(self.library, params['path'])
+
+    def save_file_info(self, params):
+        from services.desktop_file_info import read_file_info, save_file_info
+
+        with self.lock:
+            document = self._read(params.get('id'))
+            self._check_revision(document, params)
+            path = self._linked_bank_file(document, params.get('path'))
+            before = read_file_info(self.library, params['path'])
+            keys = ('year', 'paperType', 'paper', 'number', 'subject')
+            # Validate the editable draft before changing its bank file.
+            replace_parsed_problem_header(document['source'], (before[key] for key in keys))
+            saved = save_file_info(self.library, params['path'], params.get('fields'), params.get('expectedHash'))
+            target, chapter = self._question(saved['path'])
+            updated = replace_parsed_problem_header(document['source'], (saved[key] for key in keys))
+            self._replace_source(document, updated)
+            document['_origin'] = os.path.normcase(str(target))
+            document['chapter'] = chapter
+            if document['title'] == path.stem:
+                document['title'] = target.stem
+            self._write(document)
+            return {'file': saved, 'document': self._public(document)}
+
     def reconstruct(self, params):
         provider = selected_provider(self.state)
         with self.lock:
