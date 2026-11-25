@@ -3,6 +3,7 @@ import argparse
 import asyncio
 import json
 from pathlib import Path
+import shutil
 import subprocess
 from tempfile import TemporaryDirectory
 from time import perf_counter
@@ -176,5 +177,11 @@ if __name__ == '__main__':
     parser.add_argument('--screenshot', type=Path)
     args = parser.parse_args()
     with TemporaryDirectory(prefix='utopia-papilot-qa-', ignore_cleanup_errors=True) as temporary:
-        result = asyncio.run(probe(args.exe.resolve(strict=True), args.development, Path(temporary).resolve(), args.screenshot))
+        root = Path(temporary).resolve()
+        executable = args.exe.resolve(strict=True)
+        if args.development:
+            staging = root / 'electron'
+            shutil.copytree(executable.parent, staging, copy_function=shutil.copyfile)
+            executable = staging / executable.name
+        result = asyncio.run(probe(executable, args.development, root, args.screenshot))
         print(json.dumps(result))

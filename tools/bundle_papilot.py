@@ -109,7 +109,7 @@ def stage_papilot(destination: Path, checkout: Path | None = None) -> None:
         return subprocess.run([node, str(npm), *args], cwd=folder, env=env, check=True,
                               capture_output=capture, text=True, encoding='utf-8')
 
-    with tempfile.TemporaryDirectory(prefix='utopia-papilot-build-', dir=destination.parent) as folder:
+    with tempfile.TemporaryDirectory(prefix='utopia-papilot-build-', dir=destination.parent, ignore_cleanup_errors=True) as folder:
         scratch = Path(folder)
         source = scratch / 'source'
         export_source(source, checkout, scratch)

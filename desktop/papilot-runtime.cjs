@@ -2,7 +2,9 @@ const { execFile, spawn } = require('node:child_process');
 const { createHash, randomUUID } = require('node:crypto');
 const { existsSync } = require('node:fs');
 const fs = require('node:fs/promises');
+const http = require('node:http');
 const path = require('node:path');
+const { setTimeout: delay } = require('node:timers/promises');
 const { pathToFileURL } = require('node:url');
 
 const READY_TIMEOUT = 60_000;
@@ -173,6 +175,39 @@ function waitUntilReady(child, signal, log) {
   });
 }
 
+function localHealth(origin, signal) {
+  return new Promise(resolve => {
+    // Start a fresh loopback connection. A previous backend may have used the
+    // same port, so a pooled socket can be stale even after the new bind.
+    const request = http.get(`${origin}/api/health`, {
+      agent: false, signal: AbortSignal.any([signal, AbortSignal.timeout(1500)]),
+    }, async response => {
+      try {
+        if (response.statusCode !== 200) { response.resume(); resolve(null); return; }
+        response.setEncoding('utf8');
+        let body = '';
+        for await (const chunk of response) {
+          body += chunk;
+          if (body.length > 32_768) { response.destroy(); resolve(null); return; }
+        }
+        resolve(JSON.parse(body));
+      } catch { resolve(null); }
+    });
+    request.once('error', () => resolve(null));
+  });
+}
+
+async function verifyIdentity(origin, instance, signal) {
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    signal.throwIfAborted();
+    const health = await localHealth(origin, signal);
+    if (health?.name === 'Papilot' && health.desktopInstance === instance) return;
+    if (attempt < 3) await delay(200, undefined, { signal });
+  }
+  signal.throwIfAborted();
+  throw new Error('Papilot 未通过本地工作台身份校验。');
+}
+
 async function readPort(file) {
   try {
     const port = JSON.parse(await fs.readFile(file, 'utf8'));
@@ -282,11 +317,7 @@ function createPapilotRuntime({ resources, profile, resolveEnvironment = async (
         watchExit(record);
       } finally { await output.close(); }
       origin = await ready;
-      const health = await fetch(`${origin}/api/health`, {
-        signal: AbortSignal.any([signal, AbortSignal.timeout(5000)]), redirect: 'error',
-      }).then(response => response.ok ? response.json() : null).catch(() => null);
-      signal.throwIfAborted();
-      if (health?.name !== 'Papilot' || health.desktopInstance !== instance) throw new Error('Papilot 未通过本地工作台身份校验。');
+      await verifyIdentity(origin, instance, signal);
     }
     signal.throwIfAborted();
     if (!childAlive(record.child)) throw new Error('Papilot 工作台在启动后退出。');

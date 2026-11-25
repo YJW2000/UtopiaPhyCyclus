@@ -25,6 +25,7 @@ function paperTemplate(url) {
 function createPapilotView({ runtime, resources, getWindow }) {
   let view;
   let origin;
+  let loadedRuntime;
   let attached;
   let requested = false;
   let latestBounds;
@@ -154,9 +155,11 @@ function createPapilotView({ runtime, resources, getWindow }) {
       if (!requested) return;
       if (!view) view = createView();
       const target = view;
-      if (origin !== started.origin || originOf(target.webContents.getURL()) !== started.origin) {
+      if (loadedRuntime !== started || origin !== started.origin || originOf(target.webContents.getURL()) !== started.origin) {
         origin = started.origin;
+        readyForFolder = false;
         await target.webContents.loadURL(origin);
+        loadedRuntime = started;
       }
       const parent = getWindow();
       if (!requested || !parent || parent.isDestroyed() || target.webContents.isDestroyed()) return;
@@ -173,7 +176,7 @@ function createPapilotView({ runtime, resources, getWindow }) {
 
   async function requestFolder(folder) {
     const projectPath = await runtime.projectPath(folder);
-    if (readyForFolder && view && !view.webContents.isDestroyed() && originOf(view.webContents.getURL()) === origin) {
+    if (readyForFolder && runtime.current()?.origin === origin && view && !view.webContents.isDestroyed() && originOf(view.webContents.getURL()) === origin) {
       view.webContents.send('papilot:open-folder', projectPath);
     } else {
       pendingFolder = projectPath;
@@ -193,7 +196,7 @@ function createPapilotView({ runtime, resources, getWindow }) {
 
   function authorized(event) {
     return view && !view.webContents.isDestroyed() && event.sender === view.webContents
-      && event.senderFrame === event.sender.mainFrame && originOf(event.senderFrame?.url) === origin;
+      && event.senderFrame === event.sender.mainFrame && runtime.current()?.origin === origin && originOf(event.senderFrame?.url) === origin;
   }
 
   async function chooseEnvironment() {
