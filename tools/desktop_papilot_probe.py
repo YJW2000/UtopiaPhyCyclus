@@ -29,6 +29,9 @@ REVISED = '编译和版本管理验收'
 NOTE = '校核电流和单位'
 COMMIT = '验证 Papilot 版本记录'
 SLOT = '.papilot-workspace'
+# An occluded QA window still needs to draw PDF pages and observe resize events.
+RENDER_FLAGS = ('--disable-backgrounding-occluded-windows', '--disable-background-timer-throttling',
+                '--disable-renderer-backgrounding')
 
 
 def desktop_target(port, embedded=False):
@@ -77,8 +80,8 @@ async def point_note(page, project):
     assert await page.js(f'fetch({endpoint}).then(r => r.json()).then(s => s.annotations.some(n => n.comment === {json.dumps(NOTE)}))')
 
 
-def compiled_pdf_text(origin, project):
-    with urlopen(f'{origin}/api/projects/{quote(project)}/manuscript.pdf', timeout=5) as response:
+def compiled_pdf_text(origin, project, build_key):
+    with urlopen(f'{origin}/api/projects/{quote(project)}/manuscript.pdf?key={quote(build_key)}', timeout=5) as response:
         payload = response.read()
     with pymupdf.open(stream=payload, filetype='pdf') as document:
         return ''.join(''.join(page.get_text() for page in document).split())
@@ -108,6 +111,18 @@ async def commit_tex_edit(page, folder):
     await page.until(f'document.querySelector(".git-workspace")?.textContent.includes({json.dumps(COMMIT)})')
 
 
+async def resize_view(shell, project):
+    initial_width = await project.js('innerWidth')
+    await click(shell, '.collapse-nav')
+    await shell.until('document.querySelector(".app-shell")?.classList.contains("compact")')
+    try:
+        await project.until(f'innerWidth > {initial_width} + 30', seconds=40)
+    except TimeoutError as error:
+        slot_width = await shell.js(f'{find(SLOT)}?.getBoundingClientRect().width')
+        current_width = await project.js('innerWidth')
+        raise AssertionError(f'Shell slot {slot_width}px, native view {initial_width}px → {current_width}px') from error
+
+
 async def probe(executable, development, root, screenshot=None):
     bank = root / 'bank'
     (bank / 'chapters').mkdir(parents=True)
@@ -118,7 +133,8 @@ async def probe(executable, development, root, screenshot=None):
             shell = Page(shell_socket)
             started = perf_counter()
             await click(shell, 'button[data-page=papilot]')
-            assert await shell.js(f'Boolean({find(SLOT)}) && !{find(SLOT)}.querySelector("iframe")')
+            await shell.until(f'Boolean({find(SLOT)})')
+            assert await shell.js(f'!{find(SLOT)}.querySelector("iframe")')
             await shell.until(f'{find(SLOT)}?.getAttribute("aria-busy") === "false"', seconds=135)
             error = await shell.js(f'{find(SLOT)}.querySelector("[role=alert]")?.textContent')
             assert not error, error
@@ -128,9 +144,7 @@ async def probe(executable, development, root, screenshot=None):
                 await project.until('Boolean(window.papilotDesktop?.chooseDirectory && document.querySelector(".sidebar"))', seconds=45)
                 first_open_ms = round((perf_counter() - started) * 1000)
                 assert await project.js('window.top === window && !window.require && !window.utopia')
-                initial_width = await project.js('innerWidth')
-                await click(shell, '.collapse-nav')
-                await project.until(f'innerWidth > {initial_width} + 30')
+                print(f'Embedded renderer ready in {first_open_ms} ms.', flush=True)
                 await click(shell, 'button[data-page=tex]')
                 await click(shell, 'summary')
                 await shell.js('document.querySelector("textarea.paste-tex").focus()')
@@ -151,15 +165,23 @@ async def probe(executable, development, root, screenshot=None):
                 assert folder.is_relative_to(root), 'The opened project must be inside the disposable workspace.'
                 assert not list((bank / 'chapters').rglob('*.tex'))
                 await click(project, '.manuscript-link')
-                await project.until('Boolean(document.querySelector(".pdfViewer .page canvas"))', seconds=150)
                 project_id = projects[0]['id']
+                endpoint = json.dumps(f'/api/projects/{project_id}/manuscript')
+                await project.until(f'fetch({endpoint}).then(r => r.json()).then(s => s.build?.status === "ready")', seconds=150)
+                build_key = await project.js(f'fetch({endpoint}).then(r => r.json()).then(s => s.build.key)')
                 origin = await project.js('location.origin')
-                contents = await asyncio.to_thread(compiled_pdf_text, origin, project_id)
+                contents = await asyncio.to_thread(compiled_pdf_text, origin, project_id, build_key)
                 assert ORIGINAL in contents and '\ufffd' not in contents, contents
+                print('Embedded LaTeX PDF compiled with readable Chinese.', flush=True)
+                await shell.command('Page.bringToFront')
+                await project.command('Page.bringToFront')
+                await project.command('Emulation.setFocusEmulationEnabled', {'enabled': True})
+                await project.until('Boolean(document.querySelector(".pdfViewer .page canvas"))', seconds=45)
                 await point_note(project, project_id)
                 if screenshot:
                     await project.screen(screenshot)
                 await commit_tex_edit(project, folder)
+                print('PDF annotation and Git commit verified.', flush=True)
 
             await click_label(shell, '返回当前文稿')
             await click(shell, 'button[aria-label="更多操作"]')
@@ -168,11 +190,17 @@ async def probe(executable, development, root, screenshot=None):
             source_field = find('textarea[aria-label="编辑 LaTeX 源码"]')
             await shell.until(f'{source_field}?.value.includes({json.dumps(REVISED)})', seconds=45)
             assert not list((bank / 'chapters').rglob('*.tex'))
-        await wait_for(process, lambda: native_close(process.pid))
+            print('Git-reviewed source round-tripped to the Utopia draft.', flush=True)
+
+            await click(shell, 'button[data-page=papilot]')
+            await shell.until(f'{find(SLOT)}?.getAttribute("aria-busy") === "false"')
+            async with websockets.connect(embedded_url) as project_socket:
+                await resize_view(shell, Page(project_socket))
+        await wait_for(process, lambda: native_close(process.pid, title='乌托邦高中物理题库助手'))
         return {'embedded': True, 'resizes': True, 'texCompiled': True, 'annotations': True,
                 'gitCommit': True, 'draftRoundTrip': True, 'papilotVersion': state['version'], 'firstOpenMs': first_open_ms}
 
-    return await launch(executable, development, root, bank, run)
+    return await launch(executable, development, root, bank, run, chromium_flags=RENDER_FLAGS)
 
 
 if __name__ == '__main__':

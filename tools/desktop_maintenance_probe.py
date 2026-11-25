@@ -52,13 +52,14 @@ def report(state, phase):
     return result
 
 
-def native_close(process_id):
+def native_close(process_id, *, title=None):
     """Post the title-bar Close command to this test process's visible window."""
     user32 = ctypes.WinDLL('user32', use_last_error=True)
     callback = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
     user32.EnumWindows.argtypes = (callback, wintypes.LPARAM)
     user32.GetWindowThreadProcessId.argtypes = (wintypes.HWND, ctypes.POINTER(wintypes.DWORD))
     user32.GetClassNameW.argtypes = (wintypes.HWND, wintypes.LPWSTR, ctypes.c_int)
+    user32.GetWindowTextW.argtypes = (wintypes.HWND, wintypes.LPWSTR, ctypes.c_int)
     user32.IsWindowVisible.argtypes = (wintypes.HWND,)
     user32.PostMessageW.argtypes = (wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM)
     handles = []
@@ -71,7 +72,10 @@ def native_close(process_id):
             name = ctypes.create_unicode_buffer(128)
             user32.GetClassNameW(window, name, len(name))
             if name.value == 'Chrome_WidgetWin_1':
-                handles.append(window)
+                caption = ctypes.create_unicode_buffer(256)
+                user32.GetWindowTextW(window, caption, len(caption))
+                if title is None or title == caption.value:
+                    handles.append(window)
         return True
 
     user32.EnumWindows(inspect, 0)
@@ -91,11 +95,11 @@ async def wait_for(process, check, *, seconds=20):
     return result
 
 
-async def launch(exe, development, root, bank, callback):
+async def launch(exe, development, root, bank, callback, *, chromium_flags=()):
     with socket.socket() as sock:
         sock.bind(('127.0.0.1', 0))
         port = sock.getsockname()[1]
-    command = [str(exe), *([str(ROOT / 'desktop')] if development else []),
+    command = [str(exe), *([str(ROOT / 'desktop')] if development else []), *chromium_flags,
                f'--remote-debugging-port={port}', '--library', str(bank)]
     env = {**os.environ, 'UTOPIA_DESKTOP_PROFILE': str(root / 'profile'),
            'UTOPIA_RUNTIME_CACHE': str(root / 'runtime-cache')}
