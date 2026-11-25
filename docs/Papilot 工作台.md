@@ -1,0 +1,18 @@
+# Papilot 工作台
+
+题库的「Papilot 工作台」加载官方 [Papilot 0.14.1](https://github.com/PapilotAI/papilot/tree/a1d4dfffd5284e1bbbd3d36649ff82a5de897b31) 的界面、服务端、Agent 适配器和审阅引擎。在一个桌面窗口内可切换题库和多文件 LaTeX 项目。当前集成版本随乌托邦安装包更新。
+
+## 从题库编辑一道题
+
+1. 在「全局浏览」打开题目，或先通过 TeX、PDF、图片录入建立可编辑草稿。
+2. 选择题目工作台的「更多操作 → 在 Papilot 工作台打开」。初次打开会复制草稿、模板及可解析的本地依赖到独立项目。再次打开会继续此前的项目及 Git 历史。
+3. 在项目内编译 PDF 并做批注。可以用魔法笔、批注分组、文本选区或方框，把修改要求发给选定的 Agent。打开「改动」逐项审阅、采用或放弃。
+4. 需要同步回题库时，点「返回当前文稿」，通过「更多操作 → 从 Papilot 导入改动」将项目的当前排版源码和本地依赖导入题库草稿。确认排版后再入库。如果两边都编辑过源码，界面会提示先核对两份稿件。
+
+## 使用项目功能
+
+- 从 Papilot 工作台打开现有目录、创建稿件、导入项目或使用 Universe 模板。项目管理包括源文件浏览、LaTeX 编译与错误诊断、源码定位、PDF 连续阅读、搜索、目录、书签和带批注 PDF 导出。
+- 每个 Agent 编辑任务可以独立审阅。工作台提供对比、部分采用、充当审稿人的 Agent、任务历史与反馈、模型及权限选项、协作、技能、记忆和使用记录。模型需要在对应的本地 Agent 或 Writer 中完成登录和配置。
+- Git 面板可查看工作树和版本历史，支持暂存、提交、还原、处理冲突和同步。本地审阅和本地提交可以独立进行。拉取或推送使用项目已有的 Git 远端和凭据。
+- Overleaf 登录和双向同步、Zotero 引文库和 PDF、论文检索及远程访问均使用 Papilot 本身的流程。这些功能依赖相应的账号或服务。手机访问使用官方 Tailscale Serve 配置，并在启动桌面应用前指定 `PAPILOT_PUBLIC_ORIGIN` 和 `PAPILOT_TAILSCALE_LOGIN`。[Papilot 使用指南](https://github.com/PapilotAI/papilot/blob/a1d4dfffd5284e1bbbd3d36649ff82a5de897b31/docs/guide.md)
+- Windows 运行环境可以在 Papilot 设置中检测和切换。WSL 需要已安装的发行版和其中的工具。Papilot 上游的 Typeless 键盘桥接面向 macOS。

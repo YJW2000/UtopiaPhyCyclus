@@ -15,12 +15,14 @@ const BROWSE_MIN = 170
 const WORKBENCH_FRACTION = 0.82
 const Editor = lazy(() => import('./Editor'))
 const ArchitectureGuide = lazy(() => import('./ArchitectureGuide'))
+const PapilotWorkspace = lazy(() => import('./PapilotWorkspace'))
 const pages = {
   stats: ['📊', '数据统计'],
   entry: ['📝', '图片识别'],
   tex: ['📄', 'TeX录入'],
   pdf: ['📑', 'PDF录入'],
   browse: ['🔍', '全局浏览'],
+  papilot: ['🖋️', 'Papilot 工作台'],
   exam: ['🖨️', '组卷排版'],
   search: ['🔎', '题目查找'],
   intro: ['📘', '架构介绍'],
@@ -323,6 +325,7 @@ export default function App() {
       window.removeEventListener('paste', pasteImage)
     }
   }, [editing, importImage, legacy, legacyPending, page])
+  useEffect(() => window.utopia.onPapilotShortcut(navigate), [])
   const imageBusy = page === 'entry' && Boolean(busy)
   const actionProps = { open, add, basket }
   const docking = Boolean(doc && workbenchQuestion && !legacy && (page === 'browse' || page === 'search'))
@@ -401,7 +404,10 @@ export default function App() {
           </div>
         )}
         <div className={'workspace-body' + (rightVisible ? ' workspace-with-dock' : '')}>
-          {!editing && <>
+          {!editing && page === 'papilot' && <Suspense fallback={<p>正在载入 Papilot 工作台…</p>}>
+            <PapilotWorkspace />
+          </Suspense>}
+          {!editing && page !== 'papilot' && <>
             <div ref={mainScroll} className={'main-scroll' + (legacy ? ' embedded' : '')}>
               {legacy ? (
                 <>
@@ -783,6 +789,7 @@ export default function App() {
                 docked={docking && !editing}
                 onExpand={rightVisible ? () => setEditing(true) : undefined}
                 onEditFileInfo={workbenchQuestion ? (document) => setFileInfo({ path: workbenchQuestion.path, document }) : undefined}
+                onOpenPapilot={() => navigate('papilot')}
                 onChange={setDoc}
                 onClose={() => {
                   if (!editing) setWorkbenchOpen(false)

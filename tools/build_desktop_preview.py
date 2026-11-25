@@ -184,6 +184,9 @@ def main() -> None:
     if not args.runtime_only:
         stage_source()
     if args.installer:
+        from bundle_papilot import stage_papilot
+
+        stage_papilot(STAGE / 'papilot')
         build_installer()
 
 

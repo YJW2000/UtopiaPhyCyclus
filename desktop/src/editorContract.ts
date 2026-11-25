@@ -41,6 +41,7 @@ export interface EditorProposal {
 }
 
 export interface EditorDocument {
+  papilotProject?: boolean
   id: string
   title: string
   source: string

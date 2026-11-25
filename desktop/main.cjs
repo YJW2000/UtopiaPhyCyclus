@@ -9,6 +9,8 @@ const { createInterface } = require('node:readline');
 const { Readable } = require('node:stream');
 const { fileURLToPath, pathToFileURL } = require('node:url');
 const { createEnvironment } = require('./environment.cjs');
+const { createPapilotRuntime } = require('./papilot-runtime.cjs');
+const { createPapilotView } = require('./papilot-view.cjs');
 
 const PRODUCT_NAME = '乌托邦高中物理题库助手';
 const APPLICATION_ID = 'io.github.yjw2000.utopiaphycyclus.desktop.preview';
@@ -33,6 +35,7 @@ const METHODS = new Set([
   'library.check', 'library.maintenanceStatus', 'context.chat', 'ui.load', 'ui.save', 'ui.providers',
   'workspace.list', 'workspace.open', 'workspace.resume', 'workspace.create',
   'workspace.save', 'workspace.import_pdf', 'workspace.reconstruct', 'workspace.compile', 'workspace.locate', 'workspace.chat',
+  'workspace.papilot_import',
   'workspace.apply', 'workspace.dismiss', 'workspace.undo', 'workspace.export', 'workspace.export_tex', 'workspace.export_pdf',
   'workspace.chapters', 'task.get', 'task.cancel',
 ]);
@@ -60,6 +63,12 @@ const readers = new Set();
 const writers = new Set();
 const assetTokens = new Map();
 const tokenPaths = new Map();
+
+const papilot = createPapilotView({
+  runtime: createPapilotRuntime({ resources: RESOURCES, profile: app.getPath('userData'), resolveEnvironment: environment.runtimeEnvironment }),
+  resources: RESOURCES,
+  getWindow: () => window,
+});
 
 function inside(directory, file) {
   const relative = path.relative(directory, file);
@@ -548,6 +557,20 @@ function registerIpc() {
     return rpc.send(method, normalized);
   });
   handle('legacy', legacyUrl);
+  handle('papilot-show', papilot.show);
+  handle('papilot-bounds', papilot.resize);
+  handle('papilot-hide', papilot.hide);
+  handle('papilot-open-question', async (id, revision) => {
+    const activeState = state;
+    if (!rpc) rpc = createRpc();
+    const { folder, document } = await rpc.send('workspace.papilot_export', { id, revision });
+    if (activeState !== state) throw new Error('题库连接已切换。');
+    const root = path.join(state, 'papilot-projects', id);
+    const resolved = await fsp.realpath(folder);
+    if (!inside(root, resolved) || root === resolved) throw new Error('Papilot 题目项目位置无效。');
+    await papilot.requestFolder(resolved);
+    return document;
+  });
   handle('asset', assetUrl);
   handle('read-clipboard-image', async () => {
     try {
@@ -645,7 +668,7 @@ function openWindow() {
 }
 
 if (app.requestSingleInstanceLock()) {
-  app.on('second-instance', () => {
+  app.on('second-instance', (_event, args) => {
     if (closing) {
       reopenAfterQuit = true;
       return;
@@ -653,7 +676,10 @@ if (app.requestSingleInstanceLock()) {
     if (!window) return;
     if (window.isMinimized()) window.restore();
     window.focus();
+    const link = args.find(arg => arg.startsWith('utopia-papilot:'));
+    if (link) papilot.openLink(link);
   });
+  app.on('open-url', (event, url) => { if (papilot.openLink(url)) event.preventDefault(); });
   app.on('window-all-closed', () => app.quit());
   app.on('will-quit', event => {
     if (mayExit) return;
@@ -665,7 +691,7 @@ if (app.requestSingleInstanceLock()) {
       rpc?.stop('桌面应用正在关闭。');
       stopPython(legacy?.child);
       if (library) scheduleMaintenance(library, state, 'shutdown');
-      await Promise.all(maintenance.values());
+      await Promise.all([...maintenance.values(), papilot.close().catch(error => console.error(error))]);
     })().finally(() => {
       mayExit = true;
       if (reopenAfterQuit) app.relaunch();
@@ -685,7 +711,11 @@ if (app.requestSingleInstanceLock()) {
         (permission === 'media' && details.mediaTypes?.length === 1 && details.mediaTypes[0] === 'audio')));
     });
     registerIpc();
+    papilot.register();
+    if (app.isPackaged && !process.env.UTOPIA_DESKTOP_PROFILE) app.setAsDefaultProtocolClient('utopia-papilot');
     await openWindow();
+    const link = process.argv.find(arg => arg.startsWith('utopia-papilot:'));
+    if (link) papilot.openLink(link);
   }).catch(error => {
     dialog.showErrorBox(PRODUCT_NAME, `无法打开桌面应用。\n${error.message}`);
     app.quit();

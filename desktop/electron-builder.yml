@@ -7,6 +7,9 @@ files:
   - dist/**/*
   - main.cjs
   - preload.cjs
+  - papilot-preload.cjs
+  - papilot-runtime.cjs
+  - papilot-view.cjs
   - environment.cjs
   - winget-bootstrap.cjs
   - THIRD_PARTY_NOTICES.txt
@@ -17,6 +20,19 @@ extraResources:
     to: python
   - from: ../.release-work/desktop-preview/runtimes
     to: runtimes
+  - from: ../.release-work/desktop-preview/papilot
+    to: papilot
+    filter:
+      - '**/*'
+      - '!node_modules/**'
+      - '!engine/node_modules/**'
+      - '!runtime/node_modules/**'
+  - from: ../.release-work/desktop-preview/papilot/node_modules
+    to: papilot/node_modules
+  - from: ../.release-work/desktop-preview/papilot/engine/node_modules
+    to: papilot/engine/node_modules
+  - from: ../.release-work/desktop-preview/papilot/runtime/node_modules
+    to: papilot/runtime/node_modules
   - from: ../.release-work/desktop-preview/runtime-manifest.json
     to: runtime-manifest.json
   - from: ../fig/UtopiaPhyCyclus_sisyphus_icon.ico

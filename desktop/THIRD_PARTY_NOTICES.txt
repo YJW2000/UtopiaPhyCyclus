@@ -1,5 +1,11 @@
 UtopiaPhyCyclus desktop renderer
 
+Papilot 0.14.1 (MIT), copyright 2026 Cui Chen
+https://github.com/PapilotAI/papilot/tree/a1d4dfffd5284e1bbbd3d36649ff82a5de897b31
+The full upstream license and dependency notices are included with the bundled
+Papilot runtime under resources/papilot. The upstream code is available at the
+commit above.
+
 react 19.3.1, react-dom 19.3.1, scheduler 0.28.0
 https://github.com/facebook/react
 

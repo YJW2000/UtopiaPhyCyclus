@@ -3,6 +3,14 @@ import type {
   EnvironmentStatus,
   EnvironmentToolId,
 } from './settingsContract';
+import type { EditorDocument } from './editorContract';
+
+export interface PapilotBounds {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
 
 export interface ClipboardImage {
   name: string;
@@ -24,6 +32,11 @@ declare global {
       installEnvironmentTool(id: EnvironmentToolId): Promise<EnvironmentInstallResult>;
       openEnvironmentHelp(id: EnvironmentToolId): Promise<void>;
       tintWindowControls(color: string): Promise<void>;
+      papilotShow(bounds: PapilotBounds): Promise<void>;
+      papilotBounds(bounds: PapilotBounds): Promise<void>;
+      papilotHide(): Promise<void>;
+      papilotOpenQuestion(id: string, revision?: number): Promise<EditorDocument>;
+      onPapilotShortcut(listener: (route: 'settings' | 'papilot') => void): () => void;
     };
   }
 }

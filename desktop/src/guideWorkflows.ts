@@ -78,6 +78,23 @@ export const workflowLessons: GuideLesson[] = [
     action: { demo: true, label: '打开演示题' },
   },
   {
+    id: 'papilot-project',
+    title: '在 Papilot 中维护项目和审阅改动',
+    summary: '用完整项目工作台管理多文件 LaTeX、Agent 任务、PDF 批注和 Git 历史，也可把一道题送入项目逐轮修改。',
+    steps: [
+      '直接打开侧栏「Papilot 工作台」可以打开文件夹、导入项目或从模板创建。已经在题库里打开一道题时，用「更多操作 → 在 Papilot 工作台打开」。如果只有原卷 PDF，先识别成 LaTeX。',
+      '编译后可以在 PDF 上框选公式或配图，分组批注并发给本地 Agent。对照排版审阅改动，再逐项采用或退回。',
+      '从项目的 Git 面板查看或提交已采用的改动。Overleaf、Zotero 和远程访问按各自的设置连接。可以在本机独立完成编译和审阅。',
+      '点击题库顶部「返回当前文稿」，再选「更多操作 → 从 Papilot 导入改动」。校对回传的题库草稿后，再按原有流程入库。',
+    ],
+    example: {
+      title: '校正一张实验电路图',
+      text: '从题库打开一道伏安法测电阻题，在 Papilot 里框选电流表和滑动变阻器并说明接线要求。比较修改前后的 PDF，接受正确的改动，再导回题库草稿核对电表读数和正文引用。',
+    },
+    check: 'Papilot 项目和题库草稿中都能编译出修正后的电路图，正式入库前可以核对两处稿件。',
+    action: { page: 'papilot', label: '打开 Papilot 工作台' },
+  },
+  {
     id: 'save-question',
     title: '续编工作稿与正式入库',
     summary: '工作稿保留编辑进度和对话。已入库的题目可在「全局浏览」「题目查找」中检索和用于组卷。',

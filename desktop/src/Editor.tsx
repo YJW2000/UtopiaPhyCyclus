@@ -23,6 +23,7 @@ interface Props {
   docked?: boolean
   onExpand?: () => void
   onEditFileInfo?: (document: EditorDocument) => void
+  onOpenPapilot?: () => void
   onChange: (document: EditorDocument) => void
   onClose: () => void
 }
@@ -97,7 +98,7 @@ export default function Editor(props: Props) {
 
 export { Editor }
 
-function Workbench({ document, docked = false, onExpand, onEditFileInfo, onChange, onClose }: Props) {
+function Workbench({ document, docked = false, onExpand, onEditFileInfo, onOpenPapilot, onChange, onClose }: Props) {
   const draftKey = `utopia-workbench-draft-${document.id}`
   const layoutKey = `utopia-workbench-${docked ? 'dock-layout' : 'layout'}-${document.id}`
   const bookmarkKey = `utopia-workbench-bookmarks-${document.id}`
@@ -111,6 +112,7 @@ function Workbench({ document, docked = false, onExpand, onEditFileInfo, onChang
   const [layout, setLayout] = useState(() => initialLayout(document, layoutKey, docked))
   const [preview, setPreview] = useState(() => ({ path: document.previewPath, source: document.previewCurrent === false ? undefined : document.source }))
   const [compiling, setCompiling] = useState(false)
+  const [papilotBusy, setPapilotBusy] = useState(false)
   const [reconstructing, setReconstructing] = useState(false)
   const [recognitionProgress, setRecognitionProgress] = useState('')
   const [exporting, setExporting] = useState(false)
@@ -835,6 +837,28 @@ function Workbench({ document, docked = false, onExpand, onEditFileInfo, onChang
     catch { /* The save status already shows the error. */ }
   }
 
+  async function transferPapilot(open: boolean) {
+    if (papilotBusy) return
+    setPapilotBusy(true)
+    setNotice('')
+    try {
+      const saved = await persist()
+      const next = open
+        ? await window.utopia.papilotOpenQuestion(saved.id, saved.revision)
+        : await editorCall<EditorDocument>('workspace.papilot_import', { id: saved.id, revision: saved.revision })
+      if (open) {
+        accept(next)
+        onOpenPapilot?.()
+      } else {
+        const sourceChanged = next.source !== saved.source
+        accept(next, sourceChanged)
+        setNotice(sourceChanged ? '已将 Papilot 项目的改动导入题库草稿。' : 'Papilot 项目没有新的源码改动。')
+        if (sourceChanged) void compileCurrent(next.source)
+      }
+    } catch (error) { setNotice(errorMessage(error)) }
+    finally { setPapilotBusy(false) }
+  }
+
   const pdfReady = Boolean(pdfView?.pageCount) && layout.mode !== 'chat'
   const buildUtilityAction = (id: Utility, label: string, icon: WorkbenchAction['icon']): WorkbenchAction => ({
     id, label, icon, pressed: utility === id, disabled: !pdfReady && (id !== 'notes' || !draft.selections.length),
@@ -865,6 +889,8 @@ function Workbench({ document, docked = false, onExpand, onEditFileInfo, onChang
   ]
   const fileActions: WorkbenchAction[] = [
     { id: 'rename', label: '编辑题目标题', onClick: () => setRenaming(true) },
+    ...(onOpenPapilot ? [{ id: 'papilot', label: '在 Papilot 工作台打开', disabled: papilotBusy || !draft.source.trim(), onClick: () => void transferPapilot(true) }] : []),
+    ...(record.papilotProject ? [{ id: 'papilot-import', label: '从 Papilot 导入改动', disabled: papilotBusy, onClick: () => void transferPapilot(false) }] : []),
     ...(onEditFileInfo ? [{ id: 'file-info', label: '修改文件信息', onClick: () => void editFileInfo() }] : []),
     { id: 'save', label: '另存入库', icon: 'save', disabled: !draft.source.trim(), onClick: () => openSheet('library') },
     ...(record.pdfPath ? [{ id: 'recognize', label: reconstructing ? '正在识别…' : recognitionLabel, disabled: reconstructing, onClick: startRecognition }] : []),

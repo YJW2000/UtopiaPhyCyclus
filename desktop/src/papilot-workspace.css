@@ -1,0 +1,46 @@
+.papilot-workspace {
+  position: relative;
+  display: grid;
+  flex: 1 1 auto;
+  min-inline-size: 0;
+  min-block-size: 0;
+  place-items: center;
+  overflow: hidden;
+  color: var(--mc-text);
+  background: var(--mc-surface);
+}
+
+.papilot-workspace-status {
+  max-inline-size: min(38rem, calc(100% - 2rem));
+  margin: 0;
+  color: var(--mc-muted);
+  text-align: center;
+}
+
+.papilot-workspace-error {
+  max-block-size: calc(100% - 2rem);
+  overflow: auto;
+  padding: 1.25rem;
+  border: 1px solid var(--mc-border);
+  border-radius: 1rem;
+  background: var(--mc-bg);
+  overflow-wrap: anywhere;
+}
+
+.papilot-workspace-error strong {
+  color: var(--mc-text);
+}
+
+.papilot-workspace-error button {
+  padding: 0.4rem 0.75rem;
+  border: 1px solid var(--mc-border);
+  border-radius: 0.5rem;
+  color: var(--mc-text);
+  background: var(--mc-surface);
+  cursor: pointer;
+}
+
+.papilot-workspace-error button:hover,
+.papilot-workspace-error button:focus-visible {
+  border-color: var(--mc-accent);
+}

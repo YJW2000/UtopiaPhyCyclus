@@ -24,6 +24,11 @@ gettitlestring graphics graphics-cfg graphics-def hycolor ifoddpage iftex infwar
 intcalc kvdefinekeys kvoptions kvsetkeys latex-fonts ltxcmds pdfescape pdflscape
 pdftexcmds pict2e refcount rerunfilecheck stringenc translations trimspaces
 uniquecounter url xecjk zapfding zhnumber'''.split()
+# The Papilot engine uses latexmk's Windows Perl wrapper for incremental
+# builds. Bibliography and sample-paper dependencies are also used on first
+# launch, so they belong to the offline desktop runtime.
+TEX_PACKAGES += '''latexmk tlperl.windows bibtex biber biblatex makeindex
+algorithms algorithmicx cleveref lm microtype natbib thmtools'''.split()
 
 
 def copy(source, destination):
@@ -33,7 +38,7 @@ def copy(source, destination):
     shutil.copy2(source, destination)
 
 
-def prepare_tex(source):
+def prepare_tex(source, destination=TARGET):
     records = {block.splitlines()[0][5:]: block for block in
                (source / 'tlpkg/texlive.tlpdb').read_text(encoding='utf-8').split('\n\n')
                if block.startswith('name ')}
@@ -52,7 +57,7 @@ def prepare_tex(source):
                     pending.append(dependency)
         if name + '.windows' in records:
             pending.append(name + '.windows')
-    tex = TARGET / 'runtimes/texlive'
+    tex = destination / 'runtimes/texlive'
     paths = set()
     for name in sorted(selected):
         section = ''

@@ -341,7 +341,7 @@ function createEnvironment({ resources, env = process.env, platform = process.pl
     }
   }
 
-  return { detect, install, helpUrl: id => getTool(id).helpUrl };
+  return { detect, install, helpUrl: id => getTool(id).helpUrl, runtimeEnvironment: async () => (await context()).env };
 }
 
 module.exports = { createEnvironment };

@@ -110,6 +110,8 @@ class DesktopWorkspace:
             'workspace.reconstruct': self.reconstruct,
             'workspace.compile': self.compile,
             'workspace.locate': self.locate,
+            'workspace.papilot_export': self.papilot_export,
+            'workspace.papilot_import': self.papilot_import,
             'workspace.chat': self.chat,
             'workspace.apply': self.apply,
             'workspace.dismiss': self.dismiss,
@@ -564,6 +566,46 @@ class DesktopWorkspace:
             job.publish(lambda: dict(start=utf16_length(source[:span['start']]), end=utf16_length(source[:span['end']])))
 
         return self.jobs.submit(locate_job, document['id'])
+
+    def papilot_export(self, params):
+        from services.papilot_question_project import prepare_question_project
+
+        with self.lock:
+            document = self._read(params.get('id'))
+            self._check_revision(document, params)
+            if not document['source'].strip():
+                raise ValueError('请先识别原卷或录入 LaTeX，再打开 Papilot 项目工作台。')
+            ident = document['id']
+            root = self.state / 'papilot-projects' / ident
+            resources = [self._directory(ident), self.library]
+            if document.get('_sourceDirectory'):
+                resources.append(Path(document['_sourceDirectory']))
+            result = prepare_question_project(root, document['source'], document['title'], self.runtime,
+                                              resources, self._defaults(document))
+            if not document.get('papilotProject'):
+                document['papilotProject'] = True
+                document['_papilotImportedHash'] = result['baseline']
+                self._write(document, touch=False)
+            return {'folder': result['folder'], 'document': self._public(document)}
+
+    def papilot_import(self, params):
+        from services.papilot_question_project import read_question_project
+
+        with self.lock:
+            document = self._read(params.get('id'))
+            self._check_revision(document, params)
+            if not document.get('papilotProject'):
+                raise ValueError('请先在 Papilot 工作台打开这份题目。')
+            root = self.state / 'papilot-projects' / document['id']
+            source = _source({'source': read_question_project(root)})
+            if source == document['source']:
+                return self._public(document)
+            if document.get('_papilotImportedHash') != _sha(document['source']):
+                raise ValueError('题库草稿和 Papilot 项目都可能已修改。请先核对两个版本，避免覆盖题库草稿。')
+            self._replace_source(document, source)
+            document['_papilotImportedHash'] = _sha(source)
+            self._write(document)
+            return self._public(document)
 
     def _proposal(self, document, changes, scope, selection, job):
         source = document['source']
