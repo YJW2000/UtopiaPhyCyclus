@@ -72,7 +72,7 @@ class BrowsePdfEditTests(unittest.TestCase):
         source.set_value(source.value.replace('4 kg', '5 kg')).run()
         self.set_view('PDF 框选编辑')
         self.assertIn('5 kg', self.at.session_state['compiles'][-1])
-        with patch.object(app, '_duplicate_save_confirmation', return_value=True), patch.object(app, 'record_operation'), patch.object(app, '_invalidate_semantic_for_file'), patch.object(app, '_update_csv_index_for_content_change') as index:
+        with patch.object(app, '_duplicate_save_confirmation', return_value=True), patch.object(app, 'record_operation'), patch.object(app, '_update_csv_index_for_content_change') as index:
             self.at.button(key=self.save_key).click().run()
         self.assertFalse(self.at.exception)
         index.assert_called_once()

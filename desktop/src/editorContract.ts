@@ -33,6 +33,7 @@ export interface EditorProposal {
   baseSource: string
   source: string
   scope: 'document' | 'selection'
+  kind?: 'solution'
   selection?: Pick<EditorSelection, 'start' | 'end'>
   changes?: { start: number; end: number; before: string; after: string }[]
   status: string
@@ -53,6 +54,7 @@ export interface EditorDocument {
   originalPage?: number
   pdfPageCount?: number
   sourcePath?: string | null
+  questionPath?: string
   selections?: EditorSelection[]
   activeSelectionId?: string | null
   messages?: EditorMessage[]
@@ -63,13 +65,19 @@ export interface EditorDocument {
   canUndo?: boolean
 }
 
-export interface EditorTask<T> {
+export interface EditorTaskProgress {
+  message: string
+  page?: number
+  total?: number
+}
+
+export interface EditorTask<T, P extends EditorTaskProgress = EditorTaskProgress> {
   id: string
   status: 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled'
   result?: T
   error?: string
   message?: string
-  progress?: { message: string; page?: number; total?: number }
+  progress?: P
   log?: string
 }
 
@@ -84,11 +92,15 @@ export async function editorCall<T>(method: string, params: Record<string, unkno
   return await window.utopia.call(method, params) as T
 }
 
-export async function pollEditorTask<T>(id: string, signal: AbortSignal, onProgress?: (progress: string) => void): Promise<EditorTask<T>> {
+export async function pollEditorTask<T, P extends EditorTaskProgress = EditorTaskProgress>(
+  id: string,
+  signal: AbortSignal,
+  onProgress?: (message: string, progress: P) => void,
+): Promise<EditorTask<T, P>> {
   while (!signal.aborted) {
-    const task = await editorCall<EditorTask<T>>('task.get', { id })
+    const task = await editorCall<EditorTask<T, P>>('task.get', { id })
     if (task.status === 'succeeded' || task.status === 'failed' || task.status === 'cancelled') return task
-    if (task.progress?.message) onProgress?.(task.progress.message)
+    if (task.progress?.message) onProgress?.(task.progress.message, task.progress)
     await new Promise<void>(resolve => setTimeout(resolve, 350))
   }
   return { id, status: 'cancelled' }

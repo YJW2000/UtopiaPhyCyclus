@@ -91,13 +91,9 @@ function ToolDetails({ tool }: { tool?: EnvironmentTool }) {
 export default function SettingsConnections({
   provider,
   saveProvider,
-  openApi,
-  apiPending,
 }: {
   provider?: string
   saveProvider: (provider: ProviderId) => Promise<void>
-  openApi: () => void
-  apiPending: boolean
 }) {
   const [providers, setProviders] = useState<ProviderStatus>()
   const [environment, setEnvironment] = useState<EnvironmentStatus>()
@@ -250,17 +246,14 @@ export default function SettingsConnections({
 
   const actions = { active, pending: pendingInstall, feedback, install, help }
   const agents = providers?.agents ?? []
-  const isReady = (agent: LocalAgent) => Boolean(agent.installed && environment?.tools[agent.id]?.installed)
+  const agentTool = (agent: LocalAgent) => agent.id === 'glm' ? undefined : environment?.tools[agent.id]
+  const isReady = (agent: LocalAgent) => agent.installed && (agent.id === 'glm' || Boolean(agentTool(agent)?.installed))
   const current = agents.find((agent) => agent.id === provider)
   const effective = providers?.effectiveProvider ?? provider
-  const currentLabel = provider === 'api' ? '自定义 API' : current?.label
-  const connected = provider === 'api' ? providers?.apiConfigured : current && isReady(current)
-  const activeLabel = effective === 'api'
-    ? (providers?.apiConfigured ? '自定义 API' : undefined)
-    : agents.find((agent) => agent.id === effective && isReady(agent))?.label
+  const activeLabel = agents.find((agent) => agent.id === effective && isReady(agent))?.label
   const selection = activeLabel
     ? `当前使用 ${activeLabel}`
-    : currentLabel && !connected ? `当前选择 ${currentLabel}，${checking ? '正在检测' : '尚未就绪'}` : ''
+    : current ? `当前选择 ${current.label}，${checking ? '正在检测' : '尚未就绪'}` : ''
 
   return (
     <>
@@ -287,14 +280,15 @@ export default function SettingsConnections({
             <fieldset className="settings-agent-list" disabled={saving}>
               <legend>默认连接</legend>
               {agents.map((agent) => {
-                const tool = environment?.tools[agent.id]
+                const tool = agentTool(agent)
                 const selected = agent.id === provider
                 const installing = tool?.installing || pendingInstall === agent.id
                 const ready = isReady(agent)
-                const status = installing
-                  ? '正在安装'
-                  : ready ? '已检测到' : !tool ? (checking ? '正在检测' : '待检测')
-                  : agent.installed || tool.installed ? '尚未就绪' : '未检测到'
+                let status = checking ? '正在检测' : '待检测'
+                if (agent.id === 'glm') status = ready ? '已配置' : '待配置'
+                else if (installing) status = '正在安装'
+                else if (ready) status = '已检测到'
+                else if (tool) status = agent.installed || tool.installed ? '尚未就绪' : '未检测到'
                 const command = agent.loginCommand
                 return (
                   <div className="settings-row" key={agent.id}>
@@ -314,10 +308,10 @@ export default function SettingsConnections({
                       </small>
                     </label>
                     {tool && <ToolControls tool={tool} {...actions} />}
-                    {selected && (
+                    {(selected || (agent.id === 'glm' && !ready)) && (
                       <div className="settings-agent-detail">
                         <ToolDetails tool={tool} />
-                        <p>{agent.images ? '支持图片输入。' : '仅支持文本输入。'}</p>
+                        {selected && <p>{agent.images ? '图片输入需要支持视觉的模型。' : '仅支持文本输入。'}</p>}
                         {agent.setup && <p>{agent.setup}</p>}
                         {agent.installed && command && (
                           <div className="settings-login">
@@ -335,35 +329,6 @@ export default function SettingsConnections({
                   </div>
                 )
               })}
-              <div className="settings-row">
-                <label className="settings-agent-choice">
-                  <input
-                    type="radio"
-                    name="settings-provider"
-                    checked={provider === 'api'}
-                    disabled={!provider}
-                    aria-label="自定义 API"
-                    aria-describedby="settings-provider-api"
-                    onChange={() => void select('api')}
-                  />
-                  <span>自定义 API</span>
-                  <small id="settings-provider-api" className="settings-status" data-ready={providers.apiConfigured}>
-                    {providers.apiConfigured ? '已配置' : '待配置'}
-                  </small>
-                </label>
-                {provider === 'api' && (
-                  <>
-                    <div className="settings-row-actions">
-                      <button type="button" disabled={apiPending} onClick={openApi}>
-                        {apiPending ? '正在打开…' : '打开 API 设置'}
-                      </button>
-                    </div>
-                    <div className="settings-agent-detail">
-                      <p>{providers.apiConfigured ? '图片输入取决于所配置的模型。' : '在 API 设置中填写地址、模型和密钥。'}</p>
-                    </div>
-                  </>
-                )}
-              </div>
             </fieldset>
           </>
         )}

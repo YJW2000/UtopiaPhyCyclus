@@ -13,8 +13,6 @@ class SidebarFlyoutTests(unittest.TestCase):
             (2,'📄  TeX录入','tex_workspace_mode','同卷试题录入'),
             (1,'🔎  题目查找','search_subpage','模糊查找'),
             (0,'🔎  题目查找','search_subpage','精确查找'),
-            (1,'⚙️  设置','settings_subpage','🔑 API设置'),
-            (0,'⚙️  设置','settings_subpage','🎨 UI设置'),
         ):
             index = next(i for i, label in enumerate(nav_labels) if label.startswith(route))
             key = f'mc-nav-bridge-{index}-{child}'
@@ -24,6 +22,8 @@ class SidebarFlyoutTests(unittest.TestCase):
             self.assertEqual(at.session_state[state],value)
             if state == 'search_subpage':
                 self.assertTrue(any(value in header.value for header in at.header))
+        settings_index = next(i for i, label in enumerate(nav_labels) if label.startswith('⚙️  设置'))
+        self.assertFalse(any(str(button.key).startswith(f'mc-nav-bridge-{settings_index}-') for button in at.button))
 
     def test_flyout_and_sidebar_receive_all_eight_palettes(self):
         backgrounds=set()

@@ -17,17 +17,28 @@ const TOOLS = new Map([
   ['qoder', { label: 'Qoder CLI', command: 'qoder', alias: 'qodercli', installer: 'https://qoder.com/install.ps1', helpUrl: 'https://docs.qoder.com/cli/installation' }],
   ['agy', { label: 'Antigravity CLI (agy)', command: 'agy', installer: 'https://antigravity.google/cli/install.ps1', helpUrl: 'https://antigravity.google/docs/getting-started?tab=cli' }],
   ['workbuddy', { label: 'WorkBuddy', launcher: true, helpUrl: 'https://cloud.tencent.com/document/product/1831/137025' }],
+  ['pi', { label: 'Pi', command: 'pi', installer: 'https://pi.dev/install.ps1', helpUrl: 'https://docs.pi.dev/latest/quickstart' }],
+  ['grok', { label: 'Grok Build CLI', command: 'grok', winget: 'xAI.GrokBuild', helpUrl: 'https://docs.x.ai/build/overview' }],
+  ['kimi', { label: 'Kimi Code CLI', command: 'kimi', installer: 'https://code.kimi.com/kimi-code/install.ps1', helpUrl: 'https://www.kimi.com/code/docs/en/kimi-code-cli/guides/getting-started' }],
+  ['qwen', { label: 'Qwen Code CLI', command: 'qwen', installer: 'https://qwen-code-assets.oss-cn-hangzhou.aliyuncs.com/installation/install-qwen-standalone.ps1', helpUrl: 'https://qwenlm.github.io/qwen-code-docs/en/users/quickstart/' }],
+  ['deepseek', { label: 'DeepSeek Harness', command: 'dsh', helpUrl: 'https://www.deepseek.com/download/' }],
 ]);
 
+const launchers = new Map([...TOOLS.keys()].filter(id => id !== 'git' && id !== 'latex').map(id => {
+  const suffix = id === 'deepseek' ? 'DSH' : id.toUpperCase();
+  return [id, [`UTOPIA_${suffix}_BIN`, `PAPILOT_${suffix}_BIN`]];
+}));
 const POWERSHELL_UTF8 = '[Console]::OutputEncoding = [Text.UTF8Encoding]::new($false);';
 const WINDOWS_LOCATIONS = `${POWERSHELL_UTF8}
   $codex = Get-AppxPackage -Name OpenAI.Codex -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty InstallLocation;
+  $userLaunchers = @{}; $machineLaunchers = @{};
+  foreach ($name in @(${[...launchers.values()].flat().map(name => `'${name}'`).join(', ')})) {
+    $userLaunchers[$name] = [Environment]::GetEnvironmentVariable($name, 'User');
+    $machineLaunchers[$name] = [Environment]::GetEnvironmentVariable($name, 'Machine');
+  }
   @{ machine = [Environment]::GetEnvironmentVariable('Path', 'Machine');
      user = [Environment]::GetEnvironmentVariable('Path', 'User'); codex = $codex;
-     workbuddyUser = [Environment]::GetEnvironmentVariable('UTOPIA_WORKBUDDY_BIN', 'User');
-     workbuddyMachine = [Environment]::GetEnvironmentVariable('UTOPIA_WORKBUDDY_BIN', 'Machine');
-     papilotUser = [Environment]::GetEnvironmentVariable('PAPILOT_WORKBUDDY_BIN', 'User');
-     papilotMachine = [Environment]::GetEnvironmentVariable('PAPILOT_WORKBUDDY_BIN', 'Machine') } | ConvertTo-Json -Compress`;
+     userLaunchers = $userLaunchers; machineLaunchers = $machineLaunchers } | ConvertTo-Json -Compress`;
 const CURSOR_INSTALL = `${POWERSHELL_UTF8}
   $ErrorActionPreference = 'Stop';
   if (Test-Path -LiteralPath (Join-Path $env:LOCALAPPDATA 'cursor-agent')) { throw 'Cursor CLI already has an installation directory.' }
@@ -110,6 +121,14 @@ function createEnvironment({ resources, env = process.env, platform = process.pl
   const roaming = env.APPDATA || path.join(home, 'AppData', 'Roaming');
   const prefix = path.join(roaming, 'npm');
   const cursorDirectory = path.join(local, 'cursor-agent');
+  const managedRoot = path.join(local, 'Papilot', 'agents');
+  const managed = new Map(windows ? [
+    ['pi', path.join(managedRoot, 'pi', 'node_modules', '.bin', 'pi.cmd')],
+    ['agy', path.join(managedRoot, 'antigravity', 'agy.exe')],
+    ['qoder', path.join(managedRoot, 'qoder', 'node_modules', '.bin', 'qodercli.cmd')],
+    ['codebuddy', path.join(managedRoot, 'launchers', 'codebuddy.cmd')],
+    ['workbuddy', path.join(managedRoot, 'launchers', 'workbuddy.cmd')],
+  ] : []);
   const systemRoot = env.SystemRoot || 'C:\\Windows';
   const powershell = path.join(systemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
   const shellArgs = ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command'];
@@ -117,6 +136,11 @@ function createEnvironment({ resources, env = process.env, platform = process.pl
   const bundledNode = path.join(resources, 'runtimes', 'node', 'node.exe');
   const failures = new Map();
   let active;
+
+  function launcherShape(value) {
+    if (path.isAbsolute(value)) return 'absolute';
+    return !/[/\\:]/.test(value) ? 'command' : null;
+  }
 
   async function context() {
     let registry = {};
@@ -128,11 +152,13 @@ function createEnvironment({ resources, env = process.env, platform = process.pl
     }
     const pathValues = [env.PATH, registry.machine, registry.user].filter(Boolean)
       .flatMap(value => value.split(path.delimiter)).map(value => value.trim().replace(/^"|"$/g, ''));
-    const defaults = [path.join(home, '.local', 'bin'), path.join(home, '.codex', 'bin')];
+    const defaults = [path.join(home, '.local', 'bin'), path.join(home, '.codex', 'bin'),
+      path.join(home, '.grok', 'bin'), path.join(home, '.kimi-code', 'bin')];
     if (windows) {
       const programFiles = uniquePaths([env.PROGRAMW6432, env.ProgramFiles || env.PROGRAMFILES, env['ProgramFiles(x86)'],
         path.join(local, 'Programs')], true);
       defaults.push(prefix, cursorDirectory, path.join(local, 'agy', 'bin'), path.join(local, 'codebuddy', 'bin'),
+        path.join(local, 'Programs', 'DeepSeek Harness', 'resources', 'runtime', 'cli', 'bin'),
         path.join(local, 'Microsoft', 'WindowsApps'),
         path.join(local, 'Microsoft', 'WinGet', 'Links'),
         ...programFiles.flatMap(base => [path.join(base, 'Git', 'cmd'), path.join(base, 'Git', 'bin'),
@@ -143,10 +169,21 @@ function createEnvironment({ resources, env = process.env, platform = process.pl
     const runtime = windows && await isFile(bundledNode) ? [path.dirname(bundledNode)] : [];
     const directories = uniquePaths([...runtime, ...pathValues, ...defaults], windows);
     const extended = { ...env, PATH: directories.join(path.delimiter) };
-    const workbuddy = [env.UTOPIA_WORKBUDDY_BIN, registry.workbuddyUser, registry.workbuddyMachine,
-      env.PAPILOT_WORKBUDDY_BIN, registry.papilotUser, registry.papilotMachine]
-      .find(value => typeof value === 'string' && value.trim())?.trim().replace(/^"|"$/g, '');
-    const winEnvironment = { directories, env: extended, codex: registry.codex, workbuddy };
+    const configured = new Map();
+    for (const [id, keys] of launchers) {
+      for (const key of keys) {
+        const value = [env[key], registry.userLaunchers?.[key], registry.machineLaunchers?.[key]]
+          .find(item => typeof item === 'string' && item.trim())?.trim().replace(/^"|"$/g, '');
+        if (!value) continue;
+        configured.set(id, { key, value });
+        const shape = launcherShape(value);
+        if (shape && (id !== 'workbuddy' || shape === 'absolute')) extended[keys[1]] = value;
+        break;
+      }
+    }
+    const workbuddy = managed.get('workbuddy');
+    if (workbuddy && !configured.has('workbuddy') && await isFile(workbuddy)) extended.PAPILOT_WORKBUDDY_BIN = workbuddy;
+    const winEnvironment = { directories, env: extended, codex: registry.codex, configured };
     const winget = windows && await probe('winget', winEnvironment, [], ['.exe']);
     return { ...winEnvironment, winget: winget?.path || null, hasPowerShell: windows && await isFile(powershell) };
   }
@@ -155,7 +192,19 @@ function createEnvironment({ resources, env = process.env, platform = process.pl
     return directories.flatMap(directory => extension.map(suffix => path.join(directory, `${name}${suffix}`)));
   }
 
-  async function probe(name, host, fallback = [], extension, flag = '--version') {
+  async function probeLauncher(tool, host, launcher) {
+    const { value } = launcher;
+    const shape = launcherShape(value);
+    if (!shape || (tool.launcher && shape !== 'absolute')) return null;
+    const extensions = windows && !/\.(exe|cmd|bat)$/i.test(value) ? ['.exe', '.cmd', '.bat'] : [''];
+    if (tool.launcher && windows && (extensions[0] ||
+        (path.basename(value).toLowerCase() === 'workbuddy.exe' &&
+          await isFile(path.join(path.dirname(value), 'resources', 'app.asar'))))) return null;
+    const candidates = shape === 'absolute' ? extensions.map(suffix => value + suffix) : locations(value, host, extensions);
+    return probe(null, host, candidates, undefined, tool.launcher ? '--help' : '--version', true);
+  }
+
+  async function probe(name, host, fallback = [], extension, flag = '--version', allowTimeout = false) {
     const preferred = name === 'xelatex' ? [bundledTex] : [];
     const candidates = name ? locations(name, host, extension) : [];
     for (const filename of uniquePaths([...preferred, ...candidates, ...fallback], windows)) {
@@ -167,6 +216,9 @@ function createEnvironment({ resources, env = process.env, platform = process.pl
         env: shim ? { ...host.env, UTOPIA_TOOL_VERSION_PATH: filename } : host.env, cwd: home, timeout: 6_000,
       });
       if (result.code === 0) return { path: filename, version: usefulLines(result.output)[0]?.slice(0, 200) ?? null };
+      // Finding an Agent launcher is still meaningful when a busy host cannot
+      // finish its version command. Git and LaTeX require an executed probe.
+      if (allowTimeout && result.timedOut) return { path: filename, timedOut: true };
     }
     return null;
   }
@@ -197,48 +249,45 @@ function createEnvironment({ resources, env = process.env, platform = process.pl
     const tool = TOOLS.get(id);
     const storeCodex = windows && host.codex && path.isAbsolute(host.codex)
       ? [path.join(host.codex, 'app', 'resources', 'codex.exe')] : [];
-    const launcher = host.workbuddy;
-    const allowedLauncher = tool.launcher && launcher && path.isAbsolute(launcher) && (
-      !windows || /\.(exe|cmd|bat)$/i.test(launcher) &&
-        (path.basename(launcher).toLowerCase() !== 'workbuddy.exe' ||
-          !await isFile(path.join(path.dirname(launcher), 'resources', 'app.asar')))
+    const launcher = host.configured.get(id);
+    const managedLauncher = managed.get(id);
+    const result = launcher ? await probeLauncher(tool, host, launcher) : (
+      !tool.launcher && (await probe(tool.command, host, id === 'codex' ? storeCodex : [], undefined, '--version', launchers.has(id)) ||
+        (tool.alias && await probe(tool.alias, host, [], undefined, '--version', true))) ||
+      (managedLauncher && await probeLauncher(tool, host, { value: managedLauncher }))
     );
-    const result = tool.launcher
-      ? (allowedLauncher && await probe(null, host, [launcher], undefined, '--help'))
-      : await probe(tool.command, host, id === 'codex' ? storeCodex : []) ||
-        (tool.alias && await probe(tool.alias, host));
     const bundled = result?.path === bundledTex;
     const texDirectories = result ? [path.dirname(result.path), ...host.directories] : host.directories;
     const syncTeX = id === 'latex' && result
       ? (await Promise.all(locations('synctex', { directories: texDirectories }).map(isFile))).some(Boolean) : null;
     const installing = active?.id === id;
-    const installMethod = tool.launcher ? null : tool.npm ? 'npm' : tool.installer || id === 'cursor' ? '官方安装器' : 'WinGet';
+    const installMethod = tool.npm ? 'npm' : tool.installer || id === 'cursor' ? '官方安装器' : tool.winget ? 'WinGet' : null;
     const canBootstrap = Boolean(host.winget || host.hasPowerShell);
     const npmReady = nodeSupports(npm?.version, tool.node);
     const cursorPartial = id === 'cursor' && !result && windows
       && await fs.lstat(cursorDirectory).then(() => true, error => error.code !== 'ENOENT');
-    const installerAvailable = windows && !tool.launcher && (tool.npm ? npmReady || canBootstrap
+    const installerAvailable = windows && !launcher && installMethod && (tool.npm ? npmReady || canBootstrap
       : tool.installer || id === 'cursor' ? host.hasPowerShell && !cursorPartial : canBootstrap);
-    let detail = null;
+    let detail = result?.timedOut ? '已找到启动器，启动检测超时。' : null;
     if (id === 'latex' && result) {
       detail = syncTeX ? '已检测到 SyncTeX，可用于 PDF 与源码定位。' : '已检测到 XeLaTeX，缺少用于 PDF 正反向定位的 SyncTeX。';
     }
     if (!result) {
       if (active && !installing) detail = '请等待当前安装完成。';
       else if (failures.has(id)) detail = failures.get(id);
-      else if (tool.launcher) detail = host.workbuddy
-        ? '无法启动已配置的 WorkBuddy ACP 启动器，请检查路径和安装。'
-        : '请将 UTOPIA_WORKBUDDY_BIN 指向已登录的 WorkBuddy ACP 启动器，再重新检测。也可沿用 PAPILOT_WORKBUDDY_BIN。';
+      else if (launcher) detail = `无法启动 ${launcher.key} 指定的 ${tool.label}。请检查设置或清除此环境变量后重新检测。`;
+      else if (tool.launcher) detail = '请将 UTOPIA_WORKBUDDY_BIN 指向已登录的 WorkBuddy ACP 启动器，再重新检测。也可沿用 PAPILOT_WORKBUDDY_BIN。';
+      else if (!installMethod) detail = '请按安装说明准备 CLI，再重新检测。';
       else if (!windows) detail = '自动安装适用于 Windows，请参阅官方说明。';
       else if (cursorPartial) detail = '发现已有 Cursor CLI 安装目录。请按官方说明处理现有安装后重试。';
       else if (!installerAvailable) detail = '无法启动 Windows 安装工具，请参阅官方说明。';
       else if (tool.npm && !npmReady) detail = '安装时会先准备 Node.js LTS 和 npm。';
-      else if (id === 'cursor') detail = '安装时会检测 Git，缺少时会一并安装。';
+      else if (id === 'cursor' || id === 'kimi') detail = '安装时会检测 Git，缺少时会一并安装。';
       else if (!host.winget && tool.winget) detail = '必要时会先准备 Windows 程序包管理器。';
     }
     return { id, label: tool.label, installed: Boolean(result), path: result?.path ?? null, version: tool.launcher ? null : result?.version ?? null,
       source: result ? (bundled ? 'bundled' : 'system') : null, helpUrl: tool.helpUrl, installMethod, installing,
-      canInstall: !result && !active && installerAvailable, detail, progress: installing ? active.progress : null,
+      canInstall: Boolean(!result && !active && installerAvailable), detail, progress: installing ? active.progress : null,
       ...(id === 'latex' ? { syncTeX } : {}) };
   }
 
@@ -286,6 +335,9 @@ function createEnvironment({ resources, env = process.env, platform = process.pl
   async function install(id) {
     const tool = getTool(id);
     if (tool.launcher) return { ok: false, tool: id, message: '请按 WorkBuddy ACP 说明配置启动器。' };
+    if (!tool.winget && !tool.npm && !tool.installer && id !== 'cursor') {
+      return { ok: false, tool: id, message: '请按官方安装说明配置 CLI。' };
+    }
     if (active) return { ok: false, tool: id, message: '另一个环境工具正在安装，请稍后重试。' };
     if (!windows) return { ok: false, tool: id, message: '请参阅官方安装说明。' };
     failures.delete(id);
@@ -293,6 +345,7 @@ function createEnvironment({ resources, env = process.env, platform = process.pl
     try {
       let host = await context();
       if ((await describe(id, host, null)).installed) return { ok: true, tool: id, message: `${tool.label} 已可用。` };
+      if (host.configured.has(id)) throw new Error(`请检查 ${host.configured.get(id).key} 指定的启动器。`);
       if (tool.winget) {
         const extra = id === 'latex' ? ['--scope', 'user', '--custom', '--auto-install=yes'] : [];
         await installWinget(host, tool.winget, tool.label, extra);
@@ -310,6 +363,10 @@ function createEnvironment({ resources, env = process.env, platform = process.pl
           '--registry=https://registry.npmjs.org', '--no-audit', '--no-fund', '--ignore-scripts=false', tool.npm], options(npmHost)), `安装 ${tool.label}`);
       } else if (tool.installer) {
         if (!host.hasPowerShell) throw new Error('无法启动 Windows PowerShell，请使用官方安装说明。');
+        if (id === 'kimi' && !await probe('git', host)) {
+          await installWinget(host, 'Git.Git', 'Git');
+          host = await context();
+        }
         active.progress = `正在运行 ${tool.label} 官方安装器…`;
         const script = `${POWERSHELL_UTF8}
           $ErrorActionPreference = 'Stop';

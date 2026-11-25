@@ -100,7 +100,6 @@ class TestThemeAndSidebarUI(unittest.TestCase):
             "🖨️  组卷排版",
             "🔎  题目查找",
             "📘  架构介绍",
-            "📖  规范指南",
         ):
             self.assertIn(short_label, code)
 

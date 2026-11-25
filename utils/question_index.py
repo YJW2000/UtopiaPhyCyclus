@@ -294,6 +294,20 @@ def put_row(row, *, old_path=None, csv_path=None):
         return result
 
 
+def update_solution_fields(relative_path, answer, solution, *, csv_path=None):
+    """Update the solution search fields of an existing question without replacing its metadata."""
+    with connection(csv_path, bootstrap_from_tex=False) as conn, conn:
+        conn.execute('BEGIN IMMEDIATE')
+        old = conn.execute(f'SELECT {_COLUMNS} FROM questions WHERE path_key=?', (_key(relative_path),)).fetchone()
+        if old is None:
+            raise ValueError('题目在题库索引中已不存在。')
+        row = dict(old)
+        row.update(答案=answer, 解析=solution, 包含解析='是' if solution else '否',
+                   最后修改时间=dt.datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
+        _put(conn, row)
+        _bump(conn)
+
+
 def delete_row(relative_path, *, csv_path=None):
     with connection(csv_path) as conn, conn:
         result = conn.execute('DELETE FROM questions WHERE path_key=?', (_key(relative_path),))

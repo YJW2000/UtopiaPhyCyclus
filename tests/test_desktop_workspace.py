@@ -5,6 +5,7 @@ from pathlib import Path
 import shutil
 import subprocess
 import sys
+from threading import Event
 import time
 
 import pymupdf
@@ -77,6 +78,171 @@ def test_draft_persists_multi_selection_proposal_apply_and_undo(workspace, monke
         another.jobs.close()
 
 
+@pytest.mark.parametrize('existing', [False, True])
+def test_fill_solution_can_be_reviewed_and_adopted(workspace, monkeypatch, existing):
+    source = r'\begin{problem}{2026}{M}{练习}{1}{运动学}求加速度。\end{problem}' if existing else '求加速度。'
+    if existing:
+        question = workspace.library / 'chapters' / '运动学' / '原题.tex'
+        question.parent.mkdir()
+        question.write_text(source, encoding='utf-8')
+        document = workspace.create({'questionPath': '运动学/原题.tex'})
+    else:
+        document = workspace.create({'source': source})
+
+    def fill(statement, **kwargs):
+        assert statement == source
+        assert kwargs['project_dir'] == workspace.library
+        return statement + '\n\\begin{answer}$2$\\end{answer}\n\\begin{solutions}求导。\\end{solutions}'
+
+    monkeypatch.setattr(desktop_workspace, 'fill_missing_solution', fill)
+    monkeypatch.setattr(desktop_workspace, 'compile_tex_preview', lambda *args, **kwargs: {
+        'ok': True, 'pdf': b'%PDF-1.4', 'log': 'mock compile',
+    })
+    request = {'id': document['id'], 'revision': document['revision']}
+    task = wait_task(workspace.jobs.get, workspace.handlers['workspace.fill_solution'](request))
+    assert task['status'] == 'succeeded', task.get('error')
+    assert task['result']['source'] == source
+    [proposal] = task['result']['proposals']
+    assert proposal['baseSource'] == source
+    assert task['result']['messages'][-1]['proposalId'] == proposal['id']
+    adopted = workspace.apply({**request, 'proposalId': proposal['id']})
+    assert adopted['source'] == proposal['source']
+    assert adopted['previewCurrent']
+    if existing:
+        assert question.read_text(encoding='utf-8') == source
+
+
+def test_fill_solution_disallows_a_stale_generation(workspace, monkeypatch):
+    entered, release = Event(), Event()
+    document = workspace.create({'source': '求加速度。'})
+    request = {'id': document['id'], 'revision': document['revision']}
+
+    def fill(statement, **kwargs):
+        entered.set()
+        assert release.wait(5)
+        return statement
+
+    monkeypatch.setattr(desktop_workspace, 'fill_missing_solution', fill)
+    job = workspace.fill_solution(request)
+    try:
+        assert entered.wait(5)
+        workspace.save({**request, 'source': '求速度。'})
+    finally:
+        release.set()
+    task = wait_task(workspace.jobs.get, job)
+    assert task['status'] == 'failed'
+    assert '草稿已编辑' in task['error']
+    assert workspace.open(request)['source'] == '求速度。'
+    assert workspace.open(request)['proposals'] == []
+
+
+def _batch_question(workspace, number, stem, complete=False):
+    path = workspace.library / 'chapters' / '运动学' / f'2026-M-练习-{number}-运动学.tex'
+    path.parent.mkdir(exist_ok=True)
+    source = f'\\begin{{problem}}{{2026}}{{M}}{{练习}}{{{number}}}{{运动学}}{stem}\\end{{problem}}'
+    if complete:
+        source += r'\begin{answer}$2$\end{answer}\begin{solutions}根据速度公式。\end{solutions}'
+    path.write_text(source, encoding='utf-8')
+    return path.relative_to(workspace.library / 'chapters').as_posix(), path, source
+
+
+def test_fill_solution_batch_preserves_order_and_reuses_pending_result(workspace, monkeypatch):
+    okay, okay_path, original = _batch_question(workspace, 1, '速度是多少？')
+    complete, _, _ = _batch_question(workspace, 2, '完整题。', complete=True)
+    difficult, _, _ = _batch_question(workspace, 3, '缺条件。')
+    active = workspace.create({'source': '当前工作稿。'})
+    calls = []
+
+    def fill(source, **kwargs):
+        calls.append(source)
+        if '缺条件' in source:
+            raise ValueError('缺少长度数据')
+        return source + r'\begin{answer}$2$\end{answer}\begin{solutions}根据速度公式。\end{solutions}'
+
+    monkeypatch.setattr(desktop_workspace, 'fill_missing_solution', fill)
+    monkeypatch.setattr(desktop_workspace, 'compile_tex_preview', lambda *args, **kwargs: {
+        'ok': True, 'pdf': b'%PDF-1.4', 'log': 'mock compile',
+    })
+    request = {'questionPaths': [complete, difficult, okay, complete]}
+    task = wait_task(workspace.jobs.get, workspace.handlers['workspace.fill_solution_batch'](request))
+    assert task['status'] == 'succeeded'
+    skipped, failed, ready = task['result']['items']
+    assert [(item['questionPath'], item['status']) for item in (skipped, failed, ready)] == [
+        (complete, 'skipped'), (difficult, 'failed'), (okay, 'ready'),
+    ]
+    assert failed['message'] == '缺少长度数据'
+    assert len(calls) == 2 and '缺条件' in calls[0]
+    assert workspace.resume({})['id'] == active['id']
+    assert okay_path.read_text(encoding='utf-8') == original
+    draft = workspace.open({'id': ready['documentId']})
+    assert draft['questionPath'] == okay and draft['source'] == original
+    assert draft['proposals'][0]['id'] == ready['proposalId']
+    assert not any(item['title'].endswith('-2-运动学') for item in workspace.list({}))
+
+    again = wait_task(workspace.jobs.get, workspace.fill_solution_batch({'questionPaths': [okay]}))
+    assert again['result']['items'] == [ready]
+    assert len(calls) == 2
+
+
+def test_fill_solution_batch_cancellation_preserves_only_completed_items(workspace, monkeypatch):
+    one, _, _ = _batch_question(workspace, 1, '第一题。')
+    two, _, _ = _batch_question(workspace, 2, '第二题。')
+    three, _, _ = _batch_question(workspace, 3, '第三题。')
+    entered, release = Event(), Event()
+
+    def fill(source, progress, **kwargs):
+        progress('正在解题')
+        if '第二题' in source:
+            entered.set()
+            assert release.wait(5)
+        if '第三题' in source:
+            pytest.fail('cancelled task started another question')
+        return source + r'\begin{answer}$2$\end{answer}\begin{solutions}根据速度公式。\end{solutions}'
+
+    monkeypatch.setattr(desktop_workspace, 'fill_missing_solution', fill)
+    monkeypatch.setattr(desktop_workspace, 'compile_tex_preview', lambda *args, **kwargs: {
+        'ok': True, 'pdf': b'%PDF-1.4', 'log': 'mock compile',
+    })
+    job = workspace.fill_solution_batch({'questionPaths': [one, two, three]})
+    try:
+        assert entered.wait(5)
+        task = workspace.jobs.cancel(job)
+        assert task['status'] == 'cancelled'
+        assert task['progress']['completed'] == 1 and task['progress']['total'] == 3
+        [ready] = task['progress']['items']
+        assert ready['questionPath'] == one and ready['status'] == 'ready'
+    finally:
+        release.set()
+    workspace.jobs.close()
+    second = workspace.create({'questionPath': two})
+    assert second['proposals'] == []
+    assert not any(item['title'].endswith('-3-运动学') for item in workspace.list({}))
+
+
+def test_fill_solution_batch_rejects_unsaved_draft_and_changed_original(workspace, monkeypatch):
+    one, _, source = _batch_question(workspace, 1, '第一题。')
+    two, changed_path, second = _batch_question(workspace, 2, '第二题。')
+    draft = workspace.create({'questionPath': one})
+    unsaved = source.replace('第一题', '用户编辑')
+    workspace.save({'id': draft['id'], 'source': unsaved})
+
+    def fill(source, **kwargs):
+        assert source == second
+        changed_path.write_text(second.replace('第二题', '题库新版'), encoding='utf-8')
+        return source + r'\begin{answer}$2$\end{answer}\begin{solutions}根据速度公式。\end{solutions}'
+
+    monkeypatch.setattr(desktop_workspace, 'fill_missing_solution', fill)
+    monkeypatch.setattr(desktop_workspace, 'compile_tex_preview', lambda *args, **kwargs: {
+        'ok': True, 'pdf': b'%PDF-1.4', 'log': 'mock compile',
+    })
+    task = wait_task(workspace.jobs.get, workspace.fill_solution_batch({'questionPaths': [one, two]}))
+    assert task['status'] == 'succeeded'
+    first, last = task['result']['items']
+    assert first['status'] == last['status'] == 'failed'
+    assert '待保存的工作稿' in first['message'] and '原题文件已有新版本' in last['message']
+    assert workspace.open({'id': draft['id']})['source'] == unsaved
+
+
 def test_open_original_reconstruct_and_keep_real_crop(workspace, tmp_path, monkeypatch):
     original = tmp_path / '原卷.pdf'
     with pymupdf.open() as pdf:
@@ -113,12 +279,15 @@ def test_image_draft_persists_and_recognizes_editable_source(workspace, monkeypa
     def agent(prompt, schema, images):
         calls.append(images)
         assert len(images) == 1 and images[0].startswith(b'\x89PNG\r\n\x1a\n')
+        assert 'physics-image-to-latex' in prompt and '磁场向里用 \\times、向外用 \\bullet' in prompt
         return dict(status='ok', fragments=[dict(question_id='q1', number='1', kind='stem', latex='图片题 [[FIG:f1]]')],
                     figures=[dict(id='f1', rect=[0.25, 0.25, 0.75, 0.75])])
 
     monkeypatch.setattr(pdf_import_service, 'run_local_codex_json', agent)
     buffer = BytesIO()
-    Image.new('RGB', (320, 240), 'white').save(buffer, format='PNG')
+    original_pixels = Image.new('RGB', (320, 240), 'white')
+    original_pixels.paste((12, 90, 230), (90, 70, 130, 125))
+    original_pixels.save(buffer, format='PNG')
     handlers = desktop_library.create_library_handlers(workspace.library, workspace.state)
     image = handlers['library.imageInput']({'data': base64.b64encode(buffer.getvalue()).decode(),
                                             'type': 'png', 'name': '截图.png'})
@@ -145,8 +314,10 @@ def test_image_draft_persists_and_recognizes_editable_source(workspace, monkeypa
     recognized = task['result']
     assert recognized['inputKind'] == 'image' and len(calls) == 1
     ref = graphics_references(recognized['source'])[0]['path']
+    assert recognized['source'].index('图片题') < recognized['source'].index(ref)
     with Image.open(directory / ref) as crop:
         assert crop.size == (160, 120)
+        assert crop.tobytes() == original_pixels.crop((80, 60, 240, 180)).tobytes()
     edited = workspace.save({'id': ident, 'source': recognized['source'].replace('图片题', '已修改')})
     assert '已修改' in edited['source']
 

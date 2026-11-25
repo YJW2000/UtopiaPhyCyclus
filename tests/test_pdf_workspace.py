@@ -45,11 +45,21 @@ class PdfWorkspaceTests(unittest.TestCase):
         self.submit()
         self.assertEqual(self.at.text_area(key='tex_workspace_source').value, 'old mass')
         self.assertTrue(self.at.button(key='tex_workspace_save').disabled)
+        self.assertTrue(self.at.button(key='tex_workspace_fill_solution').disabled)
         self.at.button(key='tex_pdf_edit_0_accept').click().run()
         self.assertFalse(self.at.exception)
         self.assertEqual(self.at.text_area(key='tex_workspace_source').value, 'new mass')
         self.assertFalse(self.at.button(key='tex_workspace_save').disabled)
         self.assertEqual(self.at.session_state['tex_workspace_documents'][0]['preview']['pdf'], b'new mass')
+
+    def test_fill_solution_refreshes_source_and_preview(self):
+        updated = r'old mass\begin{answer}$a=F/m$\end{answer}'
+        with patch('services.question_solution_service.fill_missing_solution', return_value=updated) as generate:
+            self.at.button(key='tex_workspace_fill_solution').click().run()
+        self.assertFalse(self.at.exception)
+        self.assertEqual(generate.call_args.args, ('old mass',))
+        self.assertEqual(self.at.text_area(key='tex_workspace_source').value, updated)
+        self.assertEqual(self.at.session_state['tex_workspace_documents'][0]['preview']['pdf'], updated.encode())
 
     def test_failed_compile_and_stale_proposal_leave_source_intact(self):
         self.at.session_state['candidate'] = 'fail'

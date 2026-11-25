@@ -1,20 +1,18 @@
 """Collect per-question evidence and apply a versioned batch assessment to TeX."""
 import base64
 import hashlib
-import io
 import json
 import re
 from dataclasses import replace
 from pathlib import Path
 
-from PIL import Image, ImageOps
 from requests import RequestException
 
 from services.ai_service import resolve_llm_timeouts
 from services.batch_assessment import EVIDENCE_INSTRUCTION, RUBRIC_VERSION, score_evidence
 from services.question_import_ai_service import _request_json
 from services.tex_import_service import _header, _mask_comments
-from utils.image_assets import PROJECT_ROOT, graphics_references, resolve_image
+from utils.image_assets import PROJECT_ROOT, graphics_references, model_image_png, resolve_image
 from utils.latex_ops import inject_meta_data, parse_meta_data
 
 
@@ -70,21 +68,7 @@ def selected_subjects(value, subjects):
 
 
 def _image_message(data, name, page):
-    if Path(name).suffix.lower() == '.pdf':
-        import fitz
-        with fitz.open(stream=data, filetype='pdf') as doc:
-            sheet = doc[page - 1]
-            scale = min(2, 1600 / max(sheet.rect.width, sheet.rect.height))
-            data = sheet.get_pixmap(matrix=fitz.Matrix(scale, scale), alpha=False).tobytes('png')
-    else:
-        with Image.open(io.BytesIO(data)) as image:
-            image = ImageOps.exif_transpose(image).convert('RGBA')
-            image.thumbnail((1800, 1800), Image.Resampling.LANCZOS)
-            white = Image.new('RGB', image.size, 'white')
-            white.paste(image, mask=image.getchannel('A'))
-            buf = io.BytesIO()
-            white.save(buf, format='PNG')
-            data = buf.getvalue()
+    data = model_image_png(data, name, page)
     return {'type': 'image_url', 'image_url': {'url': 'data:image/png;base64,' + base64.b64encode(data).decode('ascii')}}
 
 

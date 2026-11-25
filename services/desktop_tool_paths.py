@@ -6,6 +6,15 @@ from pathlib import Path
 import shutil
 
 
+_PAPILOT_MANAGED_AGENTS = {
+    'pi': 'pi/node_modules/.bin/pi.cmd',
+    'agy': 'antigravity/agy.exe',
+    'qoder': 'qoder/node_modules/.bin/qodercli.cmd',
+    'codebuddy': 'launchers/codebuddy.cmd',
+    'workbuddy': 'launchers/workbuddy.cmd',
+}
+
+
 def _registered_paths():
     import winreg
 
@@ -24,6 +33,50 @@ def _registered_paths():
             yield value
 
 
+def registered_tool_variable(name):
+    """Read a Windows user or system setting updated since the app started."""
+    if os.name != 'nt':
+        return ''
+    import winreg
+
+    for hive, key_name in (
+        (winreg.HKEY_CURRENT_USER, 'Environment'),
+        (winreg.HKEY_LOCAL_MACHINE, r'SYSTEM\CurrentControlSet\Control\Session Manager\Environment'),
+    ):
+        try:
+            with winreg.OpenKey(hive, key_name) as key:
+                value, kind = winreg.QueryValueEx(key, name)
+        except OSError:
+            continue
+        if isinstance(value, str) and value.strip():
+            return winreg.ExpandEnvironmentStrings(value) if kind == winreg.REG_EXPAND_SZ else value
+    return ''
+
+
+def configured_agent_command(suffix):
+    for prefix in ('UTOPIA', 'PAPILOT'):
+        name = f'{prefix}_{suffix}_BIN'
+        value = os.environ.get(name, '').strip() or registered_tool_variable(name).strip()
+        if value:
+            return value.strip('"')
+    return None
+
+
+def resolve_agent_command(command, tool_path):
+    if not Path(command).is_absolute() and any(separator in command for separator in ('/', '\\', ':')):
+        return None
+    return shutil.which(command, path=tool_path)
+
+
+def managed_papilot_agent(agent_id):
+    relative = _PAPILOT_MANAGED_AGENTS.get(agent_id)
+    if os.name != 'nt' or not relative:
+        return None
+    local = Path(os.environ.get('LOCALAPPDATA') or Path.home() / 'AppData/Local')
+    launcher = local / 'Papilot/agents' / relative
+    return str(launcher) if launcher.is_absolute() and launcher.is_file() else None
+
+
 def _tex_live_bins():
     root = Path((os.environ.get('SystemDrive') or 'C:') + '/texlive')
     try:
@@ -39,13 +92,16 @@ def _tex_live_bins():
 def fresh_tool_path() -> str:
     """Keep the inherited bundled-runtime order and include newly registered PATH entries."""
     inherited = os.environ.get('PATH', '')
-    if os.name != 'nt':
-        return inherited
     home = Path.home()
+    agent_defaults = [home / directory for directory in ('.local/bin', '.codex/bin', '.grok/bin', '.kimi-code/bin')]
+    if os.name != 'nt':
+        directories = [directory for directory in inherited.split(os.pathsep) if directory]
+        return os.pathsep.join(dict.fromkeys([*directories, *map(str, agent_defaults)]))
     local = Path(os.environ.get('LOCALAPPDATA') or home / 'AppData/Local')
     roaming = Path(os.environ.get('APPDATA') or home / 'AppData/Roaming')
-    defaults = [home / '.local/bin', home / '.codex/bin', roaming / 'npm', local / 'cursor-agent', local / 'agy/bin',
-                local / 'codebuddy/bin', local / 'Microsoft/WindowsApps', local / 'Microsoft/WinGet/Links']
+    defaults = [*agent_defaults, roaming / 'npm', local / 'cursor-agent', local / 'agy/bin', local / 'codebuddy/bin',
+                local / 'Programs/DeepSeek Harness/resources/runtime/cli/bin',
+                local / 'Microsoft/WindowsApps', local / 'Microsoft/WinGet/Links']
     programs = [os.environ.get(name) for name in ('PROGRAMW6432', 'ProgramFiles', 'ProgramFiles(x86)')]
     for base in [*(Path(value) for value in programs if value), local / 'Programs']:
         defaults.extend(base / suffix for suffix in ('Git/cmd', 'Git/bin', 'MiKTeX/miktex/bin/x64',

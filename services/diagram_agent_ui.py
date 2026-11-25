@@ -9,7 +9,7 @@ Pi-Agent 物理插图矫正AGENT 对话胶囊组件
 3. 底部内嵌工具栏 (纯 CSS Flexbox 绝对水平，拒绝竖向挤裂)：
    - 左侧：+ · ⚡ 自动写回源码 (小字轻量状态)
    - 右侧：⚡ [模型全称] · 🎙️ 语音图标 · 🔄 · 🧹 · ↑ 暖陶圆形发送按钮
-4. 双引擎语音：顶层原生语音直通 + API 音频高精转写
+4. 语音输入通过本地 Whisper 转写
 """
 
 import os
@@ -39,6 +39,8 @@ from .diagram_agent import (
 )
 from utils.agent_voice import agent_voice_bridge
 from services.local_whisper import transcribe_pcm16 as _whisper_pcm16
+from services.desktop_model import selected_provider
+from services.local_agent import LOCAL_AGENTS
 
 logger = logging.getLogger(__name__)
 
@@ -954,7 +956,7 @@ def _build_modern_agent_capsule_html(
             </label>
           </div>
           <div class="toolbar-right">
-            <span class="model-pill" title="当前配置模型: {model_name_safe}">
+            <span class="model-pill" title="当前 Agent: {model_name_safe}">
               <span class="bolt">⚡</span>
               <span>{model_name_safe}</span>
             </span>
@@ -2226,8 +2228,7 @@ def render_diagram_agent_dialog(
     existing_blocks = DiagramTools.extract_tikz_blocks(current_content)
     has_diagram = len(existing_blocks) > 0
 
-    cfg = agent._get_api_config()
-    model_display = cfg.get("model_name", "AI Agent")
+    model_display = LOCAL_AGENTS[selected_provider()].label
 
     container_title = expander_label or (
         f"🤖 物理插图矫正AGENT · 已关联 {len(existing_blocks)} 处图形"
@@ -2482,76 +2483,32 @@ def render_diagram_agent_dialog(
                     instruction_bridge, bridge_images, send_trigger_clicked = _resolve_text_bridge_payload(
                         _bridge_payload
                     )
-                elif _kind in ("pcm16", "audio"):
+                elif _kind == "pcm16":
                     _lang = st.session_state.get("mc_voice_lang", "zh")
-                    _recognized = ""
-                    _errors = []
-                    _whisper_elapsed = 0.0
-                    if _kind == "pcm16":
-                        try:
-                            _pcm = base64.b64decode(_bridge_payload.get("pcm") or "", validate=False)
-                        except Exception:
-                            _pcm = b""
-                        _rate = int(_bridge_payload.get("rate") or 16000)
-                        print(f"[MC_VOICE] 收到 PCM16 bytes={len(_pcm)} rate={_rate}", flush=True)
-                        if not _pcm:
-                            st.error("🎙️ 语音数据为空，请重新录制。")
-                        elif _pcm16_level(_pcm) < 120:
-                            st.error("🎙️ 没有检测到说话声，请靠近麦克风再说一次。")
-                        else:
-                            with st.spinner("🎙️ 正在识别语音（本地 whisper）…"):
-                                _t_whisper = time.time()
-                                _ok_local, _local_text = _whisper_pcm16(_pcm, language=_lang)
-                                _whisper_elapsed = time.time() - _t_whisper
-                            if _ok_local and _is_whisper_noise(str(_local_text)):
-                                _ok_local, _local_text = False, "只听到噪声，请再说一次。"
-                            print(f"[MC_VOICE] 本地 whisper ok={_ok_local} text={str(_local_text)[:120]!r}", flush=True)
-                            if _ok_local and str(_local_text).strip():
-                                _recognized = str(_local_text).strip()
-                            else:
-                                _errors.append(str(_local_text))
-                                # 兜底：包装成 WAV 交给已配置的多模态/whisper API
-                                with st.spinner("🎙️ 本地识别不可用，改用在线转写…"):
-                                    _wav = _pcm16_to_wav(_pcm, _rate)
-                                    _ok_api, _api_text = agent.transcribe_audio(_wav, filename="mic_voice.wav")
-                                print(f"[MC_VOICE] 在线转写 ok={_ok_api} text={str(_api_text)[:120]!r}", flush=True)
-                                if _ok_api and str(_api_text).strip():
-                                    _recognized = str(_api_text).strip()
-                                else:
-                                    _errors.append(str(_api_text))
+                    try:
+                        _pcm = base64.b64decode(_bridge_payload.get("pcm") or "", validate=False)
+                    except (ValueError, TypeError):
+                        _pcm = b""
+                    if not _pcm:
+                        st.error("🎙️ 语音数据为空，请重新录制。")
+                    elif _pcm16_level(_pcm) < 120:
+                        st.error("🎙️ 没有检测到说话声，请靠近麦克风再说一次。")
                     else:
-                        _mime = str(_bridge_payload.get("mime") or "audio/webm")
-                        _ext = "webm"
-                        if "ogg" in _mime:
-                            _ext = "ogg"
-                        elif "mp4" in _mime or "m4a" in _mime:
-                            _ext = "m4a"
-                        elif "wav" in _mime:
-                            _ext = "wav"
-                        try:
-                            _audio_bytes = base64.b64decode(_bridge_payload.get("audio") or "", validate=False)
-                        except Exception:
-                            _audio_bytes = b""
-                        print(f"[MC_VOICE] 收到音频 mime={_mime!r} bytes={len(_audio_bytes)}", flush=True)
-                        if _audio_bytes:
-                            with st.spinner("🎙️ 正在识别语音…"):
-                                _ok_api, _api_text = agent.transcribe_audio(_audio_bytes, filename=f"mic_voice.{_ext}")
-                            if _ok_api and str(_api_text).strip():
-                                _recognized = str(_api_text).strip()
-                            else:
-                                _errors.append(str(_api_text))
+                        with st.spinner("🎙️ 正在识别语音（本地 Whisper）…"):
+                            _t_whisper = time.time()
+                            _ok_local, _local_text = _whisper_pcm16(_pcm, language=_lang)
+                            _whisper_elapsed = time.time() - _t_whisper
+                        if _ok_local and _is_whisper_noise(str(_local_text)):
+                            _ok_local, _local_text = False, "只听到噪声，请再说一次。"
+                        if _ok_local and str(_local_text).strip():
+                            instruction_bridge = str(_local_text).strip()
+                            send_trigger_clicked = True
+                            st.toast(
+                                f"🎙️ 语音识别完成（{_whisper_elapsed:.2f}s），已发送给 Agent",
+                                icon="✅",
+                            )
                         else:
-                            st.error("🎙️ 语音数据解码失败，请重新录制。")
-
-                    if _recognized:
-                        instruction_bridge = _recognized
-                        send_trigger_clicked = True
-                        st.toast(
-                            f"🎙️ 语音识别完成（{_whisper_elapsed:.2f}s），已发送给 Agent",
-                            icon="✅",
-                        )
-                    elif _errors:
-                        st.error("🎙️ 语音识别失败：" + "；".join(e for e in _errors if e)[:300])
+                            st.error("🎙️ 语音识别失败：" + str(_local_text)[:300])
 
         # 检查是否有 pending 的音频转写结果
         if f"{key_prefix}_pending_prompt" in st.session_state:
@@ -2572,7 +2529,7 @@ def render_diagram_agent_dialog(
             # 启动 Agent 循环（仅当 Agent 侧已支持 reference_images 时才传入）
             with st.spinner(
                 "🤖 物理插图矫正AGENT 正在推导几何关系并执行 XeLaTeX 编译自愈..."
-                "（本地 AI 网关响应较慢时可能需要 1–4 分钟，请耐心等待，不要重复发送）"
+                "（Agent 响应较慢时可能需要 1–4 分钟）"
             ):
                 current_latex_input = st.session_state.get(content_state_key, initial_content or "")
                 result = _run_turn_with_reference_images(

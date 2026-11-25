@@ -3,8 +3,7 @@ import json
 import math
 import os
 import re
-import time
-from typing import List, Tuple, Dict, Any
+from typing import Tuple, Any
 
 
 # ===================== LLM 请求超时配置 =====================
@@ -91,105 +90,3 @@ def extract_json_obj_from_text(text: str):
         if not match:
             raise
         return json.loads(match.group(0))
-
-
-def fetch_available_models(base_url: str, api_key: str, timeout: int = 8) -> Tuple[bool, List[str], str]:
-    """
-    通过调用 API 的 /models 接口，动态获取当前 API 实际可用的模型名称列表。
-    兼容 OpenAI、OneAPI、NewAPI、OpenRouter、vLLM、Ollama 等各类代理网关。
-    """
-    import requests
-
-    base = (base_url or "").strip().rstrip("/")
-    if not base:
-        return False, [], "Base URL 为空，无法获取模型列表。"
-
-    headers = {}
-    if api_key:
-        headers["Authorization"] = f"Bearer {api_key.strip()}"
-
-    candidates = []
-    if base.endswith("/v1"):
-        candidates.append(f"{base}/models")
-        candidates.append(f"{base[:-3]}/models")
-    else:
-        candidates.append(f"{base}/models")
-        candidates.append(f"{base}/v1/models")
-
-    last_error = ""
-    for url in candidates:
-        try:
-            resp = requests.get(url, headers=headers, timeout=timeout)
-            if resp.status_code == 200:
-                data = resp.json()
-                items = data.get("data", [])
-                model_ids = []
-                if isinstance(items, list):
-                    for item in items:
-                        if isinstance(item, dict) and item.get("id"):
-                            model_ids.append(str(item["id"]).strip())
-                        elif isinstance(item, str):
-                            model_ids.append(item.strip())
-                elif isinstance(data, list):
-                    for item in data:
-                        if isinstance(item, dict) and item.get("id"):
-                            model_ids.append(str(item["id"]).strip())
-                        elif isinstance(item, str):
-                            model_ids.append(item.strip())
-
-                if model_ids:
-                    # 排序去重
-                    unique_models = sorted(list(set(model_ids)))
-                    return True, unique_models, ""
-            else:
-                last_error = f"HTTP {resp.status_code}: {resp.text[:180]}"
-        except Exception as e:
-            last_error = str(e)
-
-    return False, [], f"从 API 获取模型列表失败: {last_error}"
-
-
-def test_model_availability(base_url: str, api_key: str, model_name: str, timeout: int = 12) -> Dict[str, Any]:
-    """
-    向目标模型发送极小 token (max_tokens=1) 的轻量探测请求，验证模型名称是否真实可用并测试延迟。
-    """
-    if not base_url or not model_name:
-        return {"ok": False, "error": "Base URL 或模型名称为空"}
-
-    headers = {
-        "Content-Type": "application/json",
-        "Authorization": f"Bearer {api_key.strip()}" if api_key else "",
-    }
-    payload = {
-        "model": model_name.strip(),
-        "messages": [{"role": "user", "content": "1"}],
-        "max_tokens": 1,
-        "temperature": 0.0,
-    }
-
-    t0 = time.time()
-    try:
-        resp, request_url = post_chat_completion(base_url, headers, payload, timeout=timeout)
-        latency_ms = int((time.time() - t0) * 1000)
-
-        if resp.status_code == 200:
-            return {
-                "ok": True,
-                "latency_ms": latency_ms,
-                "status_code": 200,
-                "message": f"模型 [{model_name}] 极小请求测试成功 (延迟: {latency_ms}ms)",
-            }
-        else:
-            return {
-                "ok": False,
-                "latency_ms": latency_ms,
-                "status_code": resp.status_code,
-                "error": f"API 报错 [{resp.status_code}]: {resp.text[:220]}",
-            }
-    except Exception as exc:
-        latency_ms = int((time.time() - t0) * 1000)
-        return {
-            "ok": False,
-            "latency_ms": latency_ms,
-            "error": f"请求超时或网络异常: {str(exc)}",
-        }

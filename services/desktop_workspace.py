@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 import hashlib
 import json
 import os
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 import re
 import shutil
 import sqlite3
@@ -18,15 +18,16 @@ from services.desktop_model import selected_provider
 from services.desktop_revision import (
     changed_ranges, chat_revision, decode_attachments, offsets, rebase_selections, utf16_length,
 )
-from services.file_service import atomic_write_text
+from services.file_service import atomic_write_text, backup_existing_file
 from services.local_agent import LOCAL_AGENTS, require_image_support
-from services.local_process import check_cancelled
+from services.local_process import TaskCancelled, check_cancelled
 from services.pdf_import_service import import_pdf, inspect_pdf
 from services.pdf_selection_edit import locate_pdf_selection
+from services.question_solution_service import fill_missing_solution, has_missing_solution
 from services.tex_compile_service import compile_tex_preview
 from services.tex_import_service import decode_tex, parse_tex_questions, replace_parsed_problem_header
 from utils.core_config import CHAPTERS_DIR, SUBJECTS
-from utils.image_assets import copy_graphics, graphics_references, resolve_image
+from utils.image_assets import copy_graphics, graphics_references, package_question_images, resolve_image
 
 
 def _now():
@@ -113,11 +114,14 @@ class DesktopWorkspace:
             'workspace.papilot_export': self.papilot_export,
             'workspace.papilot_import': self.papilot_import,
             'workspace.chat': self.chat,
+            'workspace.fill_solution': self.fill_solution,
+            'workspace.fill_solution_batch': self.fill_solution_batch,
             'workspace.apply': self.apply,
             'workspace.dismiss': self.dismiss,
             'workspace.undo': self.undo,
             'workspace.chapters': self.chapters,
             'workspace.export': self.export,
+            'workspace.save_question': self.save_question,
             'workspace.export_tex': self.export_tex,
             'workspace.export_pdf': self.export_pdf,
             'task.get': self.jobs.get,
@@ -207,6 +211,13 @@ class DesktopWorkspace:
             return [{key: value for key, value in info.items() if key in _SUMMARY} for info in self._summaries()]
 
     def _open(self, document):
+        if document.get('chapter') and document.get('_origin') and not document.get('questionPath'):
+            try:
+                relative = Path(document['_origin']).relative_to(self.library / 'chapters')
+                original, _chapter = self._question(relative.as_posix())
+                self._restore_question_link(document, original, original.read_bytes())
+            except (OSError, ValueError):
+                pass
         path = self._directory(document['id']) / 'source.tex'
         payload = document['source'].encode('utf-8')
         if not path.exists() or path.read_bytes() != payload:
@@ -231,17 +242,33 @@ class DesktopWorkspace:
             return self._open(self._read(summaries[0]['id'])) if summaries else None
 
     def _question(self, relative):
-        if not isinstance(relative, str) or Path(relative).is_absolute():
+        if not isinstance(relative, str) or not relative or '\x00' in relative or PureWindowsPath(relative).anchor:
             raise ValueError('题目路径必须位于当前题库。')
         chapters = (self.library / 'chapters').resolve()
-        candidate = _file(str(chapters / relative), ('.tex',))
+        candidate = (chapters / relative.replace('\\', '/')).resolve()
         if not candidate.is_relative_to(chapters):
             raise ValueError('题目路径必须位于当前题库。')
+        if candidate.suffix.lower() != '.tex' or not candidate.is_file():
+            raise ValueError('题目文件不存在或已移动，请刷新题库后重试。')
         return candidate, candidate.relative_to(chapters).parts[0]
 
-    def create(self, params):
+    def _link_question(self, document, path, data):
+        document['questionPath'] = path.relative_to((self.library / 'chapters').resolve()).as_posix()
+        document['_questionHash'] = hashlib.sha256(data).hexdigest()
+        document['_questionDraftHash'] = _sha(document['source'])
+
+    def _restore_question_link(self, document, path, data):
+        # Earlier workbenches kept the source copy without the original file's hash.
+        original = decode_tex(data)
+        if self._copy_input_graphics(original, path.parent, self._directory(document['id'])) == document['source']:
+            self._link_question(document, path, data)
+            self._write(document, touch=False)
+
+    def create(self, params, *, activate=True):
         tex_path, pdf_path, chapter = None, None, None
         if params.get('questionPath'):
+            if params.get('path') or params.get('pdfPath'):
+                raise ValueError('原题工作稿只能打开一份题库文件。')
             tex_path, chapter = self._question(params['questionPath'])
         if params.get('path'):
             origin = _file(params['path'], ('.tex', '.pdf'))
@@ -261,13 +288,23 @@ class DesktopWorkspace:
                 raise ValueError('仅可使用应用提供的示例预览。')
         origin_path = tex_path or pdf_path
         origin_key = os.path.normcase(str(origin_path)) if origin_path else None
+        original_bytes = tex_path.read_bytes() if chapter else None
+        original_hash = hashlib.sha256(original_bytes).hexdigest() if original_bytes is not None else None
         if origin_key:
             with self.lock:
                 for existing in self._summaries():
                     if existing.get('_origin') == origin_key:
-                        return self._open(self._read(existing['id']))
+                        document = self._read(existing['id'])
+                        if chapter:
+                            if not document.get('questionPath'):
+                                self._restore_question_link(document, tex_path, original_bytes)
+                            if document.get('_questionHash') != original_hash:
+                                continue  # Retain the older draft without replacing the current bank source.
+                        return self._open(document) if activate else self._public(document)
 
-        original_source = decode_tex(tex_path.read_bytes()) if tex_path else ''
+        if tex_path and original_bytes is None:
+            original_bytes = tex_path.read_bytes()
+        original_source = decode_tex(original_bytes) if original_bytes is not None else ''
         source = _source(params, original_source)
         title = _title(params.get('title') or (origin_path.stem if origin_path else '未命名草稿'))
         original_pdf = pdf_path.read_bytes() if pdf_path else None
@@ -298,6 +335,9 @@ class DesktopWorkspace:
                     document['inputKind'] = 'image'
             if chapter:
                 document['chapter'] = chapter
+                self._link_question(document, tex_path, original_bytes)
+                if source != original_source:
+                    document.pop('_questionDraftHash')
             if preview_path:
                 preview = directory / 'demo-preview.pdf'
                 shutil.copyfile(preview_path, preview)
@@ -305,7 +345,7 @@ class DesktopWorkspace:
                 document['_previewHash'] = _sha(document['source'])
             with self.lock:
                 self._write(document)
-                return self._open(document)
+                return self._open(document) if activate else self._public(document)
         except BaseException:
             # The UUID directory was created exclusively by this request.
             if directory.parent == self.root:
@@ -390,13 +430,20 @@ class DesktopWorkspace:
         return dict(year='待填写', paper_type='M', paper=document['title'], number='1',
                     subject=document.get('chapter', '未分类'))
 
+    def _agent_provider(self, params):
+        provider = params['agent'] if 'agent' in params else selected_provider(self.state)
+        if not isinstance(provider, str) or provider not in LOCAL_AGENTS:
+            raise ValueError('请选择可用的本机 Agent。')
+        return provider
+
     def import_document(self, params):
         if not params.get('path'):
             raise ValueError('请选择原卷 PDF。')
         _file(params['path'], ('.pdf',))
-        require_image_support(selected_provider(self.state))
+        provider = self._agent_provider(params)
+        require_image_support(provider)
         created = self.create({'path': params['path'], 'title': params.get('title')})
-        return self.reconstruct({**params, 'id': created['id']})
+        return self.reconstruct({**params, 'id': created['id'], 'agent': provider})
 
     def _linked_bank_file(self, document, relative_path):
         if not isinstance(relative_path, str) or not relative_path:
@@ -437,7 +484,7 @@ class DesktopWorkspace:
             return {'file': saved, 'document': self._public(document)}
 
     def reconstruct(self, params):
-        provider = selected_provider(self.state)
+        provider = self._agent_provider(params)
         with self.lock:
             document = self._read(params.get('id'))
             if not document.get('pdfPath'):
@@ -461,7 +508,7 @@ class DesktopWorkspace:
         original_page = min(pages) if pages else first
         if document['source'].strip() and source != document['source']:
             changes = changed_ranges(document['source'], source)
-            proposal = self._proposal(document, changes, 'document', None, job)
+            proposal = self._proposal(document, changes, 'document', None, job.progress)
         else:
             proposal = None
 
@@ -607,12 +654,12 @@ class DesktopWorkspace:
             self._write(document)
             return self._public(document)
 
-    def _proposal(self, document, changes, scope, selection, job):
+    def _proposal(self, document, changes, scope, selection, progress):
         source = document['source']
         updated = source
         for start, stop, after in reversed(changes):
             updated = updated[:start] + after + updated[stop:]
-        job.progress('正在编译修改前后对照')
+        progress('正在编译修改前后对照')
         before_path = document.get('previewPath') if document.get('_previewHash') == _sha(source) else None
         if not before_path and source.strip():
             try:
@@ -651,9 +698,7 @@ class DesktopWorkspace:
         if scope not in ('selection', 'document'):
             raise ValueError('对话范围无效。')
         attachments, images = decode_attachments(params.get('attachments', []))
-        provider = params.get('agent', selected_provider(self.state))
-        if not isinstance(provider, str) or provider != 'api' and provider not in LOCAL_AGENTS:
-            raise ValueError('请选择可用的本机 Agent。')
+        provider = self._agent_provider(params)
         with self.lock:
             document = self._read(params.get('id'))
             self._check_revision(document, params)
@@ -712,7 +757,7 @@ class DesktopWorkspace:
             reply, changes = chat_revision(new_source, prompt, scope, ranges, history, images,
                                            pdf=pdf, pdf_selections=pdf_selections, source_map=source_map, pdf_lock=self.pdf_lock)
             check_cancelled()
-            proposal = self._proposal(document, changes, scope, ranges[0] if len(ranges) == 1 else None, job) if changes else None
+            proposal = self._proposal(document, changes, scope, ranges[0] if len(ranges) == 1 else None, job.progress) if changes else None
 
             def commit():
                 with self.lock:
@@ -728,6 +773,128 @@ class DesktopWorkspace:
             job.publish(commit)
 
         return self.jobs.submit(chat_job, document['id'], provider=provider)
+
+    def _generate_solution_proposal(self, document, progress):
+        source = document['source']
+        updated = fill_missing_solution(
+            source, project_dir=self.library, source_dir=self._directory(document['id']),
+            fallback_source_dir=document.get('_sourceDirectory'), progress=progress,
+        )
+        check_cancelled()
+        if updated == source:
+            return None
+        proposal = self._proposal(document, changed_ranges(source, updated), 'document', None, progress)
+        proposal['kind'] = 'solution'
+        return proposal
+
+    def _store_solution_result(self, document, proposal):
+        document['messages'].append(self._message('user', 'document', '补充答案与解析'))
+        if proposal:
+            document['proposals'].append(proposal)
+            message = self._message('assistant', 'document', '已生成缺失的答案或解析，请核对后采用。',
+                                    proposalId=proposal['id'])
+        else:
+            message = self._message('assistant', 'document', '当前题目已有答案和解析。')
+        document['messages'].append(message)
+        self._write(document)
+
+    def fill_solution(self, params):
+        provider = selected_provider(self.state)
+        with self.lock:
+            document = self._read(params.get('id'))
+            self._check_revision(document, params)
+            source = _source(params, document['source'])
+        snapshot = {**document, 'source': source}
+
+        def fill_job(job):
+            proposal = self._generate_solution_proposal(snapshot, job.progress)
+
+            def commit():
+                with self.lock:
+                    latest = self._read(document['id'])
+                    self._require_same_source(document, latest)
+                    self._replace_source(latest, source)
+                    self._store_solution_result(latest, proposal)
+                    return self._public(latest)
+
+            job.publish(commit)
+
+        return self.jobs.submit(fill_job, document['id'], provider=provider)
+
+    @staticmethod
+    def _pending_solution(document):
+        return next((proposal for proposal in reversed(document['proposals'])
+                     if proposal.get('kind') == 'solution' and proposal['status'] == 'pending'
+                     and proposal['baseSource'] == document['source']), None)
+
+    def fill_solution_batch(self, params):
+        paths = params.get('questionPaths')
+        if not isinstance(paths, list) or not paths or any(not isinstance(path, str) or not path.strip() for path in paths):
+            raise ValueError('请选择要批量补充的题目。')
+        paths = tuple(dict.fromkeys(paths))
+        provider = selected_provider(self.state)
+
+        def fill_batch_job(job):
+            items = []
+
+            def report(message):
+                job.progress(message, completed=len(items), total=len(paths), items=list(items))
+
+            def record(item):
+                items.append(item)
+                report(f'已处理 {len(items)} 道，共 {len(paths)} 道')
+
+            for index, question_path in enumerate(paths, 1):
+                report(f'正在处理第 {index} 道，共 {len(paths)} 道')
+                try:
+                    self._fill_bank_solution(question_path, job, report, record)
+                except TaskCancelled:
+                    raise
+                except Exception as error:
+                    job.checkpoint(lambda: record(dict(questionPath=question_path, status='failed',
+                                                       message=(str(error) or type(error).__name__)[:500])))
+            job.publish(lambda: dict(items=items))
+
+        return self.jobs.submit(fill_batch_job, provider=provider)
+
+    def _fill_bank_solution(self, question_path, job, report, record):
+        path, _chapter = self._question(question_path)
+        original = path.read_bytes()
+        expected_hash = hashlib.sha256(original).hexdigest()
+        if not has_missing_solution(decode_tex(original)):
+            job.checkpoint(lambda: record(dict(questionPath=question_path, status='skipped', message='已有答案和解析。')))
+            return
+
+        with self.lock:
+            opened = self.create(dict(questionPath=question_path), activate=False)
+            document = self._read(opened['id'])
+            if document.get('_questionHash') != expected_hash:
+                raise ValueError('原题文件已有新版本，请重新发起批量补充。')
+            if _sha(document['source']) != document.get('_questionDraftHash'):
+                raise ValueError('题目已有待保存的工作稿，请在工作台处理。')
+            previous = self._pending_solution(document)
+
+        proposal = self._generate_solution_proposal(document, report) if previous is None else None
+
+        def commit():
+            with self.lock:
+                latest = self._read(document['id'])
+                self._require_same_source(document, latest)
+                if hashlib.sha256(path.read_bytes()).hexdigest() != expected_hash:
+                    raise ValueError('原题文件已有新版本，请重新发起批量补充。')
+                current = self._pending_solution(latest)
+                if current is None and proposal is not None:
+                    self._store_solution_result(latest, proposal)
+                    current = proposal
+                if current is None and previous is not None:
+                    raise ValueError('原有待审阅提案已有变动，请重新发起批量补充。')
+                if current:
+                    record(dict(questionPath=question_path, status='ready', message='已生成，待核对。',
+                                documentId=latest['id'], proposalId=current['id']))
+                else:
+                    record(dict(questionPath=question_path, status='skipped', message='已有答案和解析。'))
+
+        job.checkpoint(commit)
 
     @staticmethod
     def _find_proposal(document, proposal_id):
@@ -802,6 +969,71 @@ class DesktopWorkspace:
         if path.is_relative_to(self.root) or path.is_relative_to(self.library / 'chapters'):
             raise ValueError('请使用保存草稿或题库入库来更新该位置。')
         return path
+
+    def save_question(self, params):
+        from services.operation_log import record_operation
+        from utils.csv_ops import update_csv_index_for_edit
+        from utils.latex_ops import parse_meta_data
+
+        with self.lock, self.bank_lock:
+            document = self._read(params.get('id'))
+            self._check_revision(document, params)
+            if not document.get('questionPath') or not document.get('_questionHash'):
+                raise ValueError('当前工作稿没有可保存的原题，请打开题库中的原题。')
+            if Path(CHAPTERS_DIR).resolve() != (self.library / 'chapters').resolve():
+                raise RuntimeError('题库目录与当前连接不一致，已取消写入。')
+            path, _chapter = self._question(document['questionPath'])
+            previous = path.read_bytes()
+            current_hash = hashlib.sha256(previous).hexdigest()
+            if current_hash != document['_questionHash']:
+                raise ValueError('原题文件已有新版本。请从题库重新打开原题，再核对工作稿中的修改。')
+            original = decode_tex(previous)
+            source = document['source']
+            if _sha(source) == document.get('_questionDraftHash'):
+                return self._public(document)
+            defaults = self._defaults(document)
+            existing = parse_tex_questions(original, path.name, defaults)
+            edited = parse_tex_questions(source, path.name, defaults)
+            if len(existing) != 1 or len(edited) != 1 or edited[0].filename != existing[0].filename:
+                raise ValueError('保存原题需要保留一道题及其原有题头信息。')
+            old_meta, _ = parse_meta_data(original)
+            new_meta, _ = parse_meta_data(source)
+            if old_meta.get('ID') != new_meta.get('ID'):
+                raise ValueError('保存原题需要保留原有题库 ID。')
+
+            resource_dir = self._directory(document['id'])
+            references = graphics_references(source)
+            if references:
+                assets = path.parent / (path.stem + ' 相关图')
+                if assets.resolve() != assets:
+                    raise ValueError('原题相关图目录指向其他位置，无法保存。')
+                for ref in references:
+                    resolve_image(ref['path'], self.library, resource_dir, source)
+                source = package_question_images(source, path.name, path.parent, self.library, resource_dir)
+            if source == original:
+                return self._public(document)
+            fields = path.stem.split('-')
+            question = existing[0]
+            if len(fields) >= 5:
+                indexing = (*fields[:2], '-'.join(fields[2:-2]), *fields[-2:])
+            else:
+                indexing = (question.year, question.paper_type, question.paper, question.number, question.subject)
+            backup = backup_existing_file(str(path), project_dir=self.library)
+            if path.read_bytes() != previous:
+                raise ValueError('原题文件已有新版本。请从题库重新打开原题，再核对工作稿中的修改。')
+            payload = source.encode('utf-8')
+            _atomic_bytes(path, payload)
+            try:
+                question_id = update_csv_index_for_edit(str(path), str(path), source, *indexing)
+            except Exception:
+                if path.read_bytes() == payload:
+                    _atomic_bytes(path, previous)
+                raise
+            self._link_question(document, path, payload)
+            self._write(document, touch=False)
+            record_operation('update_question_content', path=str(path), related_path=backup,
+                             question_id=str(question_id), details='LaTeX content updated in desktop workbench')
+            return self._public(document)
 
     def export_tex(self, params):
         with self.lock:

@@ -133,6 +133,27 @@ def package_question_images(source: str, filename: str, save_dir, project_dir=PR
                          source_dir or save_dir, reference_base=base)
 
 
+def model_image_png(data: bytes, filename: str, page: int = 1) -> bytes:
+    """Render one graphic as a size-bounded PNG for a multimodal request."""
+    if Path(filename).suffix.lower() == '.pdf':
+        import fitz
+        with fitz.open(stream=data, filetype='pdf') as document:
+            if not 1 <= page <= len(document):
+                raise ValueError('图片 PDF 页码超出范围。')
+            sheet = document[page - 1]
+            scale = min(2, 1600 / max(sheet.rect.width, sheet.rect.height))
+            return sheet.get_pixmap(matrix=fitz.Matrix(scale, scale), alpha=False).tobytes('png')
+
+    from PIL import Image, ImageOps
+    with Image.open(io.BytesIO(data)) as image, io.BytesIO() as buffer:
+        image = ImageOps.exif_transpose(image).convert('RGBA')
+        image.thumbnail((1800, 1800), Image.Resampling.LANCZOS)
+        white = Image.new('RGB', image.size, 'white')
+        white.paste(image, mask=image.getchannel('A'))
+        white.save(buffer, format='PNG')
+        return buffer.getvalue()
+
+
 def image_preview_markdown(path: str, project_dir=PROJECT_ROOT, source_dir=None, source='') -> str:
     try:
         resolved = resolve_image(path, project_dir, source_dir, source)

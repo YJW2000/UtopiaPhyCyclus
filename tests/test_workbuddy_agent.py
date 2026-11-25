@@ -12,7 +12,8 @@ from services import local_agent_workbuddy as workbuddy
 from services import local_agent_acp
 
 
-def test_workbuddy_uses_only_an_explicit_launcher(tmp_path, monkeypatch):
+def test_workbuddy_does_not_use_ordinary_path_launchers(tmp_path, monkeypatch):
+    monkeypatch.setenv('LOCALAPPDATA', str(tmp_path))
     for name in ('UTOPIA_WORKBUDDY_BIN', 'PAPILOT_WORKBUDDY_BIN'):
         monkeypatch.delenv(name, raising=False)
     monkeypatch.setattr(workbuddy, '_registered_launcher', lambda _: '')
@@ -30,6 +31,21 @@ def test_workbuddy_uses_only_an_explicit_launcher(tmp_path, monkeypatch):
     monkeypatch.setattr(workbuddy, '_registered_launcher',
                         lambda name: f'"{launcher}"' if name == 'UTOPIA_WORKBUDDY_BIN' else '')
     assert workbuddy.find_workbuddy_launcher() == str(launcher)
+
+
+@pytest.mark.skipif(os.name != 'nt', reason='Windows Papilot-managed launcher')
+def test_workbuddy_reuses_papilot_managed_launcher(tmp_path, monkeypatch):
+    monkeypatch.setenv('LOCALAPPDATA', str(tmp_path))
+    for name in ('UTOPIA_WORKBUDDY_BIN', 'PAPILOT_WORKBUDDY_BIN'):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setattr(workbuddy, '_registered_launcher', lambda _: '')
+    launcher = tmp_path / 'Papilot/agents/launchers/workbuddy.cmd'
+    launcher.parent.mkdir(parents=True)
+    launcher.touch()
+    assert workbuddy.find_workbuddy_launcher() == str(launcher)
+
+    monkeypatch.setenv('UTOPIA_WORKBUDDY_BIN', str(tmp_path / 'missing.cmd'))
+    assert workbuddy.find_workbuddy_launcher() is None
 
 
 @pytest.mark.skipif(os.name != 'nt', reason='Windows ACP batch launcher')

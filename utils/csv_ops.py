@@ -1,5 +1,6 @@
 import os
 import datetime
+from pathlib import Path
 import re
 from .core_config import CSV_INDEX_PATH, CHAPTERS_DIR
 from .latex_ops import parse_meta_data
@@ -107,10 +108,23 @@ def _parse_tex_content(content, pname, subject=""):
 
     return has_tikz, q_type, has_solution, stem_text, ans_text, sol_text, meta
 
+
+def _relative_question_path(file_path):
+    chapters = Path(os.path.abspath(CHAPTERS_DIR))
+    source = Path(os.path.abspath(file_path))
+    resolved_chapters = chapters.resolve()
+    try:
+        relative = source.relative_to(chapters if source.is_relative_to(chapters) else resolved_chapters)
+        source.resolve().relative_to(resolved_chapters)
+    except ValueError as error:
+        raise ValueError('只能将当前题库 chapters 目录下的题目写入索引。') from error
+    return str(relative)
+
+
 def add_to_csv_index(file_path, content, year, ptype, pname, pnum, subj):
     """Create one SQLite index row; allocate its ID inside the transaction."""
     name_body = os.path.basename(file_path).replace(".tex", "")
-    rel_path = os.path.relpath(file_path, CHAPTERS_DIR)
+    rel_path = _relative_question_path(file_path)
 
     now_str = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     has_tikz, q_type, has_solution, stem_text, ans_text, sol_text, meta = _parse_tex_content(content, pname, subj)
@@ -152,14 +166,15 @@ def add_to_csv_index(file_path, content, year, ptype, pname, pnum, subj):
 
 def update_csv_index_for_edit(old_file_path, new_file_path, new_content, new_year, new_ptype, new_pname, new_pnum, new_subj):
     """Update one SQLite row by its old path, preserving ID and entry time."""
-    old_rel_path = os.path.relpath(old_file_path, CHAPTERS_DIR)
+    old_rel_path = _relative_question_path(old_file_path)
+    new_rel_path = _relative_question_path(new_file_path)
     old = question_index.get_row(old_rel_path, csv_path=CSV_INDEX_PATH)
     if old is None:
         return add_to_csv_index(new_file_path, new_content, new_year, new_ptype, new_pname, new_pnum, new_subj)
     has_tikz, q_type, has_solution, stem, answer, solution, meta = _parse_tex_content(new_content, new_pname, new_subj)
     old.update({
         "文件名称": os.path.splitext(os.path.basename(new_file_path))[0],
-        "相对文件路径": os.path.relpath(new_file_path, CHAPTERS_DIR),
+        "相对文件路径": new_rel_path,
         "年份": new_year, "试卷类型": new_ptype, "试卷名称": new_pname,
         "原卷题号": new_pnum, "知识板块": new_subj, "包含TikZ绘图": has_tikz,
         "题型": q_type, "包含解析": has_solution, "题干": stem, "答案": answer, "解析": solution,

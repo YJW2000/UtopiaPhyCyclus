@@ -1,12 +1,11 @@
 """Run with the portable executable, not a separately installed Python.
 
 The PowerShell driver copies this file inside the extracted application's .runtime.
-Only synthetic diagnostics are used; reports never contain API keys or responses.
+Only synthetic diagnostics are used.
 """
 import asyncio
 import hashlib
 import json
-import os
 from pathlib import Path
 import subprocess
 import sys
@@ -60,10 +59,6 @@ async def session_checks(port):
         mode = next(e.radio for e in elements if e.HasField('radio') and e.radio.id.endswith('-browse_mode'))
         elements, count = await render(mode, 2)
         pages['chronological_browse'] = count
-        api = next(e.button for e in elements if e.HasField('button') and e.button.id.endswith('-mc-nav-bridge-9-1'))
-        elements, count = await render(api, True)
-        pages['api_settings'] = count
-        assert any(e.HasField('text_input') for e in elements), 'API settings did not render inputs'
         return pages
     finally:
         connection.close()
@@ -103,13 +98,6 @@ def main():
         assert read_csv_index() == []
         assert not list((root/'chapters').rglob('*.tex'))
         report['checks']['empty_question_bank'] = True
-        if os.environ.get('UTOPIA_VALIDATE_API') == '1':
-            from services.ai_service import test_model_availability
-            result = test_model_availability(os.environ['AI_BASE_URL'], os.environ['AI_API_KEY'],
-                                             os.environ['AI_MODEL_NAME'], timeout=240)
-            # Do not copy raw provider errors or configuration into public reports.
-            report['checks']['configured_api'] = {k: result[k] for k in ('ok', 'status_code', 'latency_ms') if k in result}
-            assert result['ok'], 'Configured API model probe failed (details kept private)'
         report['passed'] = True
     except Exception as exc:
         report['passed'] = False

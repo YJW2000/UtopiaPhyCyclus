@@ -32,14 +32,26 @@ def _wait(jobs, task):
 def test_preferences_report_current_agent_and_route_context_chat(tmp_path, monkeypatch):
     state = tmp_path / 'state'
     state.mkdir()
+    monkeypatch.setenv('ZHIPU_API_KEY', 'fixture-glm-key')
+    (tmp_path / '.env').write_text('AI_BASE_URL=http://127.0.0.1:1234/v1\nAI_API_KEY=fixture-key\n'
+                                  'AI_MODEL_NAME=fixture-vision-model\n', encoding='utf-8')
     handlers = desktop_library.create_library_handlers(tmp_path, state)
     monkeypatch.setattr(local_agent, '_find_agent', lambda agent, path: 'copilot.exe' if agent == 'copilot' else None)
     assert handlers['ui.load']({})['provider'] == 'codex'
+    (state / 'preferences.json').write_text('{"provider":"api"}', encoding='utf-8')
+    assert handlers['ui.load']({})['provider'] == 'codex'
+    assert handlers['ui.providers']({})['effectiveProvider'] == 'codex'
     assert handlers['ui.save']({'provider': 'copilot'})['provider'] == 'copilot'
-    with pytest.raises(ValueError):
-        handlers['ui.save']({'provider': 'arbitrary-executable'})
+    for unsupported in ('api', 'arbitrary-executable'):
+        with pytest.raises(ValueError):
+            handlers['ui.save']({'provider': unsupported})
     status = handlers['ui.providers']({})
     assert status['effectiveProvider'] == 'copilot'
+    assert 'apiConfigured' not in status and 'apiModel' not in status
+    assert 'fixture-key' not in json.dumps(status) and 'fixture-vision-model' not in json.dumps(status)
+    glm = next(item for item in status['agents'] if item['id'] == 'glm')
+    assert glm['installed'] and not glm['images']
+    assert 'fixture-glm-key' not in json.dumps(status)
     assert {item['id'] for item in status['agents']} == set(local_agent.LOCAL_AGENTS)
     assert next(item for item in status['agents'] if item['id'] == 'copilot')['installed']
     assert not next(item for item in status['agents'] if item['id'] == 'cursor')['images']
@@ -85,13 +97,24 @@ def test_saved_agent_handles_editor_chat_and_pdf_reconstruction(tmp_path, monkey
         imported = workspace.create({'path': str(original)})
         with pytest.raises(ValueError, match='只支持文本'):
             workspace.reconstruct({'id': imported['id']})
+        for unsupported in ('api', 'arbitrary-executable'):
+            with pytest.raises(ValueError, match='请选择可用的本机 Agent'):
+                workspace.reconstruct({'id': imported['id'], 'agent': unsupported})
+
+        answer = _wait(workspace.jobs, workspace.reconstruct({'id': imported['id'], 'agent': 'pi'}))
+        assert answer['status'] == 'succeeded', answer
+        assert '小球下落' in answer['result']['source']
+        assert selected_provider(state) == 'cursor'
 
         settings({'provider': 'gemini'})
+        with pytest.raises(ValueError, match='只支持文本'):
+            workspace.reconstruct({'id': imported['id'], 'agent': 'cursor'})
         answer = _wait(workspace.jobs, workspace.reconstruct({'id': imported['id']}))
         assert answer['status'] == 'succeeded', answer
         assert '小球下落' in answer['result']['source']
         assert calls[0] == ('cursor', [])
-        assert calls[1][0] == 'gemini' and calls[1][1][0].startswith(b'\x89PNG')
+        assert calls[1][0] == 'pi' and calls[1][1][0].startswith(b'\x89PNG')
+        assert calls[2][0] == 'gemini' and calls[2][1][0].startswith(b'\x89PNG')
     finally:
         workspace.jobs.close()
 

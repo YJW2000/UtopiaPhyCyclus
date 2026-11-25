@@ -2,7 +2,6 @@
     [Parameter(Mandatory=$true)][string]$PackagePath,
     [string]$ExpectedSha256,
     [string]$OutputRoot='C:\UtopiaValidation',
-    [string]$ApiConfigFile,
     [switch]$SerialProgress,
     [switch]$ShowBrowser,
     [switch]$ShutdownWhenFinished
@@ -72,11 +71,6 @@ try{
     Invoke-Application $app '--self-test' 'chinese-selftest'
     $report.checks.chinese_selftest=Get-Content -LiteralPath (Join-Path $app '.runtime/selftest/report.json') -Raw -Encoding UTF8 | ConvertFrom-Json
     if(-not $report.checks.chinese_selftest.passed){throw 'Chinese self-test did not pass'}
-    if($ApiConfigFile){
-        $config=Get-Content -LiteralPath $ApiConfigFile -Raw -Encoding UTF8 | ConvertFrom-Json
-        foreach($key in @('AI_BASE_URL','AI_API_KEY','AI_MODEL_NAME')){[Environment]::SetEnvironmentVariable($key,[string]$config.$key,'Process')}
-        $env:UTOPIA_VALIDATE_API='1'
-    }
     [IO.Directory]::CreateDirectory((Join-Path $app '.runtime')) | Out-Null
     Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'clean_windows_guest.py') -Destination (Join-Path $app '.runtime/clean_windows_guest.py')
     Invoke-Application $app '.runtime/clean_windows_guest.py' 'application-session'

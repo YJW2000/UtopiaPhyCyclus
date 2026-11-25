@@ -10,25 +10,42 @@ import shutil
 from threading import Lock
 import uuid
 
-from services.desktop_model import api_config, read_settings, selected_provider
+from services.desktop_model import read_settings, selected_provider
 from services.desktop_tool_paths import fresh_tool_path
 from services.file_service import atomic_write_text
 from services.local_agent import LOCAL_AGENTS, agent_status, run_agent_json
 from utils import question_index
+from utils.core_config import PAPER_TYPES, SUBJECTS
 from utils.theme_palettes import SKINS, normalize_skin, theme_tokens
 
 
 _FIELDS = ['题目ID', '相对文件路径', '年份', '试卷名称', '原卷题号', '知识板块', '题型', '标签', '题干', '最后修改时间']
 _NAMES = ['id', 'path', 'year', 'paper', 'number', 'subject', 'type', 'tags', 'stem', 'modified']
 _COLUMNS = ','.join('"' + field + '"' if field != '题干' else 'substr("题干",1,320)' for field in _FIELDS)
-_FILTERS = {'subject': '知识板块', 'type': '题型', 'year': '年份'}
+_FILTERS = {'subject': '知识板块', 'type': '题型', 'year': '年份', 'paperType': '试卷类型'}
+_PAPER_FIELDS = ('年份', '试卷类型', '试卷名称')
+_PAPER_COLUMNS = ', '.join(f'"{field}"' for field in _PAPER_FIELDS)
+_QUESTION_NUMBER = 'TRIM("原卷题号")'
+_PAPER_ORDER = f'''"年份" DESC, "试卷名称", "试卷类型",
+    CASE WHEN {_QUESTION_NUMBER} <> '' AND {_QUESTION_NUMBER} NOT GLOB '*[^0-9]*'
+         THEN CAST({_QUESTION_NUMBER} AS INTEGER) END ASC NULLS LAST, rowid ASC'''
+_ENTRY_TIME = 'COALESCE(NULLIF("初次录入的时间", \'\'), "最后修改时间")'
+# Multi-module metadata stores the primary module first, as in the chapter folders.
+_MODULE = """COALESCE(NULLIF(TRIM(SUBSTR("知识板块", 1,
+    INSTR(REPLACE("知识板块", ',', '，') || '，', '，') - 1)), ''), '未分类')"""
 _SAMPLE_ROOT = Path(__file__).resolve().parents[1] / 'desktop' / 'sample'
 
 
-def _summary_row(row):
-    result = dict(zip(_NAMES, row))
+def _paper_key(year, paper_type, paper):
+    return json.dumps([year, paper_type, paper], ensure_ascii=False, separators=(',', ':'))
+
+
+def _summary_row(row, names=_NAMES):
+    result = dict(zip(names, row))
     text = re.sub(r'(?m)^%[^\n]*|\\begin\{problem\}(?:\s*\{[^}]*\}){0,5}|\\end\{problem\}', '', result['stem'] or '')
     result['stem'] = re.sub(r'\s+', ' ', text).strip()[:200]
+    if 'paperType' in result:
+        result['paperKey'] = _paper_key(result['year'], result['paperType'], result['paper'])
     return result
 
 
@@ -55,7 +72,7 @@ def create_library_handlers(library: Path, state_dir: Path):
 
     def preferences(p):
         update = {}
-        for field, allowed in (('skin', SKINS), ('mode', {'dark', 'light'}), ('provider', {*LOCAL_AGENTS, 'api'})):
+        for field, allowed in (('skin', SKINS), ('mode', {'dark', 'light'}), ('provider', LOCAL_AGENTS)):
             if field in p:
                 if not isinstance(p[field], str) or p[field] not in allowed:
                     raise ValueError('设置值无效。')
@@ -67,22 +84,46 @@ def create_library_handlers(library: Path, state_dir: Path):
 
     def summary(_):
         with question_index.connection(csv) as db:
-            subjects = dict(db.execute('SELECT "知识板块",count(*) FROM questions GROUP BY "知识板块" ORDER BY count(*) DESC'))
+            subjects, module_counts = {}, {}
+            for subject, module, count in db.execute(f'''SELECT "知识板块", {_MODULE}, count(*)
+                    FROM questions GROUP BY "知识板块" ORDER BY count(*) DESC'''):
+                subjects[subject] = count
+                module_counts[module] = module_counts.get(module, 0) + count
             types = dict(db.execute('SELECT "题型",count(*) FROM questions GROUP BY "题型" ORDER BY count(*) DESC'))
             years = [r[0] for r in db.execute('SELECT DISTINCT "年份" FROM questions ORDER BY "年份" DESC') if r[0]]
-            papers = db.execute('SELECT count(*) FROM (SELECT DISTINCT "年份","试卷类型","试卷名称" FROM questions)').fetchone()[0]
+            paper_groups = [dict(key=_paper_key(year, paper_type, paper), year=year, paper=paper,
+                                 paperType=paper_type, paperTypeName=PAPER_TYPES.get(paper_type, paper_type), count=count)
+                            for year, paper_type, paper, count in db.execute(f'''SELECT {_PAPER_COLUMNS}, count(*)
+                                FROM questions GROUP BY {_PAPER_COLUMNS} ORDER BY "年份" DESC, "试卷名称", "试卷类型"''')]
             recent = [_summary_row(r) for r in db.execute(f'SELECT {_COLUMNS} FROM questions ORDER BY "最后修改时间" DESC, rowid DESC LIMIT 6')]
-        return dict(total=sum(subjects.values()), subjects=subjects, types=types, years=years, papers=papers, recent=recent)
+        module_names = [*SUBJECTS, *sorted(module_counts.keys() - set(SUBJECTS))]
+        modules = [dict(name=name, count=module_counts.get(name, 0)) for name in module_names]
+        return dict(total=sum(subjects.values()), subjects=subjects, modules=modules, types=types, years=years,
+                    papers=len(paper_groups), paperGroups=paper_groups, recent=recent)
 
     def search(p):
         query = str(p.get('query', '')).strip()
         size = min(80, max(1, int(p.get('pageSize', 25))))
         page = max(1, int(p.get('page', 1)))
+        browse_mode = p.get('browseMode')
+        group_modules = browse_mode == 'module' or (browse_mode is None and p.get('groupModules') is True)
         clauses, values = [], []
         for key, column in _FILTERS.items():
             if p.get(key):
                 clauses.append(f'"{column}" = ?')
                 values.append(p[key])
+        if group_modules and p.get('module'):
+            clauses.append(f'{_MODULE} = ?')
+            values.append(p['module'])
+        if browse_mode == 'paper' and p.get('paper'):
+            try:
+                paper = json.loads(p['paper'])
+            except (TypeError, ValueError):
+                raise ValueError('试卷筛选无效。') from None
+            if not isinstance(paper, list) or len(paper) != len(_PAPER_FIELDS) or not all(isinstance(part, str) for part in paper):
+                raise ValueError('试卷筛选无效。')
+            clauses.extend(f'"{field}" = ?' for field in _PAPER_FIELDS)
+            values.extend(paper)
         fuzzy_ids = None
         if query and p.get('mode') == 'fuzzy':
             scored = question_index.fuzzy_search(query, csv_path=csv)
@@ -93,8 +134,22 @@ def create_library_handlers(library: Path, state_dir: Path):
                 clauses.append('(' + ' OR '.join(f'instr("{c}",?)>0' for c in columns) + ')')
                 values.extend([word] * len(columns))
         where = ' WHERE ' + ' AND '.join(clauses) if clauses else ''
+        extra_columns, extra_names = [], []
+        order = '"最后修改时间" DESC, rowid DESC'
+        if group_modules:
+            extra_columns, extra_names = [_MODULE], ['module']
+        elif browse_mode == 'paper':
+            extra_columns, extra_names = ['"试卷类型"'], ['paperType']
+            order = _PAPER_ORDER
+        elif browse_mode == 'entry':
+            extra_columns, extra_names = [_ENTRY_TIME], ['entered']
+            direction = 'ASC' if p.get('entryOrder') == 'asc' else 'DESC'
+            order = f'{_ENTRY_TIME} {direction}, rowid ASC'
+        select_columns = ', '.join([_COLUMNS, *extra_columns])
+        names = [*_NAMES, *extra_names]
         with question_index.connection(csv) as db:
-            sql = f'SELECT {_COLUMNS} FROM questions{where} ORDER BY "最后修改时间" DESC, rowid DESC'
+            db.execute('BEGIN')
+            sql = f'SELECT {select_columns} FROM questions{where} ORDER BY {order}'
             if fuzzy_ids is None:
                 total = db.execute('SELECT count(*) FROM questions' + where, values).fetchone()[0]
                 page = min(page, max(1, math.ceil(total / size)))
@@ -105,7 +160,7 @@ def create_library_handlers(library: Path, state_dir: Path):
                 total = len(matches)
                 page = min(page, max(1, math.ceil(total / size)))
                 rows = matches[(page - 1) * size:page * size]
-        return {'rows': [_summary_row(row) for row in rows], 'total': total, 'page': page, 'pages': max(1, math.ceil(total/size))}
+        return {'rows': [_summary_row(row, names) for row in rows], 'total': total, 'page': page, 'pages': max(1, math.ceil(total/size))}
 
     def question_path(rel):
         path = (chapters / rel).resolve()
@@ -183,13 +238,11 @@ def create_library_handlers(library: Path, state_dir: Path):
         return result
 
     def provider_status(_):
-        config = api_config(library)
         tool_path = fresh_tool_path()
         agents = agent_status(tool_path)
         return {'agents': agents, 'effectiveProvider': selected_provider(state),
                 'codex': agents[0]['installed'], 'xelatex': bool(shutil.which('xelatex', path=tool_path)),
-                'synctex': bool(shutil.which('synctex', path=tool_path)),
-                'apiConfigured': all(config[key] for key in ('AI_MODEL_NAME', 'AI_API_KEY', 'AI_BASE_URL'))}
+                'synctex': bool(shutil.which('synctex', path=tool_path))}
 
     return {'library.summary':summary, 'library.search':search, 'library.assemble':assemble, 'library.demo':demo,
             'library.imageInput':image_input,'library.check':check, 'context.chat':chat,

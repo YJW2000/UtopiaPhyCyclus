@@ -30,7 +30,6 @@ EXPECTED_OPTIONS = [
     "🖨️  组卷排版",
     "🔎  题目查找",
     "📘  架构介绍",
-    "📖  规范指南",
     "⚙️  设置",
 ]
 
@@ -105,6 +104,13 @@ def test_app_startup_and_short_sidebar():
         if at.exception:
             print(f"Exception on route {nav_item}:", at.exception)
             sys.exit(1)
+        if nav_item == "📘  架构介绍":
+            assert at.radio(key="intro_section").options == ["使用教程", "规范指南"]
+            at.radio(key="intro_section").set_value("规范指南").run()
+            assert not at.exception
+            assert at.session_state["main_nav_selection"] == nav_item
+            assert any(subheader.value == "📖 题库规范说明" for subheader in at.subheader)
+            assert any("文件命名规范" in markdown.value for markdown in at.markdown)
         print(f"Route {nav_item} rendered cleanly!")
 
     at.button(key="open_library_tools").click().run()
@@ -117,6 +123,18 @@ def test_app_startup_and_short_sidebar():
     assert at.button(key="open_library_tools")
 
     print("All warm terracotta runtime checks passed!")
+
+
+def test_saved_manual_navigation_opens_architecture_guide():
+    at = AppTest.from_file(os.path.join(APP_ROOT, "utopia_phycyclus_app.py"), default_timeout=60)
+    at.session_state["main_nav_selection"] = "📖  规范指南"
+    at.session_state["main_sidebar_radio"] = "📖  规范指南"
+    at.run()
+
+    assert not at.exception
+    assert at.session_state["main_nav_selection"] == "📘  架构介绍"
+    assert at.radio(key="intro_section").value == "规范指南"
+    assert any("LaTeX 源码书写格式" in markdown.value for markdown in at.markdown)
 
 
 if __name__ == "__main__":

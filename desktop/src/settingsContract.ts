@@ -1,6 +1,7 @@
 export type AgentId = 'codex' | 'claude' | 'copilot' | 'opencode' | 'gemini' | 'cursor' | 'codebuddy' | 'qoder' | 'agy' | 'workbuddy'
-export type ProviderId = AgentId | 'api'
-export type EnvironmentToolId = AgentId | 'git' | 'latex'
+  | 'pi' | 'grok' | 'kimi' | 'glm' | 'deepseek' | 'qwen'
+export type ProviderId = AgentId
+export type EnvironmentToolId = Exclude<AgentId, 'glm'> | 'git' | 'latex'
 
 export interface LocalAgent {
   id: AgentId
@@ -13,7 +14,6 @@ export interface LocalAgent {
 
 export interface ProviderStatus {
   agents: LocalAgent[]
-  apiConfigured: boolean
   effectiveProvider?: ProviderId | null
 }
 

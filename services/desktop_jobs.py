@@ -26,6 +26,12 @@ class DesktopJob:
             check_cancelled()
             self.state['progress'] = {'message': message, **data}
 
+    def checkpoint(self, operation):
+        """Publish one completed batch item before cancellation can take effect."""
+        with self.lock:
+            check_cancelled()
+            return operation()
+
     def publish(self, operation):
         with self.lock:
             check_cancelled()

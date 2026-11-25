@@ -1,14 +1,17 @@
 # 📚 乌托邦高中物理题库助手
 
-UtopiaPhyCyclus（乌托邦高中物理题库助手）是一个基于 Python、Streamlit 和 LaTeX 的高中物理题库管理与智能组卷系统。它面向高中物理教师及教研团队，用于解决 LaTeX 题目的结构化管理、检索、排版与组卷问题。
+UtopiaPhyCyclus（乌托邦高中物理题库助手）面向高中物理教师和教研团队，支持 LaTeX 题目录入、检索、编校和组卷。Windows 桌面版集成 PDF 审阅与 Papilot 工作台，也可通过 Streamlit 在浏览器中使用经典界面。
 
 本项目基于 **JinLingxi（槿灵兮）** 的 [MathCyclus 数学题库助手](https://github.com/JinLingxi/MathCyclus---Lingxi-Question-Bank-Assistant) 改造，物理版由 [YJW2000](https://github.com/YJW2000) 维护。原作 MIT 许可及署名见 [LICENSE](LICENSE) 和 [NOTICE.md](NOTICE.md)。
 
-**下载：** [GitHub Releases](https://github.com/YJW2000/UtopiaPhyCyclus/releases) · [安装与重新构建](docs/发行与安装.md) · [更新记录](CHANGELOG.md)。Windows 用户可下载便携 ZIP，完整解压后双击 `UtopiaPhyCyclus.exe`。
+- **Windows x64 桌面预览版** [下载 v1.2.0-desktop.11 安装器](https://github.com/YJW2000/UtopiaPhyCyclus/releases/download/v1.2.0-desktop.11/UtopiaPhyCyclus-Desktop-Preview-1.2.0-desktop.11-windows-x64.exe) · [发行说明与校验值](https://github.com/YJW2000/UtopiaPhyCyclus/releases/tag/v1.2.0-desktop.11)
+- **Windows x64 经典便携版** [下载 v1.2.0 ZIP](https://github.com/YJW2000/UtopiaPhyCyclus/releases/download/v1.2.0/UtopiaPhyCyclus-1.2.0-windows-x64.zip)，完整解压后双击 `UtopiaPhyCyclus.exe`。
+
+桌面版安装后，在「设置 → 本地题库」中选择原来包含 `chapters` 的目录即可继续使用已有题库。「架构介绍」提供截图教程和「规范指南」，「TeX 录入」可打开演示题。更多说明见[安装与重新构建](docs/发行与安装.md)和[更新记录](CHANGELOG.md)。
 
 **空题库发行：** 仓库和所有发行包仅提供软件、空白组卷模板及文档，不包含内部题目、图片、答案、索引、密钥或导出文件。请自行导入有权使用的题目。构建时使用显式白名单，独立仓库不携带旧题库的 Git 历史。
 
-**v1.2.0 Windows x64 完整版**内置 Python、项目所需 TeX Live 宏包及中文字体、Node、CPU Whisper 和 small 多语言模型。完整解压后运行 exe，AI 功能填写个人 API 即可；无需另外安装 Python、TeX、Node 或 DSH。预装宏包范围、x32 限制与测试边界见 [Windows兼容性与测试](docs/Windows兼容性与测试.md)。下面的环境安装步骤适用于源码/wheel 用户。
+**v1.2.0 Windows x64 完整版**内置 Python、项目所需 TeX Live 宏包及中文字体、Node、CPU Whisper 和 small 多语言模型。完整解压后运行 exe，即可使用题库和排版功能。AI 功能通过已登录的本机 Agent 使用。预装宏包范围、x32 限制与测试边界见 [Windows兼容性与测试](docs/Windows兼容性与测试.md)。下面的环境安装步骤适用于源码/wheel 用户。
 
 ## ☕ 请我喝咖啡
 
@@ -20,7 +23,7 @@ UtopiaPhyCyclus（乌托邦高中物理题库助手）是一个基于 Python、S
 
 ![UtopiaPhyCyclus Question Bank Assistant workflow](fig/utopia_phycyclus_workflow.png)
 
-从按章节/年份组织的 LaTeX 题目源文件出发，系统构建 SQLite 元数据与中文全文检索索引，在 Streamlit 工作台中完成检索、编辑、预览与智能组卷，并通过 Qwen3.8-Max 和 TikZ 渲染管线增强 OCR、打标签、解答生成和物理示意图预览能力，最终导出 LaTeX 试卷源文件与 PDF 讲义。
+从按章节/年份组织的 LaTeX 题目源文件出发，系统构建 SQLite 元数据与中文全文检索索引，在工作台中完成检索、编辑、预览与智能组卷。本机 Agent 协助识图、打标签和生成解答，TikZ 用于物理示意图排版。组卷后可导出 LaTeX 源文件与 PDF 讲义。
 
 ## ✨ 核心功能
 
@@ -34,9 +37,9 @@ UtopiaPhyCyclus（乌托邦高中物理题库助手）是一个基于 Python、S
 
 ### 🤖 AI 辅助录入
 
-基于 Qwen-VL-Plus 处理截图、标签和解答生成。
+使用本机 Agent 处理截图、标签和解答生成。
 
-- 在桌面版「图片识别」中选择图片，或复制截图后按 Ctrl+V（也可点「粘贴图片」），再点「开始识别图片」生成可编辑的 LaTeX。
+- 在桌面版「图片识别」中粘贴截图或选择图片，再选择识别模型并点击「开始识别并编译」。PDF 编译成功后自动打开工作台，可以并排编辑 LaTeX 源码和查看 PDF。
 - 自动生成知识点标签与难度星级。
 - 对解答进行“教学审核”，发现逻辑问题时附加 AI 纠错说明。
 
@@ -45,26 +48,27 @@ UtopiaPhyCyclus（乌托邦高中物理题库助手）是一个基于 Python、S
 从题库中按条件筛选、抽样并生成试卷。
 
 - 支持题型、年份、板块、标签、难度与全文检索。
-- 侧边栏“题目查找”提供“精确查找”和“模糊查找”悬停子菜单。模糊查找在本地匹配正文、标签、知识点、物理方法、答案解析及来源信息，支持常见物理关联词、多关键词和近似词，可按相关度、首次录入时间或难度排序，并显示命中字段与分页结果，无需配置向量模型。
-- 支持可选的混合搜索与语义搜索；本地 SQLite 向量索引可随时重建，独立于 SQLite 题库主索引。
+- 侧边栏“题目查找”提供本地精确查找和模糊查找。模糊查找匹配正文、标签、知识点、物理方法、答案解析及来源信息，支持常见物理关联词、多关键词和近似词，可按相关度、首次录入时间或难度排序，并显示命中字段与分页结果。
 - 支持按知识板块、题量与目标难度分布进行抽样。
 - 支持自然语言组卷需求润色，辅助形成命题意图。
 
-### 🎨 工作台界面
+### 工作台与 Papilot
 
-采用 Streamlit 构建教师可直接使用的本地工作台。
-
-- 三栏式布局：左侧筛选，中间编辑，右侧预览与 AI 助手。
-- 徽章式展示星级、标签、备注等题目状态。
-- 支持快速浏览、编辑、预览和组卷流程切换。
+- 「全局浏览」可按知识板块、试卷或录入顺序查看题目，也可从列表打开题目，编辑 LaTeX 源码并预览 PDF。
+- 桌面版内置 Papilot 0.14.1，支持多文件 LaTeX 项目、PDF 批注、Agent 改动审阅及 Git 版本管理。
+- 题目可通过「更多操作 → 在 Papilot 工作台打开」进入项目。审阅后用「从 Papilot 导入改动」将源码和依赖同步回题库草稿，核对排版后再保存。[Papilot 工作台教程](docs/Papilot%20工作台.md)
 
 ### PDF 录入与框选修改
 
-手里只有试卷 PDF 时，打开「PDF 录入」，上传原卷，选定页码范围，点击「识别所选页并生成草稿」。本地 Agent 根据页面图像和可提取的文字重建题目、公式及原卷附带的答案与解析。扫描件也可以录入。照片、仪器读数等插图从原 PDF 裁取，保存入库时会随题目存入「相关图」目录。
+桌面版在「PDF 录入」中打开原卷，点击「识别原卷」并选择页码。经典版在上传后点击「识别所选页并生成草稿」。本地视觉 Agent 根据页面图像和可提取的文字重建题目、公式及原卷附带的答案与解析，也可处理扫描件。照片和仪器读数等插图从原 PDF 裁取，入库时随题目存入「相关图」目录。
 
 草稿编译后，在 PDF 上框住要改的文字、公式或 TikZ 图形，用中文描述要求，点击「生成修改预览」。可以对照修改前后的排版，点击「采用修改」更新草稿，再用「保存到题库」入库。「LaTeX 源码」可查看和手动编辑底稿，「原 PDF 对照」可核对识别结果。已经有 TeX 文件或题库题目时，也可以从「TeX 录入」或「全局浏览」打开框选编辑。
 
 桌面版在「设置」里选择本地 Agent，沿用对应命令行工具的登录。设置页可以检测 Git、LaTeX 和各个 Agent，缺少的工具可从对应行安装。处理扫描件或 PDF 框选时，请选择支持图片的 Agent。PDF 在本机用 XeLaTeX 编译，页面图像或选区截图及相应文字会交给所选 Agent 处理。单独运行 Streamlit 版时，PDF 识别与框选仍使用本机 Codex CLI，首次使用可运行 `codex login` 登录。
+
+新题草稿和已入库题目都可以点击「补充答案与解析」。Agent 根据题干、选项、插图和已有解答补全缺失项。核对生成内容后，新题可保存入库，旧题可保存回原题。单独运行 Streamlit 时，补充解答使用本机 Codex CLI。
+
+在「全局浏览」打开「批量补充答案与解析」，可跨页勾选题目，再让 Agent 逐题补齐缺失的内容。生成完成后可逐题核对并保存，已有答案和解析会保留。
 
 ### 📐 TikZ 物理示意图预览
 
@@ -100,10 +104,10 @@ Harness v2 在「LLM 生成 + 编译重试」之上补齐了**确定性校验与
 
 ## 🛠️ 技术栈
 
-- **前端界面与交互**：[Streamlit](https://streamlit.io/) (响应式框架，多列布局，回调机制)
+- **前端界面与交互**为 Electron / React 桌面工作台和 Streamlit 浏览器界面。
 - **排版与编译引擎**：**$\LaTeX$** (核心依赖 `xelatex` 编译器)
 - **底层脚本与处理**：Python (`re` 文本处理, `fitz` PDF图像解析, 抽样算法)
-- **大语言模型支持**：阿里云百炼 (Qwen-VL-Plus 模型)
+- **大语言模型支持**：Codex 等本机 Agent
 - **版本控制**：Git/GitHub (配置代理优化大文件传输同步)
 
 ## 🚀 源码快速启动
@@ -119,16 +123,7 @@ Harness v2 在「LLM 生成 + 编译重试」之上补齐了**确定性校验与
    .venv\Scripts\activate
    pip install -r requirements.txt
    ```
-3. 复制 `env.example` 为 `.env`，并填入 AI 模型配置：
-
-   ```env
-   AI_API_KEY=your_api_key_here
-   AI_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
-   AI_MODEL_NAME=qwen3.8-max
-   # 可选：启用混合/语义搜索
-   AI_EMBEDDING_MODEL_NAME=text-embedding-v4
-   ```
-   配置 embedding 模型后，在设置中打开题库工具箱，再选择“更新语义索引”；留空时系统继续使用原有精确筛选。
+3. 如需使用 AI 功能，先登录本机 Agent。桌面版可在「设置 → 模型连接」选择默认 Agent。单独运行 Streamlit 版时，使用 `codex login` 登录本机 Codex。
 4. 如需使用 TikZ 几何图预览，请安装完整的 **$\LaTeX$ 编译环境**（例如 TeX Live），并确认 `xelatex` 已加入系统环境变量。项目会通过 `PyMuPDF` 将编译结果转为 PNG 预览。
 5. 首次启动会建立 `utils/question_index.sqlite3`，并保留迁移所用的旧 CSV。日常保存使用单题增量更新。桌面版与一键启动器在启动和正常退出时自动检查索引，同步在外部新增或修改的题目。需要移除已删除或移动题目的旧索引条目时，可在设置中打开题库工具箱，选择“一键重建/同步题库索引”，也可运行以下命令：
 
@@ -176,7 +171,6 @@ streamlit run utopia_phycyclus_app.py
 
 - `utils/question_index.sqlite3` 是本机 SQLite 主索引，支持数据库分页、中文全文检索及单题事务更新，不提交到 Git。迁移确认后可清理旧 CSV；运行 `python utils/init_sqlite_index.py` 从 `.tex` 重建 SQLite 索引，不再自动生成 CSV。迁移与备份说明见 [SQLite 索引升级](docs/SQLite索引升级.md)。
 - 新增、修改和活跃度统计随题目变更增量记录在 SQLite 主索引。升级时迁移旧 `utils/local_stats.sqlite3` 的活动记录并保留旧库；已有题目不会被记作今日新增。
-- `utils/semantic_index.sqlite3` 是可选且可重建的语义索引，不应提交到 Git；题目保存、删除或重命名后，对应旧向量会自动失效。
 - 批量识别或同卷录入遇到已存在的同名题目时，默认保留旧文件并跳过新的识别结果；处理日志会明确标记为“跳过”。
 - `log.csv` 是批量导入脚本的运行日志输出；`old_app.py`、`question_bank_app000.py` 和 `SolaireEPDA-master/` 属于历史产物或外部参考内容。当前 `.gitignore` 已将同类文件排除，后续如需清理 Git 跟踪记录，建议单独开 PR 处理。
 - TikZ 预览依赖本机 `xelatex`，若未安装 LaTeX，题库浏览与普通组卷仍可使用，但几何图实时预览会受限。

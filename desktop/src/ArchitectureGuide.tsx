@@ -1,5 +1,6 @@
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { environmentLessons } from './guideEnvironment'
+import { lessonScreenshots, type GuideScreenshot } from './guideScreenshots'
 import type { GuideAction, GuideLesson, GuidePage } from './guideTypes'
 import { workflowLessons } from './guideWorkflows'
 import './architecture-guide.css'
@@ -10,10 +11,11 @@ const groups = [
 ]
 
 function Lesson({
-  lesson, run, saveRef,
+  lesson, run, enlarge, saveRef,
 }: {
   lesson: GuideLesson
   run: (action: GuideAction) => void
+  enlarge: (screenshot: GuideScreenshot) => void
   saveRef: (element: HTMLDetailsElement | null) => void
 }) {
   const { title, summary, steps, example, check, tips, action } = lesson
@@ -34,7 +36,29 @@ function Lesson({
         <span>{summary}</span>
       </summary>
       <div className="guide-lesson-body">
-        <ol>{steps.map((step) => <li key={step}>{step}</li>)}</ol>
+        <ol>
+          {steps.map((step, index) => {
+            const screenshot = lessonScreenshots[lesson.id]?.[index + 1]
+            return (
+              <li key={step}>
+                {step}
+                {screenshot && (
+                  <figure className="guide-screenshot" style={{ maxWidth: screenshot.previewWidth }}>
+                    <button
+                      type="button"
+                      aria-label={`放大截图 · ${screenshot.title}`}
+                      onClick={() => enlarge(screenshot)}
+                    >
+                      <img src={screenshot.src} alt={screenshot.alt} loading="lazy" decoding="async" />
+                      <span aria-hidden="true">放大查看 ↗</span>
+                    </button>
+                    <figcaption>{screenshot.title}</figcaption>
+                  </figure>
+                )}
+              </li>
+            )
+          })}
+        </ol>
         <div className="guide-example">
           <h3>{example.title}</h3>
           <p className={example.copyLabel ? 'guide-example-source' : undefined}>{example.text}</p>
@@ -54,14 +78,20 @@ function Lesson({
 }
 
 export default function ArchitectureGuide({
-  navigate, demo, openClassic, classicPending,
+  navigate, demo, openClassic, pendingClassicPage,
 }: {
   navigate: (page: GuidePage) => void
   demo: () => void
-  openClassic: () => void
-  classicPending: boolean
+  openClassic: (page: 'intro' | 'manual') => void
+  pendingClassicPage: 'intro' | 'manual' | null
 }) {
   const lessons = useRef(new Map<string, HTMLDetailsElement>())
+  const screenshotDialog = useRef<HTMLDialogElement>(null)
+  const [screenshot, setScreenshot] = useState<GuideScreenshot | null>(null)
+
+  useEffect(() => {
+    if (screenshot) screenshotDialog.current?.showModal()
+  }, [screenshot])
 
   function jumpTo(id: string) {
     const lesson = lessons.current.get(id)
@@ -98,7 +128,15 @@ export default function ArchitectureGuide({
           <div><dt>Agent 与排版</dt><dd>Agent 协助识别和提出修改，PDF 工作台供你对照审阅，LaTeX 将确认后的源码编译成预览或可打印 PDF。</dd></div>
         </dl>
       </section>
+      <section className="mc-card guide-section" aria-labelledby="guide-manual">
+        <h2 id="guide-manual">规范指南</h2>
+        <p>查阅题库文件命名、LaTeX 源码结构、选项与插图的书写规范。</p>
+        <button disabled={pendingClassicPage !== null} onClick={() => openClassic('manual')}>
+          {pendingClassicPage === 'manual' ? '正在打开…' : '阅读完整规范指南 ↗'}
+        </button>
+      </section>
       <nav className="mc-card guide-contents" aria-label="教程目录">
+        <p>选择教程跳到操作步骤。点击截图可放大查看。</p>
         {groups.map(({ id, title, lessons: items }) => (
           <div key={id}>
             <h2>{title}</h2>
@@ -118,6 +156,7 @@ export default function ArchitectureGuide({
               key={lesson.id}
               lesson={lesson}
               run={run}
+              enlarge={setScreenshot}
               saveRef={(element) => {
                 if (element) lessons.current.set(lesson.id, element)
                 else lessons.current.delete(lesson.id)
@@ -126,9 +165,22 @@ export default function ArchitectureGuide({
           ))}
         </section>
       ))}
-      <button className="advanced-link" disabled={classicPending} onClick={openClassic}>
-        {classicPending ? '正在打开…' : '查看经典版架构与教程 ↗'}
+      <button className="advanced-link" disabled={pendingClassicPage !== null} onClick={() => openClassic('intro')}>
+        {pendingClassicPage === 'intro' ? '正在打开…' : '查看经典版架构与教程 ↗'}
       </button>
+      <dialog
+        ref={screenshotDialog}
+        className="guide-screenshot-dialog"
+        style={screenshot?.previewWidth ? { width: screenshot.previewWidth * 2 } : undefined}
+        aria-labelledby="guide-screenshot-title"
+        onClose={() => setScreenshot(null)}
+      >
+        <div className="guide-screenshot-header">
+          <h2 id="guide-screenshot-title">{screenshot?.title}</h2>
+          <button type="button" onClick={() => screenshotDialog.current?.close()}>关闭</button>
+        </div>
+        {screenshot && <img src={screenshot.src} alt={screenshot.alt} />}
+      </dialog>
     </div>
   )
 }

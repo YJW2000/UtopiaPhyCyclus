@@ -138,9 +138,8 @@ class AssessmentServiceTests(unittest.TestCase):
             old.write_text(q.content, encoding='utf-8')
             with (patch.object(app, 'CHAPTERS_DIR', str(root)), patch.object(csv_ops, 'CHAPTERS_DIR', str(root)),
                   patch.object(csv_ops, 'CSV_INDEX_PATH', str(root / '评估索引.csv')),
-                  patch.object(app, 'record_operation'), patch.object(app, '_invalidate_semantic_for_file'),
+                  patch.object(app, 'record_operation'),
                   patch.object(app, 'backup_existing_file'), patch.object(app.st, 'session_state', {}),
-                  patch.object(app, '_read_root_ai_env_config', return_value={}),
                   patch.object(assessment, '_request_json', return_value=evidence())):
                 qid = csv_ops.add_to_csv_index(str(old), q.content, q.year, q.paper_type, q.paper, q.number, q.subject)
                 saved, content = app._save_and_index_content_edit(str(old), q.content + r'\begin{solutions}联用两条定律。\end{solutions}')

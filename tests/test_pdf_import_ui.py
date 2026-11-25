@@ -138,6 +138,7 @@ class PdfImportUiTest(unittest.TestCase):
         app.session_state[proposal_key] = {"base": identity}
         app.run()
         self.assertTrue(app.button(key=first + "_save").disabled)
+        self.assertTrue(app.button(key=first + "_fill_solution").disabled)
         self.assertTrue(any("采用或放弃" in c.value for c in app.caption))
         self.recognize()
         self.assertFalse(app.button(key=self.current_key() + "_save").disabled)
@@ -146,6 +147,23 @@ class PdfImportUiTest(unittest.TestCase):
         app.session_state[proposal_key] = {"base": "stale"}
         app.run()
         self.assertFalse(app.button(key=first + "_save").disabled)
+
+    def test_fill_solution_updates_source_and_preview_before_saving(self):
+        self.recognize()
+        app = self.app
+        key = self.current_key()
+        app.radio(key=key + "_view").set_value("LaTeX 源码").run()
+        app.text_area(key=key + "_source").set_value("manually edited question").run()
+        updated = r"manually edited question\begin{answer}A\end{answer}"
+        with patch("services.question_solution_service.fill_missing_solution", return_value=updated) as generate:
+            app.button(key=key + "_fill_solution").click().run()
+        self.assertFalse(app.exception)
+        self.assertEqual(generate.call_args.args, ("manually edited question",))
+        self.assertTrue(Path(generate.call_args.kwargs["source_dir"], "figure.png").is_file())
+        self.assertEqual(app.text_area(key=key + "_source").value, updated)
+        self.assertNotIn("saved", app.session_state)
+        app.button(key=key + "_save").click().run()
+        self.assertEqual(app.session_state["saved"][0][0], updated)
 
 
 if __name__ == "__main__":

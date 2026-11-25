@@ -24,7 +24,6 @@ for module in (core_config, csv_ops):
     module.CSV_INDEX_PATH = str(index)
 operation_log.OPERATION_LOG_PATH = str(fixture / "utils" / "operations.sqlite3")
 browse_preferences.PREFERENCES_PATH = fixture / "browse.json"
-app._invalidate_semantic_for_file = lambda *_: None
 app.render_ai_solution_panel = lambda *_, **__: None
 app.render_ai_solution_image_ocr_section = lambda *_, **__: None
 

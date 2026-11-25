@@ -2,23 +2,22 @@
 
 Pass the stock Electron executable after building the renderer to verify native
 IPC against deterministic ClipboardItems. With --packaged, pass the built app
-executable to verify renderer paste, upload, draft persistence and recognition.
-Both modes use a loopback OCR server and leave the Windows clipboard untouched.
+executable to verify renderer paste, Agent selection, compilation and editing.
+Both modes use an isolated Codex CLI fixture and leave the Windows clipboard untouched.
 """
 import argparse
 import asyncio
 import base64
 import ctypes
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import socket
 import subprocess
 import sys
 from tempfile import TemporaryDirectory
-from threading import Thread
 
 import pymupdf
 import websockets
@@ -27,34 +26,75 @@ from desktop_speed_probe import Page, ROOT, target
 
 
 PASTE = '粘贴图片'
+RECOGNIZE = '开始识别并编译'
+IMAGE = '.intake img[alt="原图"]'
+MODEL = '.image-intake-model select'
+INTAKE_ERROR = '.image-intake-error[role=alert]'
 SOURCE = 'textarea[aria-label="编辑 LaTeX 源码"]'
 GROUP_CHAT = 'textarea[aria-label="发送给题库助手"]'
 EDITOR_CHAT = '#wb-chat-prompt'
 OCR_SEED = '截图回归测试：一辆小车受到水平恒力。'
-RENDERED = "[...document.querySelectorAll('.wb-document canvas')].some(c => c.checkVisibility() && c.style.visibility === 'visible')"
+RENDERED = (
+    "[...document.querySelectorAll('.wb-pdf[aria-label=\"PDF 预览\"] canvas')]"
+    ".some(c => c.checkVisibility() && c.style.visibility === 'visible')"
+)
 WORKSPACE = "document.querySelector('.editor-mount')?.style.display === 'flex'"
 
 
-class LocalOcr(BaseHTTPRequestHandler):
-    payloads = []
+def make_codex_fixture(root):
+    fixture = root / 'codex-fixture'
+    fixture.mkdir()
+    recognition = {
+        'status': 'ok',
+        'fragments': [dict(question_id='q1', number='1', kind='stem', latex=OCR_SEED + r' $F=6\,\mathrm{N}$。[[FIG:diagram]]')],
+        'figures': [dict(id='diagram', rect=[0.25, 0.2, 0.75, 0.68])],
+    }
+    (fixture / 'recognition.json').write_text(json.dumps(recognition), encoding='ascii')
+    source = fixture / 'CodexFixture.cs'
+    source.write_text(r"""
+using System;
+using System.IO;
+using System.Text;
+using System.Threading;
 
-    def do_POST(self):
-        data = json.loads(self.rfile.read(int(self.headers['Content-Length'])))
-        self.payloads.append(data)
-        recognition = {
-            'status': 'ok',
-            'fragments': [dict(question_id='q1', number='1', kind='stem', latex=OCR_SEED + r' $F=6\,\mathrm{N}$。')],
-            'figures': [],
+class CodexFixture {
+    static int Main(string[] args) {
+        if (args.Length == 1 && args[0] == "--version") {
+            Console.WriteLine("codex-cli 0.0.0");
+            return 0;
         }
-        result = json.dumps({'choices': [{'message': {'content': json.dumps(recognition)}}]}).encode()
-        self.send_response(200)
-        self.send_header('Content-Type', 'application/json')
-        self.send_header('Content-Length', len(result))
-        self.end_headers()
-        self.wfile.write(result)
-
-    def log_message(self, *_):
-        pass
+        var image = Array.IndexOf(args, "--image");
+        var output = Array.IndexOf(args, "-o");
+        if (image < 0 || image + 1 >= args.Length || output < 0 || output + 1 >= args.Length ||
+            Array.LastIndexOf(args, "--image") != image || Array.IndexOf(args, "exec") < 0) {
+            return 2;
+        }
+        Console.InputEncoding = Encoding.UTF8;
+        if (!Console.In.ReadToEnd().Contains("[[FIG:")) {
+            return 3;
+        }
+        var fixture = AppDomain.CurrentDomain.BaseDirectory;
+        var first = Path.Combine(fixture, "first.png");
+        if (!File.Exists(first)) {
+            File.Copy(args[image + 1], first);
+            var deadline = DateTime.UtcNow.AddSeconds(40);
+            while (!File.Exists(Path.Combine(fixture, "release")) && DateTime.UtcNow < deadline) {
+                Thread.Sleep(20);
+            }
+            Console.Error.WriteLine("Intentional fixture failure");
+            return 1;
+        }
+        File.Copy(args[image + 1], Path.Combine(fixture, "retry.png"));
+        File.Copy(Path.Combine(fixture, "recognition.json"), args[output + 1], true);
+        return 0;
+    }
+}
+""".strip(), encoding='ascii')
+    executable = fixture / 'codex.exe'
+    compiler = Path(os.environ['SystemRoot']) / 'Microsoft.NET' / 'Framework' / 'v4.0.30319' / 'csc.exe'
+    subprocess.run([str(compiler), '/nologo', f'/out:{executable}', str(source)], check=True,
+                   capture_output=True, timeout=30, creationflags=subprocess.CREATE_NO_WINDOW)
+    return executable
 
 
 class IntakePage(Page):
@@ -129,23 +169,21 @@ class IntakePage(Page):
     async def get_docs(self):
         return await self.js("window.utopia.call('workspace.list')")
 
-    async def open_image(self, click, original):
-        before = len(await self.get_docs())
+    async def preview_image(self, click, original, name=None):
+        before = await self.get_docs()
         await click()
-        await self.until(WORKSPACE)
-        await self.until(RENDERED)
-        document = await self.raw_document()
-        assert document['inputKind'] == 'image', document
-        assert document['source'] == '' and document['pdfPageCount'] == 1, document
-        with pymupdf.open(document['pdfPath']) as pdf:
-            assert len(pdf) == 1
-            images = pdf[0].get_images(full=True)
-            assert len(images) == 1, images
-            embedded = pymupdf.Pixmap(pdf, images[0][0])
-            assert (embedded.width, embedded.height) == (original.width, original.height)
-            assert embedded.samples == original.samples, 'The original screenshot pixels changed during import.'
-        assert len(await self.get_docs()) == before + 1
-        return document
+        await self.paint()
+        await self.until(f"""(() => {{
+          const image = document.querySelector({json.dumps(IMAGE)});
+          return image?.checkVisibility() && image.complete && image.naturalWidth === {original.width};
+        }})()""")
+        if name:
+            await self.until(f"document.querySelector('.intake').innerText.includes({json.dumps(name)})")
+        src = await self.js(f'document.querySelector({json.dumps(IMAGE)}).currentSrc')
+        preview = pymupdf.Pixmap(base64.b64decode(src.split(',', 1)[1]))
+        assert preview.samples == original.samples, 'The intake changed the original screenshot pixels.'
+        assert not await self.js(WORKSPACE)
+        assert await self.get_docs() == before
 
     async def close_editor(self):
         await self.js("document.querySelector('button[aria-label=返回]').click()")
@@ -167,6 +205,16 @@ def make_fixture(destination):
     return screenshot
 
 
+def check_original_pdf(document, screenshot):
+    assert document['inputKind'] == 'image' and document['pdfPageCount'] == 1, document
+    with pymupdf.open(document['pdfPath']) as pdf:
+        images = pdf[0].get_images(full=True)
+        assert len(images) == 1, images
+        embedded = pymupdf.Pixmap(pdf, images[0][0])
+        assert (embedded.width, embedded.height) == (screenshot.width, screenshot.height)
+        assert embedded.samples == screenshot.samples, 'The original screenshot pixels changed during import.'
+
+
 def make_launcher(directory):
     launcher = directory / 'launcher'
     launcher.mkdir()
@@ -174,8 +222,9 @@ def make_launcher(directory):
     (launcher / 'main.cjs').write_text(r"""
 const { clipboard, ClipboardItem } = require('electron');
 const fs = require('node:fs');
+const Module = require('node:module');
 const { pathToFileURL } = require('node:url');
-const { clipboardMode, clipboardLog, screenshotFile, productionMain } = process.env;
+const { clipboardMode, clipboardLog, screenshotFile, productionMain, rendererSnapshot } = process.env;
 Object.defineProperty(clipboard, 'read', { value: async () => {
   const mode = fs.readFileSync(clipboardMode, 'utf8');
   fs.appendFileSync(clipboardLog, mode + '\n');
@@ -185,7 +234,12 @@ Object.defineProperty(clipboard, 'read', { value: async () => {
   if (mode === 'local-uri') return [new ClipboardItem({'text/uri-list': '# copied files\r\nhttps://example.test/photo.png\r\n' + pathToFileURL(screenshotFile).href})];
   return [];
 }});
-require(productionMain);
+const source = fs.readFileSync(productionMain, 'utf8');
+const renderer = "const RENDERER = path.join(__dirname, 'dist');";
+if (!source.includes(renderer)) throw Error('Cannot locate the production renderer root');
+const entry = new Module(productionMain, module);
+entry.filename = productionMain;
+entry._compile(source.replace(renderer, 'const RENDERER = ' + JSON.stringify(rendererSnapshot) + ';'), productionMain);
 """.strip(), encoding='utf-8')
     return launcher
 
@@ -203,25 +257,23 @@ async def check_native_clipboard(page, root, screenshot_file, screenshot):
     print('PASS text-only, remote-URI and empty clipboard show actionable feedback', flush=True)
 
     mode_file.write_text('image', encoding='utf-8')
-    native = await page.open_image(lambda: page.click(PASTE), screenshot)
-    await page.close_editor()
-    print('PASS explicit paste reads Electron ClipboardItem and opens a pristine, pixel-preserving draft', flush=True)
+    await page.preview_image(lambda: page.click(PASTE), screenshot)
+    print('PASS explicit paste reads Electron ClipboardItem and previews the original pixels', flush=True)
+    await page.route('stats')
+    await page.route('entry')
+    assert not await page.js(f'Boolean(document.querySelector({json.dumps(IMAGE)}))')
 
     async def shortcut():
         await page.js('document.activeElement.blur()')
         assert await page.guarded_ctrl_v('body') == {'trusted': True, 'prevented': True}
 
-    keyboard = await page.open_image(shortcut, screenshot)
-    await page.close_editor()
-    assert keyboard['id'] != native['id']
+    await page.preview_image(shortcut, screenshot)
     image_modes = negative_modes + ['image', 'image']
     assert log_file.read_text(encoding='utf-8').splitlines() == image_modes
     print('PASS trusted Ctrl+V takes the clipboard IPC path exactly once', flush=True)
 
     mode_file.write_text('local-uri', encoding='utf-8')
-    copied = await page.open_image(lambda: page.click(PASTE), screenshot)
-    assert copied['title'] == screenshot_file.name, copied
-    await page.close_editor()
+    await page.preview_image(lambda: page.click(PASTE), screenshot, screenshot_file.name)
     image_modes.append('local-uri')
     assert log_file.read_text(encoding='utf-8').splitlines() == image_modes
     print('PASS Explorer-style file URI preserves the original file name with Chinese characters and a space', flush=True)
@@ -233,26 +285,28 @@ async def run(args, root):
     screenshot = make_fixture(screenshot_file)
     profile, bank = root / 'profile', root / 'bank'
     (bank / 'chapters').mkdir(parents=True)
-    server = ThreadingHTTPServer(('127.0.0.1', 0), LocalOcr)
-    Thread(target=server.serve_forever, daemon=True).start()
-    (bank / '.env').write_text(
-        f'AI_BASE_URL=http://127.0.0.1:{server.server_port}/v1\nAI_API_KEY=isolated-fixture\nAI_MODEL_NAME=local-ocr-fixture\n',
-        encoding='utf-8',
-    )
+    codex = make_codex_fixture(root)
+    first_image = codex.with_name('first.png')
+    retry_image = codex.with_name('retry.png')
+    release = codex.with_name('release')
     with socket.socket() as sock:
         sock.bind(('127.0.0.1', 0))
         port = sock.getsockname()[1]
-    env = dict(os.environ, UTOPIA_DESKTOP_PROFILE=str(profile))
+    env = dict(os.environ, UTOPIA_DESKTOP_PROFILE=str(profile), UTOPIA_CODEX_BIN=str(codex))
     env.pop('UTOPIA_DESKTOP_VITE_URL', None)
     executable = args.exe.resolve()
     command = [str(executable)]
     if not args.packaged:
         # A checkout's Electron files can be labeled Low Integrity on Windows.
         electron = root / 'electron'
+        renderer = root / 'renderer'
         shutil.copytree(executable.parent, electron, copy_function=shutil.copyfile)
+        # Keep lazy chunks paired with their entry point while other builds run.
+        shutil.copytree(ROOT / 'desktop' / 'dist', renderer)
         command = [str(electron / executable.name), str(make_launcher(root))]
         env.update(clipboardMode=str(root / 'mode.txt'), clipboardLog=str(root / 'clipboard.log'),
-                   screenshotFile=str(screenshot_file), productionMain=str(ROOT / 'desktop' / 'main.cjs'))
+                   screenshotFile=str(screenshot_file), productionMain=str(ROOT / 'desktop' / 'main.cjs'),
+                   rendererSnapshot=str(renderer))
     command.extend([f'--remote-debugging-port={port}', '--library', str(bank)])
     console = root / 'electron.log'
     with console.open('wb') as output:
@@ -269,13 +323,21 @@ async def run(args, root):
             await page.command('Page.bringToFront')
             await page.command('Emulation.setFocusEmulationEnabled', {'enabled': True})
             await page.command('Emulation.setDeviceMetricsOverride', {'width': 1400, 'height': 920, 'deviceScaleFactor': 1, 'mobile': False})
-            await page.until("!!document.querySelector('.metrics strong') && /^\\d/.test(document.querySelector('.metrics strong').textContent)")
-            await page.js("window.utopia.call('ui.save', {provider:'api'})")
+            await page.until("Boolean(document.querySelector('button[data-page=entry]') && window.utopia)")
+            await page.js("window.utopia.call('ui.save', {provider:'cursor'})")
+            await page.route('settings')
+            await page.until("Boolean(document.querySelector('.settings-agent-list input'))", seconds=45)
+            assert await page.js("""(() => {
+              const settings = document.querySelector('.page-content');
+              return !settings.querySelector('#settings-provider-api,[aria-label="自定义 API"]') &&
+                !settings.textContent.includes('打开 API 设置');
+            })()"""), 'Settings still displays the custom API entry.'
+            print('PASS settings shows local Agent connections only', flush=True)
             await page.route('entry')
             await page.until("document.querySelector('h1')?.innerText.includes('图片识别')")
             await page.paint()
             intake = await page.js("document.querySelector('.intake').innerText")
-            assert all(label in intake for label in ('Ctrl+V', PASTE, '选择图片', '开始识别图片')), intake
+            assert all(label in intake for label in ('Ctrl+V', PASTE, '选择图片', RECOGNIZE)), intake
             clean_screen = await page.command('Page.captureScreenshot', {'format': 'png'}) if args.screenshot else None
             baseline = sequence()
             if args.packaged:
@@ -283,19 +345,19 @@ async def run(args, root):
             else:
                 image_modes = await check_native_clipboard(page, root, screenshot_file, screenshot)
 
-            async def png_event():
+            async def png_event(name):
                 fixture = base64.b64encode(screenshot_file.read_bytes()).decode()
                 allowed = await page.js(f"""(() => {{
                   const pixels = Uint8Array.from(atob({json.dumps(fixture)}), ch => ch.charCodeAt(0));
                   const data = new DataTransfer();
-                  data.items.add(new File([pixels], '剪贴板事件测试.png', {{type:'image/png'}}));
+                  data.items.add(new File([pixels], {json.dumps(name)}, {{type:'image/png'}}));
                   return document.body.dispatchEvent(new ClipboardEvent('paste', {{clipboardData:data, bubbles:true, cancelable:true}}));
                 }})()""")
                 assert not allowed, 'The image paste event was not handled.'
 
-            await page.open_image(png_event, screenshot)
-            await page.close_editor()
-            print('PASS renderer paste event with real PNG uses the same workspace path', flush=True)
+            pasted_name = '剪贴板事件测试.png'
+            await page.preview_image(lambda: png_event(pasted_name), screenshot, pasted_name)
+            print('PASS renderer paste event previews the original PNG without creating a draft', flush=True)
 
             assert await page.guarded_ctrl_v(GROUP_CHAT) == {'trusted': True, 'prevented': False}
             await page.text_paste_event(GROUP_CHAT, '题库助手普通文字')
@@ -315,30 +377,84 @@ async def run(args, root):
                     'backendNodeId': page.chooser['backendNodeId'], 'files': [str(screenshot_file)],
                 })
 
-            uploaded = await page.open_image(upload, screenshot)
-            assert uploaded['title'] == screenshot_file.name, uploaded
-            assert await page.guarded_ctrl_v(EDITOR_CHAT) == {'trusted': True, 'prevented': False}
-            await page.text_paste_event(EDITOR_CHAT, '题目助手普通文字')
+            await page.preview_image(upload, screenshot, screenshot_file.name)
             if not args.packaged:
                 assert (root / 'clipboard.log').read_text(encoding='utf-8').splitlines() == image_modes
-            await page.close_editor()
-            print('PASS normal upload launches the file chooser and opens a draft; editor chat text is unaffected', flush=True)
+            assert await page.get_docs() == [] and not first_image.exists()
+            print('PASS upload previews the selected file and no OCR runs before explicit submission', flush=True)
 
-            assert len(LocalOcr.payloads) == 0, 'Importing an image unexpectedly called OCR.'
-            draft = f"[...document.querySelectorAll('.draft-link')].find(b => b.querySelector('span')?.textContent.trim().endsWith({json.dumps(screenshot_file.name)}))"
+            recognition_name = '识别编译截图.png'
+            await page.preview_image(lambda: png_event(recognition_name), screenshot, recognition_name)
+
+            model = json.dumps(MODEL)
+            intake_error = f'document.querySelector({json.dumps(INTAKE_ERROR)})'
+            codex_option = f"document.querySelector({model})?.querySelector('option[value=codex]')"
+            await page.until(f'Boolean({codex_option} || {intake_error})', seconds=45)
+            assert await page.js(f'Boolean({codex_option})'), await page.js(f'{intake_error}?.textContent')
+            assert await page.js(f'document.querySelector({model}).value') == ''
+            assert await page.js(f"!document.querySelector({model}).querySelector('option[value=api],option[value=cursor]')")
+            await page.js(f"""(() => {{
+              const select = document.querySelector({model});
+              select.value = 'codex';
+              select.dispatchEvent(new Event('change', {{bubbles: true}}));
+            }})()""")
+            await page.click(RECOGNIZE)
+            async with asyncio.timeout(30):
+                while not first_image.exists():
+                    await asyncio.sleep(.05)
+            await page.until("document.querySelector('.intake [role=status]')?.textContent.includes('正在识别图片')")
+            assert not await page.js(WORKSPACE), 'Workbench opened before image recognition completed.'
+            release.touch()
+
+            await page.until(f"{intake_error}?.textContent.includes('本地 Codex 调用失败')")
+            assert await page.js(f'document.querySelector({json.dumps(IMAGE)})?.checkVisibility()')
+            assert not await page.js(WORKSPACE), 'Failed recognition opened the workbench.'
+            failed = await page.raw_document()
+            assert failed['source'] == '' and len(await page.get_docs()) == 1, failed
+            await page.click(RECOGNIZE)
+
+            await page.until(f'{WORKSPACE} || Boolean({intake_error})', seconds=60)
+            assert await page.js(WORKSPACE), await page.js(f'{intake_error}?.textContent')
+            recognized = await page.raw_document()
+            assert recognized['id'] == failed['id'] and recognized['title'] == recognition_name
+            assert recognized['previewCurrent'] and Path(recognized['previewPath']).is_file(), recognized
+            assert OCR_SEED in recognized['source'] and len(await page.get_docs()) == 1
+            check_original_pdf(recognized, screenshot)
+            crop = re.search(r'\\includegraphics\[[^\n]*?\]\{([^}]+)\}', recognized['source'])
+            assert crop, recognized['source']
+            saved_crop = pymupdf.Pixmap(str(Path(recognized['sourcePath']).parent / crop[1]))
+            assert abs(saved_crop.width - screenshot.width * 0.5) <= 2, saved_crop.width
+            assert abs(saved_crop.height - screenshot.height * 0.48) <= 2, saved_crop.height
+            with pymupdf.open(recognized['previewPath']) as compiled:
+                assert len(compiled) == 1 and '水平恒力' in compiled[0].get_text(), recognized['previewPath']
+            assert pymupdf.Pixmap(str(retry_image)).width > 0
+            assert retry_image.read_bytes() == first_image.read_bytes()
+            assert (await page.js("window.utopia.call('ui.load')"))['provider'] == 'cursor'
+            await page.until(RENDERED)
+            assert await page.js(f"document.querySelector({json.dumps(SOURCE)})?.checkVisibility()")
+            print('PASS recognition failure retains the screenshot and retries the same draft', flush=True)
+            print('PASS selected local Agent overrides the default, preserves source crops, and opens the workbench with LaTeX and its compiled PDF', flush=True)
+
+            await page.js("document.querySelector('button[aria-label=展开题目助手]').click()")
+            assert await page.guarded_ctrl_v(EDITOR_CHAT) == {'trusted': True, 'prevented': False}
+            await page.text_paste_event(EDITOR_CHAT, '题目助手普通文字')
+            await page.js(f"""(() => {{
+              const source = document.querySelector({json.dumps(SOURCE)});
+              source.focus();
+              source.setSelectionRange(0, 0);
+            }})()""")
+            edit = '% 截图探针编辑\n'
+            await page.command('Input.insertText', {'text': edit})
+            draft_id = json.dumps(recognized['id'])
+            await page.until(f"(async () => (await window.utopia.call('workspace.open', {{id: {draft_id}}})).source.startsWith({json.dumps(edit)}))()")
+            await page.close_editor()
+            draft = f"[...document.querySelectorAll('.draft-link')].find(b => b.querySelector('span')?.textContent.trim().endsWith({json.dumps(recognition_name)}))"
             await page.until(f"!!{draft}")
             await page.js(f"{draft}.click()")
             await page.until(WORKSPACE)
-            assert (await page.raw_document())['id'] == uploaded['id']
-            await page.click('开始识别图片')
-            await page.until(f"document.querySelector({json.dumps(SOURCE)})?.value.includes({json.dumps(OCR_SEED)})", seconds=45)
-            assert OCR_SEED in (await page.raw_document())['source']
-            assert len(LocalOcr.payloads) == 1, len(LocalOcr.payloads)
-            payload = LocalOcr.payloads[0]
-            image = next(part['image_url']['url'] for part in payload['messages'][0]['content'] if part['type'] == 'image_url')
-            assert payload['model'] == 'local-ocr-fixture' and image.startswith('data:image/png;base64,')
-            assert bool(pymupdf.Pixmap(base64.b64decode(image.split(',', 1)[1])).width)
-            print('PASS reopened image draft explicitly runs real recognition IPC with a loopback model and receives editable LaTeX', flush=True)
+            reopened = await page.raw_document()
+            assert reopened['id'] == recognized['id'] and reopened['source'].startswith(edit), reopened
+            print('PASS editing the recognized LaTeX persists to the same draft and reopens from recent documents', flush=True)
 
             assert sequence() == baseline, 'System clipboard sequence changed during testing.'
             if clean_screen:
@@ -349,13 +465,17 @@ async def run(args, root):
         print(console.read_text(encoding='utf-8', errors='replace'), file=sys.stderr)
         raise
     finally:
-        server.shutdown()
-        server.server_close()
+        release.touch()
         try:
             await asyncio.to_thread(process.wait, 3)
         except subprocess.TimeoutExpired:
             process.terminate()
-            await asyncio.to_thread(process.wait, 6)
+            try:
+                await asyncio.to_thread(process.wait, 6)
+            except subprocess.TimeoutExpired:
+                await asyncio.to_thread(subprocess.run, ['taskkill', '/PID', str(process.pid), '/T', '/F'],
+                                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=6,
+                                        creationflags=subprocess.CREATE_NO_WINDOW)
 
 
 if __name__ == '__main__':

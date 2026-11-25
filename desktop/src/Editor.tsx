@@ -20,11 +20,14 @@ type Utility = 'find' | 'bookmarks' | 'notes'
 
 interface Props {
   document: EditorDocument
+  initialCompileError?: string
   docked?: boolean
   onExpand?: () => void
   onEditFileInfo?: (document: EditorDocument) => void
   onOpenPapilot?: () => void
+  reviewProposalId?: string
   onChange: (document: EditorDocument) => void
+  onQuestionSaved?: (document: EditorDocument) => void
   onClose: () => void
 }
 
@@ -48,7 +51,7 @@ interface Layout {
   compareText: boolean
 }
 
-interface ChatRun { controller: AbortController; id?: string; message: EditorMessage }
+interface ChatRun { controller: AbortController; id?: string; message: EditorMessage; fillSolution: boolean }
 interface CompareState { id: string; before?: string; after?: string; loading: boolean; error?: string }
 interface BankExport { files: { file: string; status: 'success' | 'skip' | 'error'; message: string }[] }
 
@@ -85,8 +88,11 @@ function dockLayout(layout: Layout, document: EditorDocument): Layout {
 
 function initialLayout(document: EditorDocument, layoutKey: string, docked: boolean): Layout {
   const position = (page = 1): PdfPosition => ({ page, offset: 0, zoom: 1 })
+  const imageSource = document.inputKind === 'image' && Boolean(document.source.trim())
   const layout: Layout = parseStored<Layout>(layoutKey) ?? {
-    mode: 'split', view: document.pdfPath && !document.source ? 'original' : 'preview', sync: false, chatWidth: 385, documentWidth: 50,
+    mode: imageSource ? 'review' : 'split',
+    view: imageSource ? 'source' : document.pdfPath && !document.source ? 'original' : 'preview',
+    pair: imageSource && document.previewPath ? 'preview' : undefined, sync: false, chatWidth: 385, documentWidth: 50,
     pdf: { preview: position(), original: position(document.originalPage), before: position(), after: position() }, sourceScroll: 0, compareText: false,
   }
   return docked ? dockLayout(layout, document) : layout
@@ -98,7 +104,7 @@ export default function Editor(props: Props) {
 
 export { Editor }
 
-function Workbench({ document, docked = false, onExpand, onEditFileInfo, onOpenPapilot, onChange, onClose }: Props) {
+function Workbench({ document, initialCompileError, docked = false, onExpand, onEditFileInfo, onOpenPapilot, reviewProposalId, onChange, onQuestionSaved, onClose }: Props) {
   const draftKey = `utopia-workbench-draft-${document.id}`
   const layoutKey = `utopia-workbench-${docked ? 'dock-layout' : 'layout'}-${document.id}`
   const bookmarkKey = `utopia-workbench-bookmarks-${document.id}`
@@ -116,9 +122,10 @@ function Workbench({ document, docked = false, onExpand, onEditFileInfo, onOpenP
   const [reconstructing, setReconstructing] = useState(false)
   const [recognitionProgress, setRecognitionProgress] = useState('')
   const [exporting, setExporting] = useState(false)
+  const [savingQuestion, setSavingQuestion] = useState(false)
   const [saveState, setSaveState] = useState('')
-  const [notice, setNotice] = useState('')
-  const [compileLog, setCompileLog] = useState('')
+  const [notice, setNotice] = useState(initialCompileError ? 'LaTeX 编译失败' : '')
+  const [compileLog, setCompileLog] = useState(initialCompileError ?? '')
   const [showLog, setShowLog] = useState(false)
   const [navigation, setNavigation] = useState<Partial<Record<PdfPanel, PdfNavigation>>>({})
   const [focusedPdf, setFocusedPdf] = useState<PdfPanel>()
@@ -130,7 +137,10 @@ function Workbench({ document, docked = false, onExpand, onEditFileInfo, onOpenP
   const [bookmarks, setBookmarks] = useState(() => parseStored<Partial<Record<PdfPanel, number[]>>>(bookmarkKey) ?? {})
   const [historyAfter, setHistoryAfter] = useState(() => parseStored<string>(historyKey))
   const [showHistory, setShowHistory] = useState(false)
-  const [agent, setAgent] = useState(() => parseStored<ProviderId>(agentKey))
+  const [agent, setAgent] = useState(() => {
+    const saved = parseStored<ProviderId | 'api'>(agentKey)
+    return saved === 'api' ? undefined : saved
+  })
   const [locateMode, setLocateMode] = useState(false)
   const [locatingSource, setLocatingSource] = useState(false)
   const [attachments, setAttachments] = useState<EditorAttachment[]>(() => activeChatDrafts.get(document.id)?.attachments ?? [])
@@ -170,6 +180,9 @@ function Workbench({ document, docked = false, onExpand, onEditFileInfo, onOpenP
   const selected = draft.selections.find(item => item.id === draft.activeSelectionId)
   const proposals = record.proposals ?? []
   const proposal = proposals.find(item => item.id === proposalId) ?? proposals.at(-1)
+  const pendingSolution = proposals.find(item => item.kind === 'solution' && item.status === 'pending' && item.baseSource === draft.source)
+  const fillingSolution = Boolean(pending && chatRun.current?.fillSolution)
+  const librarySaveDisabled = !draft.source.trim() || savingQuestion || fillingSolution || Boolean(pendingSolution)
   const preciseCaptures = preview.source === draft.source
     ? attachments.filter(item => item.panel === 'preview' && item.previewPath === preview.path && item.rect && item.page)
     : []
@@ -281,7 +294,7 @@ function Workbench({ document, docked = false, onExpand, onEditFileInfo, onOpenP
   }, [document.id, prompt, attachments])
 
   useEffect(() => {
-    if ((!document.previewPath || (docked && document.previewCurrent === false)) && document.source.trim()) {
+    if (!initialCompileError && (!document.previewPath || (docked && document.previewCurrent === false)) && document.source.trim()) {
       void compileCurrent()
     }
   }, [document.id])
@@ -404,32 +417,38 @@ function Workbench({ document, docked = false, onExpand, onEditFileInfo, onOpenP
     } catch (error) { setChatStatus(errorMessage(error)) }
   }
 
-  async function sendChat(selectionOnly: boolean) {
+  async function requestAgent(method: 'workspace.chat' | 'workspace.fill_solution', selectionOnly = false) {
     if (chatRun.current) return
-    const text = prompt.trim() || '根据所附截图检查当前题目，并给出需要的修改。'
-    const pendingMessage: EditorMessage = { id: crypto.randomUUID(), role: 'user', text, attachments }
-    const run = { controller: new AbortController(), message: pendingMessage } as ChatRun
+    const fillSolution = method === 'workspace.fill_solution'
+    const text = fillSolution ? '补充答案与解析' : prompt.trim() || '根据所附截图检查当前题目，并给出需要的修改。'
+    const pendingMessage: EditorMessage = { id: crypto.randomUUID(), role: 'user', text, attachments: fillSolution ? [] : attachments }
+    const run: ChatRun = { controller: new AbortController(), message: pendingMessage, fillSolution }
     chatRun.current = run
+    if (fillSolution) setLayout(previous => previous.mode === 'review' ? { ...previous, mode: 'split' } : previous)
     setPending(pendingMessage)
     setChatStatus('正在准备…')
     try {
       await persist()
       if (run.controller.signal.aborted) return
       const source = latestDraft.current.source
-      const screenshots = preview.source === source ? preciseCaptures.map(({ page, rect, panel, previewPath }) => ({ page, rect, panel, previewPath })) : []
-      const scope = selectionOnly && (selected || screenshots.length) ? 'selection' : 'document'
-      const params: Record<string, unknown> = { id: document.id, prompt: text, source, attachments, scope, revision: latestRecord.current.revision }
-      if (selectionOnly && selected) params.selection = { start: selected.start, end: selected.end }
-      if (selectionOnly && screenshots.length) params.pdfSelections = screenshots
-      setShowHistory(false)
-      if (boundary >= 0) params.historyAfter = historyAfter
-      if (agent) params.agent = agent
-      const job = await editorCall<{ taskId: string }>('workspace.chat', params)
+      const params: Record<string, unknown> = { id: document.id, source, revision: latestRecord.current.revision }
+      if (!fillSolution) {
+        setShowHistory(false)
+        const screenshots = preview.source === source ? preciseCaptures.map(({ page, rect, panel, previewPath }) => ({ page, rect, panel, previewPath })) : []
+        Object.assign(params, { prompt: text, attachments, scope: selectionOnly && (selected || screenshots.length) ? 'selection' : 'document' })
+        if (boundary >= 0) params.historyAfter = historyAfter
+        if (agent) params.agent = agent
+        if (selectionOnly && selected) params.selection = { start: selected.start, end: selected.end }
+        if (selectionOnly && screenshots.length) params.pdfSelections = screenshots
+      }
+      const job = await editorCall<{ taskId: string }>(method, params)
       run.id = job.taskId
       if (run.controller.signal.aborted) { await editorCall('task.cancel', { id: job.taskId }); return }
-      setPrompt(value => value === prompt ? '' : value)
-      setAttachments(items => items.filter(item => !attachments.some(sent => sent.id === item.id)))
-      setChatStatus('正在生成回复…')
+      if (!fillSolution) {
+        setPrompt(value => value === prompt ? '' : value)
+        setAttachments(items => items.filter(item => !attachments.some(sent => sent.id === item.id)))
+      }
+      setChatStatus(fillSolution ? 'Agent 正在补充答案与解析…' : '正在生成回复…')
       const task = await pollEditorTask<EditorDocument>(job.taskId, run.controller.signal, setChatStatus)
       if (run.controller.signal.aborted) return
       if (task.status === 'succeeded' && task.result) {
@@ -437,15 +456,19 @@ function Workbench({ document, docked = false, onExpand, onEditFileInfo, onOpenP
         setChatStatus('')
       } else {
         setChatStatus(task.error || task.message || (task.status === 'cancelled' ? '已停止生成' : '发送失败'))
-        setPrompt(value => value || prompt)
-        setAttachments(items => items.length ? items : attachments)
+        if (!fillSolution) {
+          setPrompt(value => value || prompt)
+          setAttachments(items => items.length ? items : attachments)
+        }
         accept(await editorCall<EditorDocument>('workspace.open', { id: document.id }))
       }
     } catch (error) {
       if (!run.controller.signal.aborted) {
         setChatStatus(errorMessage(error))
-        setPrompt(value => value || prompt)
-        setAttachments(items => items.length ? items : attachments)
+        if (!fillSolution) {
+          setPrompt(value => value || prompt)
+          setAttachments(items => items.length ? items : attachments)
+        }
       }
     } finally {
       if (chatRun.current === run) { chatRun.current = null; setPending(undefined) }
@@ -459,8 +482,10 @@ function Workbench({ document, docked = false, onExpand, onEditFileInfo, onOpenP
     chatRun.current = null
     setPending(undefined)
     setChatStatus('已停止生成')
-    setPrompt(value => value || run.message.text)
-    setAttachments(items => items.length ? items : run.message.attachments ?? [])
+    if (!run.fillSolution) {
+      setPrompt(value => value || run.message.text)
+      setAttachments(items => items.length ? items : run.message.attachments ?? [])
+    }
     if (run.id) {
       try {
         await editorCall('task.cancel', { id: run.id })
@@ -491,10 +516,20 @@ function Workbench({ document, docked = false, onExpand, onEditFileInfo, onOpenP
     finally { setProposalBusy(false) }
   }
 
-  function compareProposal(item: EditorProposal) {
+  function compareProposal(item: EditorProposal, revealChat = false) {
     setProposalId(item.id)
     changeView('compare')
+    if (revealChat) setLayout(previous => ({ ...previous, mode: 'split' }))
   }
+
+  useEffect(() => {
+    if (!reviewProposalId) return
+    const item = document.proposals?.find(candidate => candidate.id === reviewProposalId)
+    if (!item) return
+    const noLocalEdits = JSON.stringify(latestDraft.current) === JSON.stringify(documentDraft(latestRecord.current))
+    accept(document, noLocalEdits && document.source !== latestRecord.current.source)
+    compareProposal(item, true)
+  }, [reviewProposalId])
 
   async function comparePdfs(item: EditorProposal) {
     compareRun.current?.abort()
@@ -815,6 +850,20 @@ function Workbench({ document, docked = false, onExpand, onEditFileInfo, onOpenP
     } catch (error) { setNotice(errorMessage(error)) }
   }
 
+  async function saveQuestion() {
+    setSavingQuestion(true)
+    setNotice('')
+    setCompileLog('')
+    try {
+      const saved = await persist()
+      const next = await editorCall<EditorDocument>('workspace.save_question', { id: document.id, revision: saved.revision })
+      accept(next)
+      onQuestionSaved?.(next)
+      setNotice('已保存原题')
+    } catch (error) { setNotice(errorMessage(error)) }
+    finally { setSavingQuestion(false) }
+  }
+
   async function exportPdf() {
     try {
       const path = await window.utopia.saveFile('pdf', `${latestDraft.current.title}.pdf`)
@@ -892,8 +941,13 @@ function Workbench({ document, docked = false, onExpand, onEditFileInfo, onOpenP
     ...(onOpenPapilot ? [{ id: 'papilot', label: '在 Papilot 工作台打开', disabled: papilotBusy || !draft.source.trim(), onClick: () => void transferPapilot(true) }] : []),
     ...(record.papilotProject ? [{ id: 'papilot-import', label: '从 Papilot 导入改动', disabled: papilotBusy, onClick: () => void transferPapilot(false) }] : []),
     ...(onEditFileInfo ? [{ id: 'file-info', label: '修改文件信息', onClick: () => void editFileInfo() }] : []),
-    { id: 'save', label: '另存入库', icon: 'save', disabled: !draft.source.trim(), onClick: () => openSheet('library') },
+    { id: 'save', label: savingQuestion ? '正在保存…' : record.questionPath ? '保存原题' : '另存入库', icon: 'save',
+      disabled: librarySaveDisabled || Boolean(record.questionPath && pending), onClick: () => { if (record.questionPath) void saveQuestion(); else openSheet('library') } },
+    ...(record.questionPath ? [{ id: 'save-copy', label: '另存入库', disabled: librarySaveDisabled, onClick: () => openSheet('library') }] : []),
     ...(record.pdfPath ? [{ id: 'recognize', label: reconstructing ? '正在识别…' : recognitionLabel, disabled: reconstructing, onClick: startRecognition }] : []),
+    ...(draft.source.trim() ? [{ id: 'fill-solution', label: pendingSolution ? '审阅答案与解析' : fillingSolution ? '正在补充…' : '补充答案与解析',
+      disabled: !pendingSolution && (Boolean(pending) || reconstructing || savingQuestion),
+      onClick: () => { if (pendingSolution) compareProposal(pendingSolution, true); else void requestAgent('workspace.fill_solution') } }] : []),
     { id: 'export-pdf', label: exporting ? '正在导出…' : '导出 PDF', icon: 'export', disabled: exporting || !draft.source.trim(), onClick: () => void exportPdf() },
     { id: 'export-tex', label: '导出 LaTeX', icon: 'export', disabled: !draft.source.trim(), onClick: () => void exportTex() },
     { id: 'undo-proposal', label: '撤销上次采用', icon: 'undo', disabled: !record.canUndo || proposalBusy, onClick: () => void updateProposal('undo') },
@@ -972,10 +1026,10 @@ function Workbench({ document, docked = false, onExpand, onEditFileInfo, onOpenP
       <aside ref={chatPane} id={chatPanelId} className="wb-chat-pane" hidden={layout.mode === 'review'} style={layout.mode === 'split' ? {
         width: `clamp(min(${chatMinWidth}px, ${chatMaxFraction * 100}%), ${layout.chatWidth}px, min(${chatMaxWidth}px, ${chatMaxFraction * 100}%))`,
       } : undefined}>
-        <EditorChat messages={taskMessages} proposals={taskProposals} attachments={attachments} selection={selected} prompt={prompt} status={chatStatus}
+        <EditorChat messages={taskMessages} proposals={taskProposals} source={draft.source} attachments={attachments} selection={selected} prompt={prompt} status={chatStatus}
           agent={agent} onAgent={id => { setAgent(id); storeValue(agentKey, id) }}
           pending={pending} busy={Boolean(pending)} hasPdfSelection={preciseCaptures.length > 0} onPrompt={setPrompt} onAttach={files => void attachFiles(files)}
-          onRemove={id => setAttachments(previous => previous.filter(item => item.id !== id))} onClearSelection={() => selectSource(null)} onSend={scope => void sendChat(scope)}
+          onRemove={id => setAttachments(previous => previous.filter(item => item.id !== id))} onClearSelection={() => selectSource(null)} onSend={scope => void requestAgent('workspace.chat', scope)}
           onStop={() => void stopChat()} onApply={item => void updateProposal('apply', item)} onDismiss={item => void updateProposal('dismiss', item)} onCompare={compareProposal} />
       </aside>
     </div>

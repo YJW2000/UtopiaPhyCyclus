@@ -29,12 +29,12 @@ async function fixture(t) {
   const powershell = await file(path.join(env.SystemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe'));
   const winget = await file(path.join(env.LOCALAPPDATA, 'Microsoft', 'WindowsApps', 'winget.exe'), 'v1.12.0');
   async function run(executable, args, options) {
-    launched.push({ executable, args });
-    if (executable === powershell && args.at(-1).includes('Get-AppxPackage -Name OpenAI.Codex')) return reply(JSON.stringify(host.paths));
     const versionTarget = options.env.UTOPIA_TOOL_VERSION_PATH || executable;
+    launched.push({ executable, args, versionTarget });
+    if (executable === powershell && args.at(-1).includes('Get-AppxPackage -Name OpenAI.Codex')) return reply(JSON.stringify(host.paths));
     if (args.at(-1) === '--version' || options.env.UTOPIA_TOOL_VERSION_PATH) {
       const version = files.get(versionTarget);
-      return version ? reply(version) : reply('broken', 1);
+      return typeof version === 'object' ? version : version ? reply(version) : reply('broken', 1);
     }
     assert.ok(host.run, `Unexpected launch of ${executable}`);
     return host.run(executable, args, options);
@@ -99,6 +99,98 @@ test('installs and redetects Qoder and Antigravity using their official installe
   assert.equal(tools.agy.canInstall, false);
   assert.match(environment.helpUrl('workbuddy'), /^https:\/\/cloud.tencent.com\//);
   assert.equal((await environment.install('workbuddy')).ok, false);
+});
+
+test('detects Papilot launchers, including fresh registry overrides and the DeepSeek desktop CLI', windowsOnly, async t => {
+  const { environment, env, host, file, launched } = await fixture(t);
+  const defaultPi = await file(path.join(env.APPDATA, 'npm', 'pi.cmd'), '0.60.0');
+  const pi = await file(path.join(env.USERPROFILE, 'Pi With Spaces', 'pi.cmd'), '1.2.0');
+  const grok = await file(path.join(env.USERPROFILE, '.grok', 'bin', 'grok.exe'), 'Grok 0.3');
+  const kimi = await file(path.join(env.USERPROFILE, '.kimi-code', 'bin', 'kimi.exe'), 'Kimi 1.0');
+  const dsh = await file(path.join(env.LOCALAPPDATA, 'Programs', 'DeepSeek Harness', 'resources', 'runtime', 'cli', 'bin', 'dsh.cmd'), '0.2.2-rc.3');
+  const qwen = await file(path.join(env.PATH, 'qwen-custom.cmd'), 'Qwen 1.0');
+  await file(path.join(env.PATH, 'qwen.cmd'), 'Qwen 0.9');
+  host.paths.userLaunchers = { UTOPIA_PI_BIN: `"${pi}"`, PAPILOT_QWEN_BIN: 'qwen-custom.cmd' };
+  env.PAPILOT_PI_BIN = defaultPi;
+  const { tools } = await environment.detect();
+  assert.equal(tools.pi.path, pi);
+  assert.equal(tools.grok.path, grok);
+  assert.equal(tools.kimi.path, kimi);
+  assert.equal(tools.qwen.path, qwen);
+  assert.equal(tools.deepseek.path, dsh);
+  assert.equal((await environment.runtimeEnvironment()).PAPILOT_PI_BIN, pi);
+
+  env.UTOPIA_PI_BIN = '../pi.cmd';
+  const { pi: invalid } = (await environment.detect()).tools;
+  assert.equal(invalid.installed, false);
+  assert.equal(invalid.canInstall, false);
+  assert.match(invalid.detail, /UTOPIA_PI_BIN/);
+  assert.ok(!launched.some(launch => launch.versionTarget === defaultPi));
+});
+
+test('uses managed Papilot launchers after PATH and keeps WorkBuddy on its own launcher', windowsOnly, async t => {
+  const { environment, env, launched, file } = await fixture(t);
+  const managed = path.join(env.LOCALAPPDATA, 'Papilot', 'agents');
+  const pi = await file(path.join(managed, 'pi', 'node_modules', '.bin', 'pi.cmd'), '1.2.0');
+  const agy = await file(path.join(managed, 'antigravity', 'agy.exe'), '1.4.4');
+  const qoder = await file(path.join(managed, 'qoder', 'node_modules', '.bin', 'qodercli.cmd'), '1.1.95');
+  const codebuddy = await file(path.join(managed, 'launchers', 'codebuddy.cmd'), '2.0.0');
+  const workbuddy = await file(path.join(managed, 'launchers', 'workbuddy.cmd'), 'WorkBuddy ACP launcher');
+  const gui = await file(path.join(env.PATH, 'workbuddy.exe'), 'WorkBuddy desktop');
+
+  const { tools } = await environment.detect();
+  assert.equal(tools.pi.path, pi);
+  assert.equal(tools.agy.path, agy);
+  assert.equal(tools.qoder.path, qoder);
+  assert.equal(tools.codebuddy.path, codebuddy);
+  assert.equal(tools.workbuddy.path, workbuddy);
+  assert.equal((await environment.runtimeEnvironment()).PAPILOT_WORKBUDDY_BIN, workbuddy);
+  assert.ok(launched.some(launch => launch.versionTarget === workbuddy && launch.args.at(-1).includes('--help')));
+  assert.ok(!launched.some(launch => launch.versionTarget === gui));
+
+  const native = await file(path.join(env.PATH, 'qodercli.exe'), '1.2.0');
+  env.PAPILOT_WORKBUDDY_BIN = path.join(env.USERPROFILE, 'missing-workbuddy.cmd');
+  const { tools: updated } = await environment.detect();
+  assert.equal(updated.qoder.path, native);
+  assert.equal(updated.workbuddy.installed, false);
+  assert.equal((await environment.runtimeEnvironment()).PAPILOT_WORKBUDDY_BIN, env.PAPILOT_WORKBUDDY_BIN);
+});
+
+test('installs additional Agents through their documented Windows installers', windowsOnly, async t => {
+  const { environment, env, file, host, winget, powershell, reply } = await fixture(t);
+  const scripts = new Map([
+    ['https://pi.dev/install.ps1', path.join(env.USERPROFILE, '.local', 'bin', 'pi.cmd')],
+    ['https://code.kimi.com/kimi-code/install.ps1', path.join(env.USERPROFILE, '.kimi-code', 'bin', 'kimi.exe')],
+    ['https://qwen-code-assets.oss-cn-hangzhou.aliyuncs.com/installation/install-qwen-standalone.ps1', path.join(env.USERPROFILE, '.local', 'bin', 'qwen.cmd')],
+  ]);
+  await file(path.join(env.PATH, 'git.exe'), 'git version 2.50.0');
+  host.run = async (executable, args) => {
+    if (executable === winget) {
+      assert.deepEqual(args.slice(0, 3), ['install', '--id', 'xAI.GrokBuild']);
+      await file(path.join(env.USERPROFILE, '.grok', 'bin', 'grok.exe'), '1.0');
+    } else {
+      assert.equal(executable, powershell);
+      const filename = [...scripts].find(([url]) => args.at(-1).includes(`'${url}'`))?.[1];
+      assert.ok(filename, 'Uses an official PowerShell installer');
+      await file(filename, '1.0');
+    }
+    return reply();
+  };
+  for (const id of ['pi', 'grok', 'kimi', 'qwen']) assert.equal((await environment.install(id)).ok, true, id);
+  assert.equal((await environment.install('deepseek')).ok, false);
+});
+
+test('reports located Agent launchers when their version checks time out', windowsOnly, async t => {
+  const { environment, env, file } = await fixture(t);
+  const timeout = { code: null, output: '', timedOut: true };
+  const pi = await file(path.join(env.PATH, 'pi.cmd'), timeout);
+  await file(path.join(env.PATH, 'git.exe'), timeout);
+  const { tools } = await environment.detect();
+  assert.equal(tools.pi.path, pi);
+  assert.equal(tools.pi.installed, true);
+  assert.equal(tools.pi.version, null);
+  assert.match(tools.pi.detail, /超时/);
+  assert.equal(tools.git.installed, false);
 });
 
 test('installs CodeBuddy through the official npm package', windowsOnly, async t => {

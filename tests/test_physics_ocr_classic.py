@@ -15,16 +15,17 @@ SKILL_MARKER = '【内置技能：physics-image-to-latex】'
 def ocr_app(monkeypatch, tmp_path):
     import utopia_phycyclus_app as app
 
-    config = dict(AI_API_KEY='test-key', AI_BASE_URL='https://ocr.invalid/v1',
-                  AI_MODEL_NAME='fixture', AI_OCR_PROMPT=r'备用识别要求\n保留第二行')
-    monkeypatch.setattr(app, '_read_root_ai_env_config', lambda: config)
+    monkeypatch.setattr(app, '_read_library_environment', lambda: {
+        'AI_OCR_PROMPT': r'备用识别要求\n保留第二行',
+    })
     monkeypatch.setattr(app, 'ocr_prompt_file', tmp_path / 'ocr_prompt.txt')
     monkeypatch.setattr(app, 'BASE_DIR', str(tmp_path))
     monkeypatch.setattr(app.st, 'spinner', lambda *args, **kwargs: nullcontext())
     monkeypatch.setattr(app.st, 'toast', lambda *args, **kwargs: None)
     monkeypatch.setattr(app.st, 'session_state', {})
-    for key in config:
-        monkeypatch.setenv(key, 'before-test')
+    monkeypatch.setenv('AI_API_KEY', 'obsolete-fixture-key')
+    monkeypatch.setenv('AI_BASE_URL', 'https://ocr.invalid/v1')
+    monkeypatch.setenv('AI_MODEL_NAME', 'obsolete-fixture-model')
     return app
 
 
@@ -38,11 +39,12 @@ def _capture_completion(app, monkeypatch, replies):
     payloads = []
     responses = iter(replies)
 
-    def post(base_url, headers, payload, timeout):
+    def complete(payload, timeout):
+        assert set(payload) == {'messages'}
         payloads.append(payload)
-        return Reply(), base_url
+        return Reply()
 
-    monkeypatch.setattr(app, 'post_chat_completion', post)
+    monkeypatch.setattr(app, 'legacy_completion', complete)
     return payloads
 
 

@@ -5,14 +5,11 @@ import shutil
 
 import streamlit as st
 from dotenv import load_dotenv
-from services.desktop_model import read_settings
 
 st.set_page_config(page_title="乌托邦题库", layout="wide", initial_sidebar_state="collapsed")
 library = Path(os.environ["UTOPIA_DESKTOP_LIBRARY"])
 os.environ["UTOPIA_LEGACY_ROOT"] = str(library)
 load_dotenv(library / ".env", override=True)
-if read_settings().get("provider") != "api":
-    os.environ.update(AI_BASE_URL="local://codex", AI_API_KEY="desktop-session", AI_MODEL_NAME="codex", AI_SOLVER_MODEL_NAME="codex")
 
 # The original exporters expect class files and paper templates in the library.
 # Copy missing public assets once and preserve customized templates.
@@ -44,7 +41,8 @@ if route in ("entry", "tex"):
 handlers = {
     "entry": app.page_entry, "tex": app.page_tex_entry, "pdf": lambda: render_pdf_import(str(library), app._save_pdf_questions),
     "browse": app.page_browse, "exam": app.page_exam_paper_generation, "search": app.page_advanced_search,
-    "settings": app.page_api_settings, "tools": app.page_tools, "tags": app.page_tag_edit,
-    "stats": app.render_statistics_dashboard, "manual": app.page_manual, "intro": app.page_system_intro,
+    "tools": app.page_tools, "tags": app.page_tag_edit,
+    "stats": app.render_statistics_dashboard, "intro": app.page_system_intro,
+    "manual": lambda: app.page_system_intro(section_key="desktop_manual_section", initial_section="规范指南"),
 }
 handlers.get(route, app.page_browse)()

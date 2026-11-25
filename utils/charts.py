@@ -4,6 +4,12 @@ from .chart_assets import echarts_script
 from .theme_palettes import retint_warm_markup
 from .component_theme import theme_activity_chart
 
+
+def _script_json(value):
+    # HTML scans for closing script tags before JavaScript parses the JSON.
+    return json.dumps(value).replace("<", r"\u003c")
+
+
 def generate_heatmap_html(daily_activity, skin='claude_warm', mode='light'):
     today = datetime.date.today()
     # 从 2026-01-01 开始计算
@@ -1205,8 +1211,9 @@ def generate_echarts_bar_html(data_dict, title, skin="claude_design", mode="syst
         // 题库固定为暖陶浅色视觉体系：图表一律走浅色分支，不再跟随系统深色模式
         var isDark = {json.dumps(mode == 'dark')};
         var panelEl = document.querySelector('.echarts-panel');
+        var cardBg = isDark ? themeInfo.dark_card_bg : themeInfo.light_card_bg;
         if (panelEl) {{
-            panelEl.style.background = isDark ? themeInfo.dark_card_bg : themeInfo.light_card_bg;
+            panelEl.style.background = cardBg;
             panelEl.style.borderColor = isDark ? themeInfo.dark_border : themeInfo.light_border;
         }}
         var textColor = isDark ? themeInfo.dark_text : themeInfo.light_text;
@@ -1223,7 +1230,7 @@ def generate_echarts_bar_html(data_dict, title, skin="claude_design", mode="syst
             grid: {{ left: '3%', right: '4%', bottom: '3%', top: '10%', containLabel: true }},
             xAxis: {{
                 type: 'category',
-                data: {json.dumps(labels)},
+                data: {_script_json(labels)},
                 axisLabel: {{ interval: 0, rotate: 30, color: textColor, fontWeight: '600', fontSize: 12 }},
                 axisLine: {{ lineStyle: {{ color: axisLineColor }} }}
             }},
@@ -1311,10 +1318,17 @@ def generate_echarts_pie_html(data_dict, diff_dict, title, skin="claude_design",
         var option = {{
             animationDuration: 850,
             animationEasing: 'cubicOut',
-            tooltip: {{ trigger: 'item', formatter: '{{a}} <br/>{{b}}: {{c}} ({{d}}%)',backgroundColor:cardBg,textStyle:{{color:textColor}} }},
+            tooltip: {{
+                trigger: 'item',
+                formatter: function(params) {{
+                    return echarts.format.formatTpl('{{a}} <br/>{{b}}: {{c}} ({{d}}%)', params, true);
+                }},
+                backgroundColor: cardBg,
+                textStyle: {{ color: textColor }}
+            }},
             legend: [
-                {{ top: '0%', left: 'center', textStyle: {{ color: textColor, fontWeight: 'bold' }}, data: {json.dumps([item['name'] for item in pie_data_inner])} }},
-                {{ top: '6%', left: 'center', textStyle: {{ color: textColor, fontWeight: 'bold' }}, data: {json.dumps([item['name'] for item in pie_data_outer])} }}
+                {{ top: '0%', left: 'center', textStyle: {{ color: textColor, fontWeight: 'bold' }}, data: {_script_json([item['name'] for item in pie_data_inner])} }},
+                {{ top: '6%', left: 'center', textStyle: {{ color: textColor, fontWeight: 'bold' }}, data: {_script_json([item['name'] for item in pie_data_outer])} }}
             ],
             color: activePalette,
             series: [
@@ -1326,7 +1340,7 @@ def generate_echarts_pie_html(data_dict, diff_dict, title, skin="claude_design",
                     center: ['50%', '58%'],
                     label: {{ position: 'inner', fontSize: 13, fontWeight: 'bold', color: '#fff' }},
                     labelLine: {{ show: false }},
-                    data: {json.dumps(pie_data_inner)}
+                    data: {_script_json(pie_data_inner)}
                 }},
                 {{
                     name: '难度星级分布',
@@ -1341,7 +1355,7 @@ def generate_echarts_pie_html(data_dict, diff_dict, title, skin="claude_design",
                             c: {{ color: mutedColor, fontSize: 12, fontWeight: 'bold' }}
                         }}
                     }},
-                    data: {json.dumps(pie_data_outer)}
+                    data: {_script_json(pie_data_outer)}
                 }}
             ]
         }};

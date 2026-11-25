@@ -11,6 +11,11 @@ from services.local_process import run
 
 
 def _find_codex(path: str | None = None) -> str | None:
+    from services.desktop_tool_paths import configured_agent_command, resolve_agent_command
+
+    command = configured_agent_command('CODEX')
+    if command is not None:
+        return resolve_agent_command(command, path)
     executable = shutil.which("codex", path=path) if path else shutil.which("codex")
     if executable:
         return executable

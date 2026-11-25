@@ -36,10 +36,11 @@ const METHODS = new Set([
   'workspace.list', 'workspace.open', 'workspace.resume', 'workspace.create',
   'workspace.save', 'workspace.import_pdf', 'workspace.reconstruct', 'workspace.compile', 'workspace.locate', 'workspace.chat',
   'workspace.papilot_import',
+  'workspace.fill_solution', 'workspace.fill_solution_batch', 'workspace.save_question',
   'workspace.apply', 'workspace.dismiss', 'workspace.undo', 'workspace.export', 'workspace.export_tex', 'workspace.export_pdf',
   'workspace.chapters', 'task.get', 'task.cancel',
 ]);
-const ROUTES = new Set(['entry', 'tex', 'pdf', 'browse', 'exam', 'tools', 'search', 'stats', 'intro', 'manual', 'settings', 'tags']);
+const ROUTES = new Set(['entry', 'tex', 'pdf', 'browse', 'exam', 'tools', 'search', 'stats', 'intro', 'manual', 'tags']);
 
 protocol.registerSchemesAsPrivileged([
   { scheme: 'utopia', privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true } },
@@ -278,7 +279,10 @@ async function legacyUrl(route) {
       throw error;
     });
   }
-  const url = new URL(await legacy.ready);
+  const service = legacy;
+  const [base] = await Promise.all([service.ready, route === 'stats' ? maintenance.get(state) : undefined]);
+  if (legacy !== service) throw new Error('题库页面连接已关闭。');
+  const url = new URL(base);
   url.searchParams.set('desktop_page', route);
   return url.href;
 }

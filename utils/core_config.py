@@ -9,11 +9,6 @@ _library = os.getenv('UTOPIA_DESKTOP_LIBRARY') or BASE_DIR
 CHAPTERS_DIR = os.path.join(_library, "chapters")
 CSV_INDEX_PATH = os.path.join(_library, "utils", "题库索引表.csv")
 
-# AI 配置
-AI_API_KEY = os.getenv("AI_API_KEY")
-AI_BASE_URL = os.getenv("AI_BASE_URL", "https://api.openai.com/v1")
-AI_MODEL_NAME = os.getenv("AI_MODEL_NAME", "gpt-4o")
-
 # 读取 OCR 提示词 (优先从文件读取，否则从环境变量)
 ocr_prompt_file = os.path.join(BASE_DIR, "ocr_prompt.txt")
 if os.path.exists(ocr_prompt_file):

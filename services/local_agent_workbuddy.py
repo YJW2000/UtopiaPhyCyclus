@@ -1,32 +1,15 @@
-"""Connect an explicitly configured WorkBuddy ACP launcher."""
+"""Connect a configured or Papilot-managed WorkBuddy ACP launcher."""
 from __future__ import annotations
 
 import os
 from pathlib import Path
 
 from services.codebuddy_agent import restricted_acp_args
+from services.desktop_tool_paths import managed_papilot_agent
+from services.desktop_tool_paths import registered_tool_variable as _registered_launcher
 
 
 _LAUNCHER_KEYS = ('UTOPIA_WORKBUDDY_BIN', 'PAPILOT_WORKBUDDY_BIN')
-
-
-def _registered_launcher(name):
-    if os.name != 'nt':
-        return ''
-    import winreg
-
-    for hive, key_name in (
-        (winreg.HKEY_CURRENT_USER, 'Environment'),
-        (winreg.HKEY_LOCAL_MACHINE, r'SYSTEM\CurrentControlSet\Control\Session Manager\Environment'),
-    ):
-        try:
-            with winreg.OpenKey(hive, key_name) as key:
-                value, kind = winreg.QueryValueEx(key, name)
-        except OSError:
-            continue
-        if isinstance(value, str) and value.strip():
-            return winreg.ExpandEnvironmentStrings(value) if kind == winreg.REG_EXPAND_SZ else value
-    return ''
 
 
 def find_workbuddy_launcher(tool_path=None):
@@ -47,7 +30,7 @@ def find_workbuddy_launcher(tool_path=None):
         elif not os.access(launcher, os.X_OK):
             return None
         return str(launcher)
-    return None
+    return managed_papilot_agent('workbuddy')
 
 
 def workbuddy_acp_command(executable, directory, env):

@@ -9,6 +9,7 @@ import streamlit as st
 
 from services.pdf_edit_ui import has_pending_pdf_edit, pdf_revision, render_pdf_edit
 from services.pdf_import_service import import_pdf, inspect_pdf
+from services.question_solution_ui import FILL_SOLUTION_LABEL, generate_solution_draft
 from services.tex_compile_service import compile_tex_preview
 from utils.core_config import PAPER_TYPES, SUBJECTS
 from utils.pdf_selection import st_pdf_selection
@@ -110,21 +111,32 @@ def _upload(project_dir, drafts):
 
 def _render_draft(draft, project_dir, save_questions):
     key = "pdf_draft_" + draft["id"]
+    source_key = key + "_source"
     view = st.radio("草稿视图", ["PDF 框选修改", "LaTeX 源码", "原 PDF 对照"], horizontal=True, key=key + "_view")
 
     def update_source():
-        draft["source"] = st.session_state[key + "_source"]
+        draft["source"] = st.session_state[source_key]
         draft.pop("save_logs", None)
-
-    if view == "LaTeX 源码":
-        st.text_area("题目 LaTeX 源码", value=draft["source"], key=key + "_source",
-                     height=430, on_change=update_source)
-    elif view == "原 PDF 对照":
-        _original(draft["original"], draft["id"], draft["first"], key + "_original")
 
     source = draft["source"]
     revision = _revision(draft, project_dir, source)
-    c_compile, c_save = st.columns(2)
+    pending = has_pending_pdf_edit(key + "_edit", revision, draft.get("preview"))
+    c_compile, c_fill, c_save = st.columns(3)
+    if c_fill.button(FILL_SOLUTION_LABEL, key=key + "_fill_solution", disabled=not source.strip() or pending):
+        updated = generate_solution_draft(source, project_dir, draft["resources"])
+        if updated is not None:
+            source = st.session_state[source_key] = draft["source"] = updated
+            revision = _revision(draft, project_dir, source)
+            draft.pop("save_logs", None)
+            with st.spinner("正在编译已补充的草稿…"):
+                _record_compile(draft, project_dir, _compile(draft, project_dir, updated))
+            st.toast("已补充到草稿，可核对后入库。", icon="✅")
+
+    if view == "LaTeX 源码":
+        st.session_state.setdefault(source_key, draft["source"])
+        st.text_area("题目 LaTeX 源码", key=source_key, height=430, on_change=update_source)
+    elif view == "原 PDF 对照":
+        _original(draft["original"], draft["id"], draft["first"], key + "_original")
 
     def compile_current():
         # Widget values arrive before callbacks; a click can commit pending text.

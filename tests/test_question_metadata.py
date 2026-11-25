@@ -17,12 +17,66 @@ app._apply_pending_browse_selection()
 root = Path(st.session_state['fixture_root'])
 path = Path(st.session_state.setdefault('original_fixture_path', str(next(root.rglob('*.tex')))))
 st.session_state['current_path'] = str(path)
-with patch.object(app, 'CHAPTERS_DIR', str(root)), patch.object(app, 'update_csv_index_for_edit'), patch('utils.csv_ops.update_csv_index_for_edit'), patch.object(app, 'record_operation'), patch.object(app, '_invalidate_semantic_for_file'), patch.object(app, 'render_ai_solution_panel'), patch.object(app, 'render_ai_solution_image_ocr_section'):
+with patch.object(app, 'CHAPTERS_DIR', str(root)), patch.object(app, 'update_csv_index_for_edit'), patch('utils.csv_ops.update_csv_index_for_edit'), patch.object(app, 'record_operation'), patch.object(app, 'render_ai_solution_panel'), patch.object(app, 'render_ai_solution_image_ocr_section'):
     app.render_browse_question_editor_card(path.stem, path.read_text(encoding='utf-8') if path.exists() else '', str(path), 'metadata_test')
 '''
 
 
 class MetadataTests(unittest.TestCase):
+    def test_fill_solution_updates_single_entry_without_saving(self):
+        from streamlit.testing.v1 import AppTest
+
+        at = AppTest.from_string('import utopia_phycyclus_app as app; app.page_entry(force_single_mode=True)',
+                                 default_timeout=30).run()
+        self.assertTrue(at.button(key='entry_fill_solution').disabled)
+        source = '质量为 $m$ 的物体受到合力 $F$，求加速度。'
+        at.text_area(key='entry_content').set_value(source).run()
+        updated = source + '\n' + r'\begin{answer}$a=F/m$\end{answer}'
+        with patch('services.question_solution_service.fill_missing_solution', return_value=updated) as generate:
+            at.button(key='entry_fill_solution').click().run()
+        self.assertFalse(at.exception)
+        self.assertEqual(generate.call_args.args, (source,))
+        self.assertEqual(at.text_area(key='entry_content').value, updated)
+
+    def test_fill_solution_stays_in_existing_question_draft_until_save(self):
+        from streamlit.testing.v1 import AppTest
+        import utopia_phycyclus_app as app
+        from utils import csv_ops, question_index
+
+        with tempfile.TemporaryDirectory() as folder:
+            chapters = Path(folder) / 'chapters'
+            index_path = Path(folder) / 'utils' / '题库索引表.csv'
+            question_index.ensure_index(index_path, bootstrap_from_tex=False)
+            path = chapters / '电场' / '2026' / '2026-M-测试卷-1-电场.tex'
+            path.parent.mkdir(parents=True)
+            source = r'\begin{problem}{2026}{M}{测试卷}{1}{电场}求场强\end{problem}'
+            source = inject_meta_data(source, {'ID': '42', '题型': '计算题'})
+            path.write_text(source, encoding='utf-8')
+            at = AppTest.from_string(EDITOR_SCRIPT, default_timeout=30)
+            at.session_state['fixture_root'] = str(chapters)
+            at.run()
+            key = app._question_key('meta', str(path))
+            text_key = 'metadata_test_edit_' + app._question_key('text', str(path))
+            updated = source + '\n' + r'\begin{answer}$E=F/q$\end{answer}'
+            with patch('services.question_solution_service.fill_missing_solution', return_value=updated) as generate:
+                at.button(key=f'metadata_test_fill_solution_{key}').click().run()
+            self.assertFalse(at.exception)
+            self.assertEqual(generate.call_args.args, (source,))
+            self.assertEqual(at.text_area(key=text_key).value, updated)
+            self.assertEqual(path.read_text(encoding='utf-8'), source)
+            # The save callback runs before patches inside EDITOR_SCRIPT are entered again.
+            with (patch.object(app, 'find_duplicate_matches', return_value=[]),
+                  patch.object(app, 'record_operation'),
+                  patch('services.file_service.backup_existing_file'),
+                  patch.object(csv_ops, 'CHAPTERS_DIR', str(chapters)),
+                  patch.object(csv_ops, 'CSV_INDEX_PATH', str(index_path))):
+                at.button(key=f'metadata_test_tex_edit_{key}').click().run()
+            self.assertFalse(at.exception)
+            self.assertIn('$E=F/q$', path.read_text(encoding='utf-8'), [item.value for item in at.get('toast')])
+            row = question_index.get_row(str(path.relative_to(chapters)), csv_path=index_path)
+            self.assertEqual(row['题目ID'], '42')
+            self.assertEqual(row['答案'], '$E=F/q$')
+
     def test_one_star_does_not_erase_knowledge_or_other_difficulties(self):
         for difficulty in ('1', '1.0', 1):
             metadata = {'ID': '42', '标签': '基础，AI原创,基础，原创', '难度星级': difficulty,

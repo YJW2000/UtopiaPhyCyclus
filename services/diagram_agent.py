@@ -7,7 +7,7 @@ Pi-Agent 物理与数学图形智能矫正 Agent 框架 (Harness v2)
 1. 状态与记忆管理 (AgentMemory / AgentState)
 2. 领域工具集 (Tools: inspect, validate, compile_with_log, repair_generate, apply_to_latex)
 3. 领域技能与插件扩展系统 (Skill Registry & Dynamic Intent Matching & Plugin Loader)
-4. 多模态/语音转写服务 (Audio Transcription via Configured AI API)
+4. 多模态参考图处理
 5. 物理与数学图元专业自洽协议 (TikZ Physical & Geometric Constraints)
 6. 自主感知-推理-修复-校验-编译闭环 (Autonomous ReAct & Self-Healing Loop)
 
@@ -22,7 +22,6 @@ Harness v2 强化（相对 v1）：
 from __future__ import annotations
 
 import base64
-import io
 import json
 import logging
 import math
@@ -34,11 +33,8 @@ from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import urlsplit
 
 import requests
-from dotenv import load_dotenv
-
 from .ai_service import (
     DEFAULT_LLM_READ_TIMEOUT,
-    normalize_chat_completions_url,
     post_chat_completion,
     resolve_llm_timeouts,
 )
@@ -130,25 +126,22 @@ def is_driver_crash_kind(error_kind: Any) -> bool:
 # 用户可见的错误文案必须是「中文 + 可操作」，不能把 requests 的原始英文异常
 # （如 ``HTTPConnectionPool(host='127.0.0.1', port=8045): Read timed out.``）直接抛给用户。
 LLM_TIMEOUT_ERROR_TEMPLATE = (
-    "AI 网关 {gateway} 响应超时（等待 {read_seconds} 秒）。"
-    "常见原因：本地 AI 网关（Antigravity Tools）卡死/未启动、上游网络拥塞。"
-    "请重启该网关后重试；也可在 .env 设置 AI_READ_TIMEOUT=300（默认 240）并重启应用。"
+    "Agent {gateway} 响应超时（等待 {read_seconds} 秒）。"
+    "请检查网络，重启 Agent 后重试。"
 )
 LLM_CONNECTION_ERROR_TEMPLATE = (
-    "无法连接 AI 网关 {gateway}（连接被拒绝或网络不可达）。"
-    "常见原因：本地 AI 网关（Antigravity Tools）未启动/已退出、AI_BASE_URL 配置错误。"
-    "请确认网关已启动后重试，并检查 .env 中的 AI_BASE_URL。"
+    "无法连接 Agent {gateway}。请检查 Agent 的登录状态与网络连接后重试。"
 )
 LLM_GENERIC_ERROR_TEMPLATE = "Agent 调用异常：{reason}（原始：{exc_type}）"
 _LLM_EXCEPTION_REASON_ZH = {
-    "timeout": "AI 网关卡顿或上游网络拥塞，请求超时",
-    "connection": "无法连接 AI 网关或网络中断",
-    "sslerror": "AI 网关 TLS/证书校验失败",
-    "proxyerror": "通过代理访问 AI 网关失败",
+    "timeout": "Agent 请求超时",
+    "connection": "无法连接 Agent 或网络中断",
+    "sslerror": "服务证书校验失败",
+    "proxyerror": "通过代理连接服务失败",
     "jsondecodeerror": "AI 返回内容不是合法 JSON",
-    "httperror": "AI 网关返回 HTTP 错误",
+    "httperror": "服务返回 HTTP 错误",
     "chunkedencodingerror": "AI 响应流被中断",
-    "invalidurl": "AI_BASE_URL 地址格式无效",
+    "invalidurl": "服务地址格式无效",
     "valueerror": "AI 返回内容格式不符合预期",
     "keyerror": "AI 返回内容缺少必要字段",
     "attributeerror": "AI 返回内容结构异常",
@@ -173,10 +166,14 @@ def is_llm_network_exception(exc: BaseException) -> bool:
 
 
 def _llm_gateway_label(base_url: str) -> str:
-    """从 AI_BASE_URL 提取可读的网关标识（如 ``127.0.0.1:8045``），绝不抛异常。"""
+    """得到当前 Agent 的名称，或提取响应错误中的服务标识。"""
+    if base_url == 'local://codex':
+        from .desktop_model import selected_provider
+        from .local_agent import LOCAL_AGENTS
+        return LOCAL_AGENTS[selected_provider()].label
     text = str(base_url or "").strip()
     if not text:
-        return "（未配置 AI_BASE_URL）"
+        return ""
     try:
         if "://" in text:
             netloc = urlsplit(text).netloc
@@ -318,7 +315,7 @@ REFERENCE_IMAGES_DEGRADED_NOTE = (
 REFERENCE_IMAGES_DEGRADED_NOTICE = "（注：当前模型不支持图片输入，已仅用文字继续。）"
 REFERENCE_IMAGES_TIMEOUT_NOTICE = (
     "（注：带参考图片的请求超时，已自动去掉图片、改用纯文字重试；"
-    "若仍失败请检查本地 AI 网关，或调大 .env 的 AI_READ_TIMEOUT。）"
+    "若仍失败请检查 Agent 的运行状态。）"
 )
 REFERENCE_IMAGES_CONNECTION_NOTICE = (
     "（注：带参考图片的请求连接失败，已自动去掉图片、改用纯文字重试。）"
@@ -1040,89 +1037,8 @@ class PiDiagramAgent:
         self.skill_registry = skill_registry or get_default_skill_registry()
 
     def _get_api_config(self) -> Dict[str, str]:
-        """获取项目配置的 API 密钥与地址"""
-        if os.environ.get('UTOPIA_DESKTOP_STATE'):
-            from services.desktop_model import read_settings
-            if read_settings().get('provider') != 'api':
-                return {'api_key': 'desktop-session', 'base_url': 'local://codex', 'model_name': 'codex'}
-        env_path = os.path.join(self.base_dir, ".env")
-        if os.path.exists(env_path):
-            load_dotenv(env_path, override=True)
-        api_key = os.getenv("AI_API_KEY", "").strip()
-        base_url = os.getenv("AI_BASE_URL", "").strip()
-        model_name = os.getenv("AI_MODEL_NAME") or os.getenv("AI_SOLVER_MODEL_NAME") or "qwen3.8-max"
-        return {
-            "api_key": api_key,
-            "base_url": base_url,
-            "model_name": model_name,
-        }
-
-    def transcribe_audio(self, audio_bytes: bytes, filename: str = "voice.webm") -> Tuple[bool, str]:
-        """
-        使用项目中配置的 API 密钥与服务完成语音转写：
-        1. 优先尝试 OpenAI 规范 /audio/transcriptions 接口
-        2. 若为多模态模型 (如 Gemini / Qwen / GPT-4o)，直接通过多模态输入调用转写
-        """
-        import requests
-        cfg = self._get_api_config()
-        if not cfg["api_key"] or not cfg["base_url"]:
-            return False, "未配置 API Key 或 Base URL，无法调用语音转写服务。"
-
-        headers = {"Authorization": f"Bearer {cfg['api_key']}"}
-
-        # 方式 1: 标准 OpenAI Whisper 兼容端点 /audio/transcriptions
-        base = cfg["base_url"].rstrip("/")
-        if base.endswith("/v1"):
-            trans_url = f"{base}/audio/transcriptions"
-        elif "/v1" not in base:
-            trans_url = f"{base}/v1/audio/transcriptions"
-        else:
-            trans_url = f"{base.split('/v1')[0]}/v1/audio/transcriptions"
-
-        try:
-            files = {
-                "file": (filename, io.BytesIO(audio_bytes), "audio/webm"),
-            }
-            data = {
-                "model": "whisper-1",
-                "language": "zh",
-            }
-            resp = requests.post(trans_url, headers=headers, files=files, data=data, timeout=30)
-            if resp.status_code == 200:
-                res_json = resp.json()
-                text = res_json.get("text", "").strip()
-                if text:
-                    return True, text
-        except Exception as e:
-            logger.info(f"Standard Whisper transcript endpoint skipped: {e}")
-
-        # 方式 2: 通用多模态大模型转写 (兼容 Gemini / Qwen / GPT-4o 等多模态通道)
-        try:
-            audio_b64 = base64.b64encode(audio_bytes).decode("utf-8")
-            payload = {
-                "model": cfg["model_name"],
-                "messages": [
-                    {
-                        "role": "user",
-                        "content": (
-                            "请仔细倾听这段语音，将其准确转写为纯文本汉字或英文指令。"
-                            "这通常是高中物理或数学题目的图形修改要求（例如：‘把斜面倾角调小至30度，滑块添加支持力’）。"
-                            "请直接输出识别到的转录文字，绝对不要添加任何额外解释、开场白、总结或引号。"
-                        ),
-                    }
-                ],
-                "temperature": 0.1,
-            }
-            resp, _ = post_chat_completion(cfg["base_url"], headers, payload, timeout=30)
-            if resp.status_code == 200:
-                res_json = resp.json()
-                text = res_json.get("choices", [{}])[0].get("message", {}).get("content", "").strip()
-                if text:
-                    return True, text
-        except Exception as e:
-            logger.warning(f"Multimodal transcription error: {e}")
-
-        return False, "未能完成语音转写，建议直接在上方文本框打字输入。"
+        """为内部模型请求适配器提供本机 Agent 路由。"""
+        return {'api_key': 'desktop-session', 'base_url': 'local://codex', 'model_name': 'codex'}
 
     def _clean_response(self, text: str) -> Tuple[str, str, str]:
         """
@@ -1438,7 +1354,7 @@ class PiDiagramAgent:
         if not cfg["api_key"] or not cfg["base_url"]:
             return {
                 "ok": False,
-                "error": "未检测到完整的 AI API 配置，请在系统设置中配置 API Key 与 Base URL。",
+                "error": "无法启用插图 Agent，请检查本机 Agent 的配置。",
                 "agent_message": None,
                 "updated_latex": current_question_latex,
             }
@@ -1661,7 +1577,7 @@ class PiDiagramAgent:
                     break
                 return {
                     "ok": False,
-                    "error": f"API 请求失败 [{resp.status_code}]: {resp.text[:300]}",
+                    "error": f"Agent 请求失败 [{resp.status_code}]: {resp.text[:300]}",
                     "error_kind": "LLM_HTTP_ERROR",
                     "agent_message": None,
                     "updated_latex": current_question_latex,

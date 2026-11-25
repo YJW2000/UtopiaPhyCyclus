@@ -7,7 +7,6 @@ import re
 import time
 import datetime
 import base64
-import requests
 import hashlib
 import html
 import json
@@ -16,7 +15,7 @@ import shutil
 import uuid
 import sqlite3
 import sys
-from dotenv import load_dotenv, dotenv_values
+from dotenv import dotenv_values
 try:
     from PIL import ImageGrab
 except ImportError:
@@ -24,7 +23,8 @@ except ImportError:
 
 import streamlit.components.v1 as components
 import io
-from services.ai_service import extract_json_obj_from_text, normalize_chat_completions_url, post_chat_completion, fetch_available_models, test_model_availability
+from services.ai_service import extract_json_obj_from_text
+from services.desktop_model import legacy_completion
 from services.file_service import atomic_write_text, backup_existing_file, file_change_token
 from services.operation_log import read_recent_operations, record_operation
 from services.question_service import (
@@ -42,13 +42,6 @@ from services.question_image_ui import apply_pending_diagram_update, queue_diagr
 from utils.image_assets import copy_graphics, graphics_fingerprint
 from services.question_import_ai_service import classify_question, split_question_with_ai
 from services.question_type_service import QUESTION_TYPES, infer_question_type, require_question_type
-from services.semantic_search_service import (
-    SemanticSearchError,
-    build_index as build_semantic_index,
-    invalidate_path as invalidate_semantic_path,
-    index_status as semantic_index_status,
-    search as semantic_search,
-)
 from services.fuzzy_search_service import (
     SORT_OPTIONS as FUZZY_SORT_OPTIONS,
     build_documents as build_fuzzy_documents,
@@ -67,7 +60,6 @@ def _question_key(prefix: str, fpath: str) -> str:
 
 
 APP_ROOT = os.getenv("UTOPIA_LEGACY_ROOT") or os.path.dirname(os.path.abspath(__file__))
-load_dotenv(os.path.join(APP_ROOT, ".env"))
 ensure_log_csv(os.getenv("UTOPIA_DESKTOP_LIBRARY") or APP_ROOT)
 
 from utils.core_config import *
@@ -756,119 +748,34 @@ def inject_custom_css():
         </style>
     """, unsafe_allow_html=True)
 
-AI_ENV_DEFAULTS = {
-    "AI_API_KEY": "",
-    "AI_BASE_URL": "https://dashscope.aliyuncs.com/compatible-mode/v1",
-    "AI_MODEL_NAME": "qwen3.8-max",
-    "AI_SOLVER_MODEL_NAME": "qwen3.6-flash",
-    "AI_EMBEDDING_MODEL_NAME": "",
-    "APP_THEME_MODE": "light",
-    "APP_THEME_SKIN": "claude_warm",
-    "AI_OCR_PROMPT": (
-        "请识别图片中的高中物理题，并严格按照 LaTeX 格式输出。"
-        "如果图片中有多道独立题目，必须逐题输出独立的文件名分隔符和完整 problem、answer、solutions 环境，"
-        "禁止把多道题合并进同一个 problem 环境。"
-        "每题内容中禁止出现 \\newpage、\\clearpage、\\pagebreak 等分页命令。"
-    ),
+_LOCAL_AGENT_CONNECTION = {
+    "AI_BASE_URL": "local://codex",
+    "AI_API_KEY": "local-agent",
+    "AI_MODEL_NAME": "codex",
 }
 
-AI_ENV_WRITE_ORDER = (
-    "AI_API_KEY",
-    "AI_BASE_URL",
-    "AI_MODEL_NAME",
-    "AI_SOLVER_MODEL_NAME",
-    "AI_EMBEDDING_MODEL_NAME",
-    "APP_THEME_MODE",
-    "APP_THEME_SKIN",
+_DEFAULT_OCR_PROMPT = (
+    "请识别图片中的高中物理题，并严格按照 LaTeX 格式输出。"
+    "如果图片中有多道独立题目，必须逐题输出独立的文件名分隔符和完整 problem、answer、solutions 环境，"
+    r"禁止把多道题合并进同一个 problem 环境。每题内容中禁止出现 \newpage、\clearpage、\pagebreak 等分页命令。"
 )
 
-def _root_env_path() -> str:
-    return os.path.join(os.getenv("UTOPIA_DESKTOP_LIBRARY") or APP_ROOT, ".env")
 
-def _read_root_ai_env_config(*, provider=True) -> dict:
-    env_path = _root_env_path()
-    file_exists = os.path.exists(env_path)
-    raw = {}
-    if file_exists:
-        try:
-            raw = {k: (v or "") for k, v in dotenv_values(env_path).items() if k}
-        except Exception:
-            raw = {}
-
-    values = {}
-    for key, default in AI_ENV_DEFAULTS.items():
-        if file_exists:
-            values[key] = raw.get(key, default)
-        else:
-            values[key] = os.getenv(key, default)
-    if provider and os.environ.get("UTOPIA_DESKTOP_STATE"):
-        from services.desktop_model import read_settings
-        if read_settings().get("provider") != "api":
-            values.update(AI_BASE_URL="local://codex", AI_API_KEY="desktop-session",
-                          AI_MODEL_NAME="codex", AI_SOLVER_MODEL_NAME="codex")
-    return values
-
-def _format_env_value(value: str) -> str:
-    value = (value or "").replace("\r\n", "\n").replace("\r", "\n").strip()
-    value = value.replace("\n", "\\n")
-    if value == "":
-        return ""
-    if re.search(r"\s|#|\"|'|\\", value):
-        return '"' + value.replace("\\", "\\\\").replace('"', '\"') + '"'
-    return value
-
-def _write_root_ai_env_config(updates: dict):
-    env_path = _root_env_path()
-    if os.path.exists(env_path):
-        with open(env_path, "r", encoding="utf-8") as f:
-            lines = f.read().splitlines()
-    else:
-        lines = [
-            "# AI service configuration.",
-            "# Managed by UtopiaPhyCyclus API 设置.",
-            "",
-        ]
-
-    seen = set()
-    output = []
-    env_line_re = re.compile(r"^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=")
-    for line in lines:
-        match = env_line_re.match(line)
-        if match and match.group(1) in updates:
-            key = match.group(1)
-            output.append(f"{key}={_format_env_value(updates[key])}")
-            seen.add(key)
-        else:
-            output.append(line)
-
-    missing = [key for key in AI_ENV_WRITE_ORDER if key in updates and key not in seen]
-    if missing and output and output[-1].strip():
-        output.append("")
-    for key in missing:
-        output.append(f"{key}={_format_env_value(updates[key])}")
-
-    atomic_write_text(env_path, "\n".join(output).rstrip() + "\n", backup=False)
-    load_dotenv(env_path, override=True)
-
-def _load_cached_api_models() -> list[str]:
-    cache_path = os.path.join(APP_ROOT, ".api_models_cache.json")
-    if os.path.exists(cache_path):
-        try:
-            with open(cache_path, "r", encoding="utf-8") as f:
-                data = json.load(f)
-                if isinstance(data, list) and data:
-                    return data
-        except Exception:
-            pass
-    return []
-
-def _save_cached_api_models(models: list[str]) -> None:
-    cache_path = os.path.join(APP_ROOT, ".api_models_cache.json")
+def _read_library_environment() -> dict:
+    env_path = os.path.join(os.getenv("UTOPIA_DESKTOP_LIBRARY") or APP_ROOT, ".env")
     try:
-        with open(cache_path, "w", encoding="utf-8") as f:
-            json.dump(models, f, ensure_ascii=False, indent=2)
-    except Exception:
-        pass
+        return dotenv_values(env_path) if os.path.isfile(env_path) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def _local_agent_reply(messages: list, timeout: int) -> str:
+    response = legacy_completion({"messages": messages}, timeout)
+    reply = response.json()["choices"][0]["message"]["content"]
+    if not isinstance(reply, str) or not reply.strip():
+        raise ValueError("Agent 未返回有效内容，请重试。")
+    return reply
+
 
 THEME_SKIN_OPTIONS = ("default", "liquid_glass", "claude_warm", "crystal_glass")
 
@@ -883,7 +790,9 @@ def _get_current_theme_skin() -> str:
 def _load_appearance_preferences():
     if not st.session_state.get('_appearance_preferences_loaded',False):
         from services.ui_preferences import load_preferences
-        preferences=load_preferences(_read_root_ai_env_config())
+        env = _read_library_environment()
+        fallback = {key: env.get(key) or os.getenv(key) for key in ("APP_THEME_SKIN", "APP_THEME_MODE")}
+        preferences=load_preferences(fallback)
         st.session_state['app_theme_skin']=preferences['skin']
         st.session_state['app_theme_mode']=preferences['mode']
         st.session_state['_appearance_preferences_loaded']=True
@@ -922,270 +831,30 @@ def page_ui_settings():
     st.subheader("题库管理")
     st.button("打开题库工具箱", key="open_library_tools", on_click=_set_library_tools_open, args=(True,))
 
-def _read_ocr_prompt_for_settings(config: dict) -> tuple[str, bool]:
-    if os.path.exists(ocr_prompt_file):
-        with open(ocr_prompt_file, "r", encoding="utf-8") as f:
-            return f.read(), True
-    return config.get("AI_OCR_PROMPT", AI_ENV_DEFAULTS["AI_OCR_PROMPT"]).replace("\\n", "\n"), False
+    with st.expander("图片识别提示词"):
+        st.caption("补充要求会与物理识图规则一同发送给识别模型。")
+        with st.form("ocr_prompt_settings"):
+            prompt = st.text_area("识别提示词", value=_read_ocr_prompt(), height=220)
+            if st.form_submit_button("保存识别提示词"):
+                try:
+                    _write_ocr_prompt_file(prompt)
+                    st.success("识别提示词已保存。")
+                except OSError as error:
+                    st.error(f"保存失败：{error}")
+
+
+def _read_ocr_prompt() -> str:
+    if os.path.isfile(ocr_prompt_file):
+        with open(ocr_prompt_file, "r", encoding="utf-8") as file:
+            return file.read()
+    configured = _read_library_environment().get("AI_OCR_PROMPT") or os.getenv("AI_OCR_PROMPT")
+    return (configured or _DEFAULT_OCR_PROMPT).replace("\\n", "\n")
+
 
 def _write_ocr_prompt_file(prompt: str):
     normalized = (prompt or "").replace("\r\n", "\n").replace("\r", "\n").strip()
     atomic_write_text(ocr_prompt_file, normalized + ("\n" if normalized else ""), backup=False)
-    globals()["AI_OCR_PROMPT"] = normalized
 
-def page_api_settings():
-    """API 配置：侧边栏设置下的二级功能。"""
-    st.markdown('<span id="mc-api-page-anchor"></span>', unsafe_allow_html=True)
-    _c_api_title, _c_api_hint = st.columns([1.1, 3.0], gap="small")
-    with _c_api_title:
-        st.header("⚙️ API 设置")
-    with _c_api_hint:
-        st.caption("修改后点「保存配置」写入根目录 .env / ocr_prompt.txt，当前会话立即生效。")
-    env_path = _root_env_path()
-    config = _read_root_ai_env_config(provider=False)
-    ocr_prompt_value, prompt_file_exists = _read_ocr_prompt_for_settings(config)
-    env_state = "已读取根目录 .env" if os.path.exists(env_path) else "未找到 .env，保存时会自动创建"
-    prompt_state = "已读取根目录 ocr_prompt.txt" if prompt_file_exists else "未找到 ocr_prompt.txt，保存时会自动创建"
-
-    st.markdown(
-        """
-        <style>
-        /* API 设置使用深色高对比控件，并覆盖 BaseWeb 的原生聚焦背景。 */
-        div[data-testid="stMainBlockContainer"]:has(#mc-api-settings-anchor) div[data-testid="stTextInput"] input,
-        div[data-testid="stMainBlockContainer"]:has(#mc-api-settings-anchor) div[data-testid="stTextArea"] textarea,
-        div[data-testid="stMainBlockContainer"]:has(#mc-api-settings-anchor) div[data-baseweb="input"],
-        div[data-testid="stMainBlockContainer"]:has(#mc-api-settings-anchor) div[data-baseweb="textarea"],
-        div[data-testid="stMainBlockContainer"]:has(#mc-api-settings-anchor) div[data-baseweb="input"] > div,
-        div[data-testid="stMainBlockContainer"]:has(#mc-api-settings-anchor) div[data-baseweb="textarea"] > div {
-            border: 1px solid var(--mc-border) !important;
-            border-color: var(--mc-border) !important;
-            outline: none !important;
-            box-shadow: inset 0 1px 1px rgba(44, 39, 51, 0.03) !important;
-            background: var(--mc-surface) !important;
-            color: var(--mc-text) !important;
-            caret-color: var(--mc-text) !important;
-        }
-        div[data-testid="stMainBlockContainer"]:has(#mc-api-settings-anchor) div[data-testid="stTextInput"] input:focus,
-        div[data-testid="stMainBlockContainer"]:has(#mc-api-settings-anchor) div[data-testid="stTextArea"] textarea:focus,
-        div[data-testid="stMainBlockContainer"]:has(#mc-api-settings-anchor) div[data-baseweb="input"]:focus-within,
-        div[data-testid="stMainBlockContainer"]:has(#mc-api-settings-anchor) div[data-baseweb="textarea"]:focus-within,
-        div[data-testid="stMainBlockContainer"]:has(#mc-api-settings-anchor) div[data-baseweb="input"] > div:focus-within,
-        div[data-testid="stMainBlockContainer"]:has(#mc-api-settings-anchor) div[data-baseweb="textarea"] > div:focus-within {
-            border: 1px solid var(--mc-action-border) !important;
-            border-color: var(--mc-action-border) !important;
-            box-shadow: 0 0 0 3px var(--mc-focus), inset 0 1px 1px rgba(44, 39, 51, 0.03) !important;
-            background: var(--mc-surface-soft) !important;
-            color: var(--mc-text) !important;
-        }
-        div[data-testid="stMainBlockContainer"]:has(#mc-api-settings-anchor) input::placeholder,
-        div[data-testid="stMainBlockContainer"]:has(#mc-api-settings-anchor) textarea::placeholder {
-            color: var(--mc-muted) !important;
-            opacity: 1 !important;
-        }
-        div[data-testid="stMainBlockContainer"]:has(#mc-api-settings-anchor) input:invalid,
-        div[data-testid="stMainBlockContainer"]:has(#mc-api-settings-anchor) textarea:invalid,
-        div[data-testid="stMainBlockContainer"]:has(#mc-api-settings-anchor) div[data-baseweb="input"]:has(input:invalid),
-        div[data-testid="stMainBlockContainer"]:has(#mc-api-settings-anchor) div[data-baseweb="textarea"]:has(textarea:invalid),
-        div[data-testid="stMainBlockContainer"]:has(#mc-api-settings-anchor) div[data-baseweb="input"]:has(input[aria-invalid="true"]) > div,
-        div[data-testid="stMainBlockContainer"]:has(#mc-api-settings-anchor) div[data-baseweb="textarea"]:has(textarea[aria-invalid="true"]) > div,
-        div[data-testid="stMainBlockContainer"]:has(#mc-api-settings-anchor) div[data-baseweb="input"]:has(input[aria-invalid="true"]),
-        div[data-testid="stMainBlockContainer"]:has(#mc-api-settings-anchor) div[data-baseweb="textarea"]:has(textarea[aria-invalid="true"]),
-        div[data-testid="stMainBlockContainer"]:has(#mc-api-settings-anchor) div[data-testid="stTextInput"] input[aria-invalid="true"],
-        div[data-testid="stMainBlockContainer"]:has(#mc-api-settings-anchor) div[data-testid="stTextArea"] textarea[aria-invalid="true"] {
-            border: 1px solid var(--mc-action-border) !important;
-            border-color: var(--mc-action-border) !important;
-            outline: none !important;
-            box-shadow: 0 0 0 3px rgba(109, 40, 217, 0.12), inset 0 1px 1px rgba(44, 39, 51, 0.03) !important;
-        }
-        </style>
-        <span id="mc-api-settings-anchor"></span>
-        """,
-        unsafe_allow_html=True,
-    )
-
-    st.caption(f"{env_state}：{env_path}")
-    st.caption(f"{prompt_state}：{ocr_prompt_file}")
-    st.info("识别题目时会将内置物理识图技能与这里的提示词一起发送给模型。提示词优先读取 ocr_prompt.txt，文件不存在时读取 .env 的 AI_OCR_PROMPT。", icon="ℹ️")
-
-    cur_api_key = config.get("AI_API_KEY", "")
-    cur_base_url = config.get("AI_BASE_URL", AI_ENV_DEFAULTS["AI_BASE_URL"])
-    cur_ocr_model = config.get("AI_MODEL_NAME", AI_ENV_DEFAULTS["AI_MODEL_NAME"])
-
-    # API 实际可用模型探测与极小请求测试控制栏
-    c_fetch, c_probe = st.columns([1.2, 1.2])
-    with c_fetch:
-        if st.button("🔄 自动拉取 API 可用模型列表", key="btn_fetch_api_models", use_container_width=True):
-            with st.spinner("正在从当前 Base URL 拉取实际可用模型..."):
-                ok, fetched_models, err = fetch_available_models(cur_base_url, cur_api_key)
-            if ok and fetched_models:
-                st.session_state["api_discovered_models"] = fetched_models
-                _save_cached_api_models(fetched_models)
-                st.toast(f"成功获取到 {len(fetched_models)} 个可用模型！", icon="✅")
-                st.rerun()
-            else:
-                st.error(f"获取模型列表失败: {err}")
-
-    with c_probe:
-        if st.button("🧪 极小请求测试当前主模型可用性", key="btn_probe_current_model", use_container_width=True):
-            with st.spinner(f"正在发送 1-token 极小请求探测 [{cur_ocr_model}]..."):
-                res = test_model_availability(cur_base_url, cur_api_key, cur_ocr_model)
-            if res.get("ok"):
-                st.toast(res.get("message", "模型测试可用！"), icon="✅")
-                st.success(f"✅ {res.get('message', '测试成功')}")
-            else:
-                st.error(res.get("error", "模型不可用"))
-
-    # 读取当前 API 实际可用的模型列表（来自 API 探测或本地缓存）
-    discovered_models = st.session_state.get("api_discovered_models") or _load_cached_api_models()
-    if not discovered_models and cur_base_url and cur_api_key:
-        ok, f_models, _ = fetch_available_models(cur_base_url, cur_api_key, timeout=3)
-        if ok and f_models:
-            discovered_models = f_models
-            st.session_state["api_discovered_models"] = discovered_models
-            _save_cached_api_models(discovered_models)
-
-    with st.form("api_settings_form"):
-        api_key = st.text_input(
-            "API Key（密钥字符串，例如 sk-... 或 DashScope API Key）",
-            value=config.get("AI_API_KEY", ""),
-            type="password",
-            placeholder="sk-... / dashscope_xxx",
-        )
-        base_url = st.text_input(
-            "Base URL（接口根地址，例如 https://dashscope.aliyuncs.com/compatible-mode/v1）",
-            value=config.get("AI_BASE_URL", AI_ENV_DEFAULTS["AI_BASE_URL"]),
-            placeholder="https://dashscope.aliyuncs.com/compatible-mode/v1",
-        )
-
-        # 1. OCR / Agent 主模型下拉构建
-        cur_model = config.get("AI_MODEL_NAME", AI_ENV_DEFAULTS["AI_MODEL_NAME"])
-        if discovered_models:
-            ocr_opts = list(discovered_models)
-            if cur_model and cur_model not in ocr_opts:
-                ocr_opts.insert(0, cur_model)
-        else:
-            ocr_opts = [cur_model] if cur_model else []
-        ocr_opts.append("自定义输入...")
-        default_ocr_idx = ocr_opts.index(cur_model) if cur_model in ocr_opts else (len(ocr_opts) - 1)
-        sel_ocr_model = st.selectbox(
-            "OCR / 图片识别与插图 Agent 主模型（下拉选择实际可用模型）",
-            options=ocr_opts,
-            index=default_ocr_idx,
-            help="下拉选项直接来源于当前 API 支持的真实模型列表",
-        )
-        if sel_ocr_model == "自定义输入...":
-            custom_ocr_model = st.text_input(
-                "自定义 OCR/Agent 模型名称",
-                value=cur_model if cur_model not in discovered_models else "",
-                placeholder="输入实际的模型名称，例如：gemini-3.8-flash-high",
-            )
-        else:
-            custom_ocr_model = ""
-
-        # 2. 解题模型下拉构建
-        cur_solver = config.get("AI_SOLVER_MODEL_NAME", AI_ENV_DEFAULTS["AI_SOLVER_MODEL_NAME"])
-        if discovered_models:
-            solver_opts = list(discovered_models)
-            if cur_solver and cur_solver not in solver_opts:
-                solver_opts.insert(0, cur_solver)
-        else:
-            solver_opts = [cur_solver] if cur_solver else []
-        solver_opts.append("自定义输入...")
-        default_solver_idx = solver_opts.index(cur_solver) if cur_solver in solver_opts else (len(solver_opts) - 1)
-        sel_solver = st.selectbox(
-            "解题模型（下拉选择；负责解答推导与生成）",
-            options=solver_opts,
-            index=default_solver_idx,
-            help="用于解答生成与解析推导的模型",
-        )
-        if sel_solver == "自定义输入...":
-            custom_solver = st.text_input(
-                "自定义解题模型名称",
-                value=cur_solver if cur_solver not in discovered_models else "",
-                placeholder="输入解题模型名称，例如：deepseek-reasoner",
-            )
-        else:
-            custom_solver = ""
-
-        # 3. Embedding 模型下拉构建
-        cur_emb = config.get("AI_EMBEDDING_MODEL_NAME", AI_ENV_DEFAULTS["AI_EMBEDDING_MODEL_NAME"])
-        emb_opts = ["不启用 Embedding (仅精确检索)"]
-        if discovered_models:
-            # 优先提取带 embed 或 embedding 的模型，无则展示全部
-            emb_candidates = [m for m in discovered_models if "embed" in m.lower()]
-            emb_opts.extend(emb_candidates if emb_candidates else discovered_models)
-        if cur_emb and cur_emb not in emb_opts:
-            emb_opts.insert(1, cur_emb)
-        emb_opts.append("自定义输入...")
-        if not cur_emb:
-            default_emb_idx = 0
-        elif cur_emb in emb_opts:
-            default_emb_idx = emb_opts.index(cur_emb)
-        else:
-            default_emb_idx = len(emb_opts) - 1
-
-        sel_emb = st.selectbox(
-            "Embedding 检索模型（下拉选择；用于语义搜索）",
-            options=emb_opts,
-            index=default_emb_idx,
-            help="选择不启用可继续使用纯精确搜索；选择向量模型后可在检索页启用语义搜索。",
-        )
-        if sel_emb == "自定义输入...":
-            custom_emb = st.text_input(
-                "自定义 Embedding 模型名称",
-                value=cur_emb if cur_emb not in emb_opts else "",
-                placeholder="例如：text-embedding-v4",
-            )
-        else:
-            custom_emb = ""
-
-        ocr_prompt = st.text_area(
-            "OCR 提示词（保存到 ocr_prompt.txt）",
-            value=ocr_prompt_value,
-            height=260,
-        )
-
-        st.markdown(
-            '<div class="mc-theme-fixed-note">🎨 外观请在「设置 → UI设置」中选择，支持四套皮肤及浅色／深色模式。</div>',
-            unsafe_allow_html=True,
-        )
-
-        submitted = st.form_submit_button("保存配置", type="primary", use_container_width=True)
-
-    if submitted:
-        required_missing = []
-        if not api_key.strip():
-            required_missing.append("API Key")
-        if not base_url.strip():
-            required_missing.append("Base URL")
-        final_model_name = custom_ocr_model.strip() if sel_ocr_model == "自定义输入..." else sel_ocr_model.strip()
-        final_solver_model = custom_solver.strip() if sel_solver == "自定义输入..." else sel_solver.strip()
-        if sel_emb == "不启用 Embedding (仅精确检索)":
-            final_embedding_model = ""
-        elif sel_emb == "自定义输入...":
-            final_embedding_model = custom_emb.strip()
-        else:
-            final_embedding_model = sel_emb.strip()
-
-        if not final_model_name:
-            required_missing.append("OCR / 图片识别模型")
-        if required_missing:
-            st.error("请补全：" + "、".join(required_missing))
-            return
-
-        try:
-            _write_root_ai_env_config({
-                "AI_API_KEY": api_key.strip(),
-                "AI_BASE_URL": base_url.strip(),
-                "AI_MODEL_NAME": final_model_name,
-                "AI_SOLVER_MODEL_NAME": final_solver_model,
-                "AI_EMBEDDING_MODEL_NAME": final_embedding_model,
-            })
-            _write_ocr_prompt_file(ocr_prompt)
-            st.success(".env 与配置已保存，当前会话已更新 API 参数。")
-            st.rerun()
-        except Exception as e:
-            st.error(f"保存失败：{e}")
 
 def _query_param_enabled(name: str) -> bool:
     try:
@@ -1323,8 +992,6 @@ def apply_meta_rename_and_update(old_path: str, new_year: str, new_type: str, ne
         related_path=os.path.abspath(old_path) if not same_path else "",
         details="metadata and filename updated",
     )
-    _invalidate_semantic_for_file(old_path)
-    _invalidate_semantic_for_file(new_path)
     clear_statistics_cache()
     _clear_advanced_search_result_cache()
     return new_path, new_content
@@ -1965,7 +1632,7 @@ def zoom_image(img):
 
 @st.dialog("乌托邦高中物理题库助手 · UtopiaPhyCyclus", width="large")
 def show_utopiaphycyclus_intro():
-    page_system_intro()
+    page_system_intro(section_key="intro_dialog_section")
 
 def _adv_search_queries_from_session():
     t1 = st.session_state.get("adv_t1", "全文内容")
@@ -1978,53 +1645,8 @@ def _adv_search_queries_from_session():
     return (q1 or ""), (q2 or ""), (q3 or "")
 
 def _adv_search_has_query():
-    q1, q2, q3 = _adv_search_queries_from_session()
-    search_mode = st.session_state.get("adv_search_mode", "精确筛选")
-    semantic_query = st.session_state.get("adv_semantic_query", "") if search_mode != "精确筛选" else ""
-    return bool(str(q1).strip() or str(q2).strip() or str(q3).strip() or str(semantic_query).strip())
+    return any(str(query).strip() for query in _adv_search_queries_from_session())
 
-
-def _semantic_api_config() -> dict:
-    config = _read_root_ai_env_config()
-    return {
-        "base_url": config.get("AI_BASE_URL", ""),
-        "api_key": config.get("AI_API_KEY", ""),
-        "model_name": config.get("AI_EMBEDDING_MODEL_NAME", ""),
-    }
-
-
-def _semantic_lexical_boost(text: str, query: str) -> float:
-    """Small lexical boost keeps exact terminology ahead of merely related text."""
-    haystack = (text or "").casefold()
-    needle = (query or "").strip().casefold()
-    if not needle:
-        return 0.0
-    score = 0.25 if needle in haystack else 0.0
-    tokens = re.findall(r"[A-Za-z0-9_]+", needle)
-    for chinese_run in re.findall(r"[\u4e00-\u9fff]{2,}", needle):
-        tokens.extend(chinese_run[index:index + 2] for index in range(len(chinese_run) - 1))
-    if tokens:
-        matched_ratio = sum(token in haystack for token in tokens) / len(tokens)
-        score += 0.2 * matched_ratio
-    return score
-
-
-def _semantic_item_text(item: dict) -> str:
-    return "\n".join([
-        item["full_text"],
-        item["type"],
-        item["file"],
-        item["row"].get("知识板块", "") or "",
-    ])
-
-
-def _invalidate_semantic_for_file(file_path: str) -> None:
-    try:
-        relative_path = os.path.relpath(file_path, CHAPTERS_DIR)
-        invalidate_semantic_path(relative_path)
-    except Exception:
-        # Semantic search is optional and must never block a normal save/delete.
-        pass
 
 def _clear_advanced_search_result_cache():
     st.session_state.pop("adv_last_query", None)
@@ -2081,7 +1703,6 @@ def save_modified_tex_file(file_path, new_content):
         path=os.path.abspath(file_path),
         details="LaTeX content updated",
     )
-    _invalidate_semantic_for_file(file_path)
 
     return final_content
 
@@ -2211,7 +1832,6 @@ def delete_question_file_and_sync(file_path: str):
     except Exception as e:
         st.toast(f"题目已删除，但相关图目录未能删除：{e}", icon="⚠️")
     _forget_deleted_question_path(abs_path)
-    _invalidate_semantic_for_file(abs_path)
     _clear_advanced_search_result_cache()
     clear_statistics_cache()
 
@@ -2740,22 +2360,8 @@ def render_delete_question_item(fpath: str, q_label: str = None, content: str = 
         else:
             confirm_delete_question_dialog(fpath, q_label, key_hash)
 
-def ocr_image_to_latex(images=None, max_image_size: int = 1600, max_tokens: int = 4096, spinner_text: str = "🤖 AI 正在识别中，请稍候..."):
-    """调用 AI 接口识别图片中的高中物理题（支持多张）。
-    Args:
-        images: List of PIL Image objects
-        max_image_size: 发送给视觉模型前的图片最长边限制。
-        max_tokens: 本次 OCR 请求允许返回的最大 token 数。
-    """
-    # 动态加载 .env 配置，支持热更新
-    config = _read_root_ai_env_config()
-
-    api_key = config["AI_API_KEY"]
-    base_url = config["AI_BASE_URL"]
-    model_name = config["AI_MODEL_NAME"]
-
-    # Re-read the same file or fallback text shown in API settings.
-    custom_prompt, _ = _read_ocr_prompt_for_settings(config)
+def ocr_image_to_latex(images=None, max_image_size: int = 1600, spinner_text: str = "🤖 AI 正在识别中，请稍候..."):
+    """让本机 Agent 将一张或多张物理题图片转写为 LaTeX。"""
     prompt = (
         "你是 OCR 转写助手。你只需要把图片中的内容逐字逐符号转写成 LaTeX 源码。\n"
         "禁止解题、禁止推理、禁止补全缺失步骤、禁止生成答案与解析。\n"
@@ -2764,11 +2370,8 @@ def ocr_image_to_latex(images=None, max_image_size: int = 1600, max_tokens: int 
         "不要输出 Markdown 代码围栏或 latex/tex 语言标记；不要输出 documentclass、usepackage、"
         "usetikzlibrary、begin{document}、end{document} 等完整文档前导内容。\n"
         "TikZ 节点中的角度、上下标等数学内容必须放入 $...$，例如 {$60^\\circ$}。\n\n"
-        + custom_prompt
+        + _read_ocr_prompt()
     )
-
-    if not api_key:
-        return "❌ 请先在 .env 文件中配置 AI_API_KEY"
 
     if not images:
         return "❌ 没有提供图片"
@@ -2780,55 +2383,16 @@ def ocr_image_to_latex(images=None, max_image_size: int = 1600, max_tokens: int 
         # Keep oriented originals; resize only the copies sent to the model.
         originals, content_parts = prepare_ocr_images(images, prompt, max_image_size)
 
-        headers = {
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {api_key}"
-        }
-
-        # 兼容 OpenAI Vision API 格式
-        payload = {
-            "model": model_name,
-            "messages": [
-                {
-                    "role": "user",
-                    "content": content_parts
-                }
-            ],
-            "max_tokens": max_tokens
-        }
-
+        messages = [{"role": "user", "content": content_parts}]
         with st.spinner(spinner_text):
-            # 处理 URL: 兼容不同的 Base URL 写法
-            url = normalize_chat_completions_url(base_url)
-
-            st.toast(f"正在请求: {url}")
-            print(f"Requesting URL: {url}") # 控制台打印
-
             for crop_attempt in range(2):
-                try:
-                    response, _ = post_chat_completion(base_url, headers, payload, timeout=180)
-                except requests.exceptions.Timeout:
-                    return "❌ 请求超时 (180s)，请检查网络或稍后重试。"
-                except requests.exceptions.RequestException as req_err:
-                    return f"❌ 网络请求失败: {str(req_err)}\n请检查 URL ({url}) 是否正确及服务是否可达。"
-
-                if response.status_code != 200:
-                    return f"❌ 识别失败 (HTTP {response.status_code}):\n{response.text[:500]}"
-                try:
-                    result = response.json()
-                except Exception as json_err:
-                    return f"❌ JSON 解析失败: {str(json_err)}\n\n原始响应内容(前500字符):\n{response.text[:500]}"
-                if not result.get('choices'):
-                    return f"❌ 未收到有效回复: {result}"
-                reply = result['choices'][0]['message']['content']
-                if not isinstance(reply, str) or not reply.strip():
-                    return '❌ 未收到有效的识别正文，请重试。'
+                reply = _local_agent_reply(messages, timeout=180)
                 try:
                     extracted = materialize_ocr_crops(reply, originals, BASE_DIR)
                 except OcrCropError as crop_error:
                     st.session_state['ocr_crop_failed_draft'] = reply
                     if crop_attempt == 0:
-                        payload = dict(payload, messages=crop_retry_messages(payload['messages'], reply, crop_error))
+                        messages = crop_retry_messages(messages, reply, crop_error)
                         continue
                     return f"❌ 自动裁图失败：{crop_error}\n识别源码已保留，未写入题库：\n\n{reply}"
                 st.session_state.pop('ocr_crop_failed_draft', None)
@@ -2868,13 +2432,6 @@ def render_pdf_pages_to_images(pdf_bytes: bytes, page_numbers, dpi: int = 160):
         return [], f"PDF 页面渲染失败：{e}"
 
 def ocr_solution_images_to_answer_solutions(images=None) -> dict:
-    os.environ.update({k: str(v) for k, v in _read_root_ai_env_config().items() if k.startswith("AI_")})
-    api_key = os.getenv("AI_API_KEY")
-    base_url = os.getenv("AI_BASE_URL", "https://api.openai.com/v1")
-    model_name = os.getenv("AI_MODEL_NAME", AI_ENV_DEFAULTS["AI_MODEL_NAME"])
-
-    if not api_key or not base_url or not model_name:
-        return {"error": "AI 配置不完整，请检查 .env 文件"}
     if not images:
         return {"error": "没有提供图片"}
 
@@ -2896,23 +2453,9 @@ def ocr_solution_images_to_answer_solutions(images=None) -> dict:
         )
         originals, content_parts = prepare_ocr_images(images, prompt, max_image_size=1400)
 
-        headers = {"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"}
-        payload = {
-            "model": model_name,
-            "messages": [{"role": "user", "content": content_parts}],
-            "temperature": 0.1,
-            "max_tokens": 2600,
-            "response_format": {"type": "json_object"} if "gpt" in model_name.lower() or "qwen" in model_name.lower() else None,
-        }
-
+        messages = [{"role": "user", "content": content_parts}]
         for crop_attempt in range(2):
-            response, _ = post_chat_completion(base_url, headers, payload, timeout=180)
-            if response.status_code != 200:
-                return {"error": f"识别失败 (HTTP {response.status_code}):\n{response.text[:500]}"}
-            result = response.json()
-            if not result.get('choices'):
-                return {"error": "AI 未返回有效内容"}
-            reply = result['choices'][0]['message']['content']
+            reply = _local_agent_reply(messages, timeout=180)
             try:
                 data = _extract_json_obj_from_text(reply)
             except Exception:
@@ -2925,19 +2468,17 @@ def ocr_solution_images_to_answer_solutions(images=None) -> dict:
             except OcrCropError as crop_error:
                 st.session_state['ocr_solution_crop_failed_draft'] = reply
                 if crop_attempt == 0:
-                    payload = dict(payload, messages=crop_retry_messages(payload['messages'], reply, crop_error))
+                    messages = crop_retry_messages(messages, reply, crop_error)
                     continue
                 return {'error': f'自动裁图失败：{crop_error}；识别原文已保留。', 'draft': data}
             st.session_state.pop('ocr_solution_crop_failed_draft', None)
             return {'answer_tex': answer.latex, 'solutions_tex': solutions.latex}
-    except requests.exceptions.Timeout:
-        return {"error": f"请求超时（模型：{model_name}）。可重试或切换更快模型。"}
     except Exception as e:
         return {"error": f"请求发生异常: {str(e)}"}
 
 def call_ai_for_tags(content: str) -> dict:
     try:
-        result = classify_question(content, SUBJECTS, _read_root_ai_env_config())
+        result = classify_question(content, SUBJECTS, _LOCAL_AGENT_CONNECTION)
         result['difficulty'] = float(result['difficulty'])
         return result
     except Exception as exc:
@@ -2947,7 +2488,7 @@ def call_ai_for_tags(content: str) -> dict:
 def _assess_batch_question(question, *, force=False, source_dir=None):
     from services.batch_assessment_service import assess_batch_question
     return assess_batch_question(
-        question, SUBJECTS, _read_root_ai_env_config(), project_dir=APP_ROOT, source_dir=source_dir,
+        question, SUBJECTS, _LOCAL_AGENT_CONNECTION, project_dir=APP_ROOT, source_dir=source_dir,
         cache=st.session_state.setdefault('batch_assessment_cache', {}), force=force,
     )
 
@@ -3409,14 +2950,6 @@ def _normalize_cloze_generated_tex(text: str) -> str:
 
 def call_ai_for_cloze_question(source_tex: str, cloze_type: str) -> dict:
     """Generate an editable student cloze version plus its answer and completed solution."""
-    os.environ.update({k: str(v) for k, v in _read_root_ai_env_config().items() if k.startswith("AI_")})
-    api_key = os.getenv("AI_API_KEY")
-    base_url = os.getenv("AI_BASE_URL")
-    model_name = os.getenv("AI_SOLVER_MODEL_NAME") or os.getenv("AI_MODEL_NAME")
-
-    if not api_key or not base_url or not model_name:
-        return {"error": "AI 配置不完整，请检查 .env 文件"}
-
     source_tex = _strip_label_data_for_export(source_tex)
     if not source_tex or not _extract_problem_env(source_tex):
         return {"error": "来源题目缺少完整的 problem 环境"}
@@ -3444,27 +2977,14 @@ def call_ai_for_cloze_question(source_tex: str, cloze_type: str) -> dict:
 原题：
 {source_tex}"""
 
-    headers = {"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"}
-    payload = {
-        "model": model_name,
-        "messages": [
-            {"role": "system", "content": "You are a JSON output bot. You only output valid JSON."},
-            {"role": "user", "content": prompt},
-        ],
-        "temperature": 0.2,
-        "max_tokens": 5600,
-        "response_format": {"type": "json_object"} if "gpt" in model_name.lower() or "qwen" in model_name.lower() else None,
-    }
-
+    messages = [
+        {"role": "system", "content": "You are a JSON output bot. You only output valid JSON."},
+        {"role": "user", "content": prompt},
+    ]
     try:
-        response, _ = post_chat_completion(base_url, headers, payload, timeout=(10, 180))
-        if response.status_code != 200:
-            return {"error": f"API 请求失败: {response.status_code}\n{response.text[:500]}"}
-        result = response.json()
-        if "choices" not in result or not result["choices"]:
-            return {"error": "AI 未返回有效内容"}
+        reply = _local_agent_reply(messages, timeout=180)
         try:
-            data = _extract_json_obj_from_text(result["choices"][0]["message"]["content"])
+            data = _extract_json_obj_from_text(reply)
         except Exception:
             return {"error": "AI 返回格式解析失败（非 JSON）"}
 
@@ -3479,8 +2999,6 @@ def call_ai_for_cloze_question(source_tex: str, cloze_type: str) -> dict:
         if CLOZE_BLANK_TEX in solutions_tex:
             return {"error": "AI 在完整解析中保留了挖空，请重试"}
         return {"cloze_tex": cloze_tex}
-    except requests.exceptions.Timeout:
-        return {"error": f"请求超时（模型：{model_name}），请重试"}
     except Exception as e:
         return {"error": f"请求发生异常: {str(e)}"}
 
@@ -3649,14 +3167,6 @@ def render_cloze_source_picker():
             st.rerun()
 
 def call_ai_for_answer_solutions(problem_tex: str, fast: bool = True) -> dict:
-    os.environ.update({k: str(v) for k, v in _read_root_ai_env_config().items() if k.startswith("AI_")})
-    api_key = os.getenv("AI_API_KEY")
-    base_url = os.getenv("AI_BASE_URL")
-    model_name = os.getenv("AI_SOLVER_MODEL_NAME") or "qwen3.6-flash"
-
-    if not api_key or not base_url or not model_name:
-        return {"error": "AI 配置不完整，请检查 .env 文件"}
-
     problem_tex = (problem_tex or "").strip()
     if not problem_tex:
         return {"error": "未识别到 \\begin{problem}...\\end{problem}，无法生成解答"}
@@ -3696,26 +3206,12 @@ problem_tex：
 problem_tex：
 {problem_tex}"""
 
-    headers = {"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"}
-    payload = {
-        "model": model_name,
-        "messages": [
-            {"role": "system", "content": "You are a JSON output bot. You only output valid JSON."},
-            {"role": "user", "content": _build_prompt()},
-        ],
-        "temperature": 0.1,
-        "max_tokens": 1600 if fast else 2600,
-        "response_format": {"type": "json_object"} if "gpt" in model_name.lower() or "qwen" in model_name.lower() else None,
-    }
-
+    messages = [
+        {"role": "system", "content": "You are a JSON output bot. You only output valid JSON."},
+        {"role": "user", "content": _build_prompt()},
+    ]
     try:
-        response, _ = post_chat_completion(base_url, headers, payload, timeout=(10, 90 if fast else 150))
-        if response.status_code != 200:
-            return {"error": f"API 请求失败: {response.status_code}\n{response.text[:500]}"}
-        result = response.json()
-        if "choices" not in result or not result["choices"]:
-            return {"error": "AI 未返回有效内容"}
-        reply = result["choices"][0]["message"]["content"]
+        reply = _local_agent_reply(messages, timeout=90 if fast else 150)
         try:
             data = _extract_json_obj_from_text(reply)
         except Exception:
@@ -3732,8 +3228,6 @@ problem_tex：
         if "\\begin{solutions}" not in solutions_tex or "\\end{solutions}" not in solutions_tex:
             return {"error": "solutions_tex 不是完整的 solutions 环境"}
         return {"answer_tex": answer_tex, "solutions_tex": solutions_tex}
-    except requests.exceptions.Timeout:
-        return {"error": f"请求超时（模型：{model_name}）。可重试或切换更快模型。"}
     except Exception as e:
         return {"error": f"请求发生异常: {str(e)}"}
 
@@ -4038,13 +3532,6 @@ def render_ai_solution_panel(fpath: str, q_label: str, key_prefix: str):
 
 def call_ai_for_polish(intent_text: str) -> str:
     """调用 AI 润色用户的组卷意图"""
-    api_key = os.getenv("AI_API_KEY")
-    base_url = os.getenv("AI_BASE_URL")
-    model_name = os.getenv("AI_MODEL_NAME")
-
-    if not api_key or not base_url or not model_name:
-        return "❌ AI 配置不完整，请检查 .env 文件"
-        
     prompt = f"""你是一个资深的高中物理教研专家。请帮我润色以下组卷意图，使其更加专业、明确、富有条理。
 润色后的文本将用于指导后续的 AI 抽题算法。
 要求：
@@ -4054,27 +3541,8 @@ def call_ai_for_polish(intent_text: str) -> str:
 原想法：
 {intent_text}"""
 
-    headers = {
-        "Content-Type": "application/json",
-        "Authorization": f"Bearer {api_key}"
-    }
-    payload = {
-        "model": model_name,
-        "messages": [
-            {"role": "user", "content": prompt}
-        ]
-    }
-
     try:
-        response, _ = post_chat_completion(base_url, headers, payload, timeout=20)
-        if response.status_code == 200:
-            result = response.json()
-            if 'choices' in result and len(result['choices']) > 0:
-                return result['choices'][0]['message']['content'].strip()
-            else:
-                return "❌ AI 未返回有效内容"
-        else:
-            return f"❌ API 请求失败: {response.status_code}"
+        return _local_agent_reply([{"role": "user", "content": prompt}], timeout=60).strip()
     except Exception as e:
         return f"❌ 请求发生异常: {str(e)}"
 
@@ -4492,10 +3960,11 @@ def _tex_load_bank_question():
                     subject=fields.get('subject_str', '未分类'))
     questions = detect_tex_questions(source, os.path.basename(path), defaults)
     documents = st.session_state['tex_workspace_documents']
+    document = dict(name=os.path.basename(path), source=source, source_dir=os.path.dirname(path), open_pdf=True)
     if len(documents) == 1 and not documents[0]['source'].strip():
-        documents[0] = dict(name=os.path.basename(path), source=source, open_pdf=True)
+        documents[0] = document
     else:
-        documents.append(dict(name=os.path.basename(path), source=source, open_pdf=True))
+        documents.append(document)
     st.session_state.update(tex_workspace_selected=len(documents) - 1, tex_workspace_source=source,
                             tex_workspace_year=defaults['year'], tex_workspace_type=defaults['paper_type'],
                             tex_workspace_paper=defaults['paper'], tex_workspace_mode='批量试题录入' if len(questions) > 1 else '单题录入')
@@ -4576,7 +4045,7 @@ def _tex_workspace_questions(source, filename, defaults, mode):
 
 
 def _tex_classify_one(question):
-    result = classify_question(question.content, SUBJECTS, _read_root_ai_env_config())
+    result = classify_question(question.content, SUBJECTS, _LOCAL_AGENT_CONNECTION)
     question.subject = result['subject']
     question.content = replace_problem_header(question.content, question.year, question.paper_type, question.paper,
                                              question.number, question.subject)
@@ -4616,12 +4085,12 @@ def _tex_detect_review(doc, defaults, mode, expected_count=None, ai_enabled=True
     questions = _tex_workspace_questions(doc['source'], doc['name'], defaults, mode)
     if expected_count and len(questions) != expected_count:
         if len(questions) == 1 and ai_enabled:
-            questions = split_question_with_ai(questions[0], expected_count, int(defaults['number']), _read_root_ai_env_config())
+            questions = split_question_with_ai(questions[0], expected_count, int(defaults['number']), _LOCAL_AGENT_CONNECTION)
         else:
             raise ValueError(f'题号范围需要 {expected_count} 道题，实际检测到 {len(questions)} 道。请补充题号或 problem 环境。')
     elif (len(questions) == 1 and mode != '单题录入' and ai_enabled and not expected_count
           and r'\begin{problem}' not in doc['source'] and len(doc['source'].strip().splitlines()) > 1):
-        questions = split_question_with_ai(questions[0], None, int(defaults['number']), _read_root_ai_env_config())
+        questions = split_question_with_ai(questions[0], None, int(defaults['number']), _LOCAL_AGENT_CONNECTION)
     if expected_count:
         for index, question in enumerate(questions):
             question.number = str(int(defaults['number']) + index)
@@ -4722,6 +4191,8 @@ def _tex_review_input(doc, index, prefix, field, batch):
 
 
 def _render_tex_question_review(doc, selected, signature, mode, resource_dir):
+    from services.question_solution_ui import FILL_SOLUTION_LABEL, generate_solution_draft
+
     questions = doc.get('review_questions', [])
     if not questions:
         return
@@ -4737,6 +4208,11 @@ def _render_tex_question_review(doc, selected, signature, mode, resource_dir):
         prefix = f'tex_review_{selected}_{generation}_{index}'
         with st.expander(f'第 {question.number} 题 · {question.subject}', expanded=len(questions) == 1):
             retry = st.button('🪄 重新 AI 分类与标注', key=prefix + '_retry')
+            if st.button(FILL_SOLUTION_LABEL, key=prefix + '_fill_solution'):
+                updated = generate_solution_draft(question.content, APP_ROOT, doc.get('source_dir', resource_dir))
+                if updated is not None:
+                    question.content = updated
+                    st.toast('已补充到本题草稿，可核对后保存。', icon='✅')
             if batch:
                 _tex_assess_draft(doc, index, resource_dir, force=retry)
                 question = questions[index]
@@ -4850,6 +4326,7 @@ def _sync_tex_entry_cache_lifecycle(selected_nav: str, tex_entry_nav_option: str
 
 def page_tex_entry():
     from services.pdf_edit_ui import has_pending_pdf_edit, pdf_revision, render_pdf_edit
+    from services.question_solution_ui import FILL_SOLUTION_LABEL, generate_solution_draft
 
     st.header("📄 TeX 录入")
     st.caption("载入题目后可直接在 PDF 上框选修改，或切换到 LaTeX 源码。")
@@ -4935,6 +4412,17 @@ def page_tex_entry():
         st.info(st.session_state.pop("tex_workspace_notice"))
     if documents[selected].pop('sync_pdf_edit', False):
         st.session_state['tex_workspace_source'] = documents[selected]['source']
+    active_doc = documents[selected]
+    active_source = active_doc['source']
+    pending_solution_edit = (st.session_state.get(f'tex_pdf_edit_{selected}_proposal') and
+                             has_pending_pdf_edit(f'tex_pdf_edit_{selected}', revision_of(active_source), active_doc.get('preview')))
+    if st.button(FILL_SOLUTION_LABEL, key='tex_workspace_fill_solution',
+                 disabled=not active_source.strip() or bool(pending_solution_edit)):
+        updated = generate_solution_draft(active_source, APP_ROOT, active_doc.get('source_dir', resource_dir))
+        if updated is not None:
+            st.session_state['tex_workspace_source'] = active_doc['source'] = updated
+            active_doc['open_pdf'] = True
+            st.toast('已补充到当前草稿，可核对后入库。', icon='✅')
     pdf_tab, source_tab, save_tab = st.tabs(["PDF 框选修改", "LaTeX 源码", "逐题核对与保存"])
     with source_tab:
         st.markdown("<style>[data-testid='stTextArea'] textarea[aria-label='TeX 源码'] {font-family: Consolas, 'Cascadia Code', monospace; font-size:14px; line-height:1.55; tab-size:2;}</style>", unsafe_allow_html=True)
@@ -5786,7 +5274,6 @@ def page_entry(force_single_mode: bool = False, cloze_mode: bool = False):
                     result = ocr_image_to_latex(
                         images=image_batch,
                         max_image_size=1600,
-                        max_tokens=8192,
                         spinner_text=f"🤖 AI 正在识别 {batch_label}...",
                     )
                     if result.startswith("❌"):
@@ -6070,11 +5557,13 @@ def page_entry(force_single_mode: bool = False, cloze_mode: bool = False):
                         st.rerun()
 
         if mode == "单题录入":
+            from services.question_solution_ui import FILL_SOLUTION_LABEL, generate_solution_draft
+
             st.markdown("##### ⚙️ 录入配置")
             auto_solve_label = "如果识别内容缺少解答，则保存时 AI 生成解答" if cloze_mode else "本次录入同时生成解答"
             auto_solve_default = True if cloze_mode else False
             auto_solve_key = "cloze_auto_solve" if cloze_mode else "entry_auto_solve"
-            auto_solve_enabled = st.checkbox(auto_solve_label, key=auto_solve_key, value=auto_solve_default)
+            st.checkbox(auto_solve_label, key=auto_solve_key, value=auto_solve_default)
 
             render_find_replace("entry_content")
             apply_pending_diagram_update('entry_content')
@@ -6107,6 +5596,12 @@ def page_entry(force_single_mode: bool = False, cloze_mode: bool = False):
                         st.session_state["entry_subject_user_locked"] = True
             
             render_question_image_upload('entry_content', 'entry_single', APP_ROOT)
+            entry_source = st.session_state.get('entry_content', '')
+            if st.button(FILL_SOLUTION_LABEL, key='entry_fill_solution', disabled=not entry_source.strip()):
+                updated = generate_solution_draft(entry_source, APP_ROOT)
+                if updated is not None:
+                    st.session_state['entry_content'] = updated
+                    st.toast('已补充到录入草稿，可核对后保存。', icon='✅')
             content = st.text_area("题目内容 (LaTeX)", height=400, placeholder="在此粘贴题目内容...", key="entry_content", label_visibility="collapsed", on_change=on_content_change)
             # === 物理/数学插图智能矫正 Agent (Pi-Agent 架构，含实时语音与自然语言反馈) ===
             render_diagram_agent_dialog(content_state_key="entry_content", key_prefix="entry_single", base_dir=APP_ROOT,
@@ -6114,6 +5609,7 @@ def page_entry(force_single_mode: bool = False, cloze_mode: bool = False):
             
         elif mode in ["批量试题录入", "同卷试题录入"]:
             from services.ai_batch_import import EDITABLE_LABELS, draft_labels, draft_question
+            from services.question_solution_ui import FILL_SOLUTION_LABEL, generate_solution_draft
 
             def _batch_defaults():
                 return dict(year=st.session_state.get("u_batch_year", "2026"),
@@ -6629,6 +6125,13 @@ button[kind="secondary"][data-testid="stBaseButton-secondary"][aria-label="放�
 
                     c_src, c_prev = st.columns([1, 1])
                     with c_src:
+                        item_key = f'batch_item_text_{idx}'
+                        if st.button(FILL_SOLUTION_LABEL, key=f'batch_fill_solution_{idx}',
+                                     disabled=not st.session_state.get(item_key, '').strip()):
+                            updated = generate_solution_draft(st.session_state[item_key], APP_ROOT)
+                            if updated is not None:
+                                st.session_state[item_key] = updated
+                                st.toast('已补充到本题草稿，可核对后保存。', icon='✅')
                         st.selectbox("题型（必选）", QUESTION_TYPES, key=f"batch_item_question_type_{idx}",
                                      on_change=_sync_batch_content_from_items,
                                      help="已按本题内容预选，请逐题核对；可手动修改。")
@@ -6917,10 +6420,7 @@ button[kind="secondary"][data-testid="stBaseButton-secondary"][aria-label="放�
                             allow_duplicate=allow_duplicate,
                         )
                         solve_key = "cloze_auto_solve" if cloze_mode else "entry_auto_solve"
-                        should_auto_solve = st.session_state.get(solve_key, False)
-                        if cloze_mode:
-                            should_auto_solve = should_auto_solve and not _has_nonempty_answer_and_solution(full_text)
-                        if should_auto_solve:
+                        if st.session_state.get(solve_key, False) and not _has_nonempty_answer_and_solution(full_text):
                             problem_tex = _extract_problem_env(full_text)
                             with st.spinner("🤖 AI 正在生成解答..."):
                                 res = call_ai_for_answer_solutions(problem_tex, fast=False)
@@ -7246,6 +6746,8 @@ def _render_free_tag_editor(key_prefix, fhash, tag_text="", fpath=""):
 
 
 def _render_native_question_actions(key_prefix, fhash, fpath, is_tag_editing, is_tex_editing, block_tex_action=False):
+    from services.question_solution_ui import FILL_SOLUTION_LABEL
+
     action = None
     st.markdown('<span class="mc-question-actions-grid-anchor"></span>', unsafe_allow_html=True)
     tex_label = "\U0001f4be \u4fdd\u5b58\u4fee\u6539" if is_tex_editing else "\u270f\ufe0f \u5f00\u59cb\u4fee\u6539tex\u5185\u5bb9"
@@ -7255,7 +6757,8 @@ def _render_native_question_actions(key_prefix, fhash, fpath, is_tag_editing, is
     edit_type = "primary" if is_tag_editing else "secondary"
     row1_col1, row1_col2, _ = st.columns([0.475, 0.475, 1.05], gap="small")
     row2_col1, row2_col2, _ = st.columns([0.475, 0.475, 1.05], gap="small")
-    row3_delete, _ = st.columns([0.95, 1.05], gap="small")
+    row3_fill, _ = st.columns([0.95, 1.05], gap="small")
+    row4_delete, _ = st.columns([0.95, 1.05], gap="small")
     with row1_col1:
         if st.button(tex_label, key=f"{key_prefix}_tex_edit_{fhash}", type=tex_type, disabled=block_tex_action, use_container_width=True, on_click=_set_pending_question_action, args=(key_prefix, fhash, tex_action, fpath)):
             action = tex_action
@@ -7268,7 +6771,12 @@ def _render_native_question_actions(key_prefix, fhash, fpath, is_tag_editing, is
     with row2_col2:
         if st.button("\U0001f5bc\ufe0f \u89e3\u7b54\u56fe\u7247\u8bc6\u522b", key=f"{key_prefix}_image_ocr_{fhash}", use_container_width=True, on_click=_set_pending_question_action, args=(key_prefix, fhash, "image_ocr", fpath)):
             action = "image_ocr"
-    with row3_delete:
+    with row3_fill:
+        if st.button(FILL_SOLUTION_LABEL, key=f'{key_prefix}_fill_solution_{fhash}', disabled=block_tex_action,
+                     use_container_width=True, on_click=_set_pending_question_action,
+                     args=(key_prefix, fhash, 'fill_solution', fpath)):
+            action = 'fill_solution'
+    with row4_delete:
         st.markdown('<span class="red-btn-hook"></span>', unsafe_allow_html=True)
         if st.button("🗑️ 删除该题及相关信息", key=f"{key_prefix}_delete_{fhash}", use_container_width=True, on_click=_set_pending_question_action, args=(key_prefix, fhash, "delete", fpath)):
             action = "delete"
@@ -7315,7 +6823,11 @@ def _render_browse_metadata_fields(fpath, key_prefix, fhash, content, prepared_a
     )
 
 
-def render_browse_question_editor_card(q_label, content, fpath, key_prefix, paper_type_scope=None, extra_html_label="", rename_paths_key=None, prepared_assets=None, interactive_difficulty=True):
+def render_browse_question_editor_card(q_label, content, fpath, key_prefix, paper_type_scope=None, extra_html_label="", rename_paths_key=None, prepared_assets=None, interactive_difficulty=True, batch_select=False):
+    if batch_select:
+        from services.batch_solution_ui import render_question_choice
+
+        render_question_choice(fpath, q_label, key_prefix)
     # Give each question its own fragment identity. Streamlit 1.37 otherwise
     # retains the first closure's arguments when a different question occupies
     # the same page slot, so the next edit can reopen the previous question.
@@ -7444,12 +6956,29 @@ def _render_browse_question_editor_card_body(q_label, content, fpath, key_prefix
         st.session_state[view_key] = "LaTeX 源码"
         st.session_state[tex_edit_key] = True
         st.session_state.setdefault(draft_key, {'base': content, 'source': content})
-    view = st.radio("题目视图", ("题目预览", "PDF 框选编辑", "LaTeX 源码"),
-                    horizontal=True, key=view_key, label_visibility="collapsed")
     draft = st.session_state.get(draft_key)
     is_tex_editing = st.session_state.get(tex_edit_key, False) and draft is not None
     current_content = draft['source'] if is_tex_editing else content
     conflict = is_tex_editing and draft['base'] != content
+    pending_edit = False
+    if st.session_state.get(text_area_key + '_pdf_edit_proposal'):
+        from services.pdf_edit_ui import has_pending_pdf_edit, pdf_revision
+        _, preview = st.session_state.get(text_area_key + '_pdf_preview', (None, None))
+        revision = pdf_revision(current_content, BASE_DIR, {}, 'xelatex', os.path.dirname(fpath))
+        pending_edit = has_pending_pdf_edit(text_area_key + '_pdf_edit', revision, preview)
+    if action == 'fill_solution' and not conflict and not pending_edit:
+        from services.question_solution_ui import generate_solution_draft
+
+        updated = generate_solution_draft(current_content, APP_ROOT, os.path.dirname(fpath))
+        if updated is not None:
+            draft = {'base': content, 'source': updated}
+            st.session_state[draft_key] = draft
+            st.session_state[tex_edit_key] = is_tex_editing = True
+            st.session_state[view_key] = 'LaTeX 源码'
+            current_content = updated
+            st.toast('已补充到题目草稿，核对后点击「保存修改」。', icon='✅')
+    view = st.radio("题目视图", ("题目预览", "PDF 框选编辑", "LaTeX 源码"),
+                    horizontal=True, key=view_key, label_visibility="collapsed")
     if conflict:
         st.warning('此题在草稿建立后已被修改。可切换到 LaTeX 源码复制草稿，或重新载入题库中的版本。')
         if st.button('放弃草稿并载入最新题目', key=text_area_key + '_reload'):
@@ -7526,14 +7055,8 @@ def _render_browse_question_editor_card_body(q_label, content, fpath, key_prefix
         from services.editor_layout import render_editor_height_sync
         render_editor_height_sync(fhash, is_tex_editing)
 
-    pending_edit = False
-    if is_tex_editing and st.session_state.get(text_area_key + '_pdf_edit_proposal'):
-        from services.pdf_edit_ui import has_pending_pdf_edit, pdf_revision
-        _, preview = st.session_state.get(text_area_key + '_pdf_preview', (None, None))
-        revision = pdf_revision(current_content, BASE_DIR, {}, 'xelatex', os.path.dirname(fpath))
-        pending_edit = has_pending_pdf_edit(text_area_key + '_pdf_edit', revision, preview)
-        if pending_edit:
-            st.caption("请先在 PDF 中采用或放弃待确认的修改，再保存题目。")
+    if pending_edit:
+        st.caption("请先在 PDF 中采用或放弃待确认的修改，再保存题目。")
     _render_native_question_actions(key_prefix, fhash, fpath, is_tag_editing, is_tex_editing, conflict or pending_edit)
 
     if is_tag_editing:
@@ -8105,7 +7628,7 @@ def render_time_browse_header(page_title, paper_type_scope):
     }
 
 
-def render_time_browse_list(ctx, is_exam_mode, is_delete_mode, paper_type_scope):
+def render_time_browse_list(ctx, is_exam_mode, is_delete_mode, paper_type_scope, batch_select=False):
     """Load editor/preview assets only for the current SQLite result page."""
     display_data = ctx["display_data"]
     current_page = ctx["current_page"]
@@ -8156,6 +7679,7 @@ def render_time_browse_list(ctx, is_exam_mode, is_delete_mode, paper_type_scope)
             paper_type_scope=paper_type_scope,
             extra_html_label=extra_label,
             prepared_assets=prepared_assets,
+            batch_select=batch_select,
         )
         st.divider()
 
@@ -8180,6 +7704,19 @@ def page_browse(is_exam_mode=False, is_delete_mode=False, paper_type_scope=None,
         except OSError:
             pass  # In-memory selection restoration remains available.
         render_scroll_bookmark(st.session_state)
+
+
+def _save_browse_batch_solution(path, base, updated):
+    from services.question_solution_save import save_reviewed_solution
+
+    with _browse_save_lock():
+        save_reviewed_solution(path, base, updated, chapters_dir=CHAPTERS_DIR)
+    record_operation('update_question_content', path=os.path.abspath(path), details='批量补充答案与解析')
+
+
+def _refresh_browse_batch_solution_results():
+    _clear_advanced_search_result_cache()
+    clear_statistics_cache()
 
 
 def _page_browse_body(is_exam_mode=False, is_delete_mode=False, paper_type_scope=None, page_title=None):
@@ -8457,21 +7994,18 @@ def _page_browse_body(is_exam_mode=False, is_delete_mode=False, paper_type_scope
             _time_browse_ctx = render_time_browse_header(page_title, paper_type_scope)
         else:
             st.header(page_title)
-        # 浏览模式与检索模式同一行展示，省掉一行标题与一段纵向留白
-        c_browse_mode, c_search_mode = st.columns([1.18, 1], gap="medium")
-        with c_browse_mode:
-            browse_mode = st.radio(
-                "浏览模式",
-                ["按知识板块浏览", "按试卷浏览", "按录入顺序浏览"],
-                horizontal=True,
-                label_visibility="collapsed",
-                key="browse_mode",
-                on_change=_remember_global_browse_mode,
-            )
+        browse_mode = st.radio(
+            "浏览模式",
+            ["按知识板块浏览", "按试卷浏览", "按录入顺序浏览"],
+            horizontal=True,
+            label_visibility="collapsed",
+            key="browse_mode",
+            on_change=_remember_global_browse_mode,
+        )
 
         search_workspace_active = st.session_state.get("adv_search_active") and _adv_search_has_query()
         if not search_workspace_active:
-            render_advanced_search_inline(mode_container=c_search_mode)
+            render_advanced_search_inline()
             
     else:
         if "browse_mode" not in st.session_state:
@@ -8480,6 +8014,14 @@ def _page_browse_body(is_exam_mode=False, is_delete_mode=False, paper_type_scope
     
     # 根据红线截图，我们在这里画一条醒目的红线
     st.markdown('<hr class="mc-browse-divider" style="border-top: 1px solid #e1e4e8;">', unsafe_allow_html=True)
+    batch_select = False
+    if not is_exam_mode and not is_delete_mode and paper_type_scope is None:
+        from services.batch_solution_ui import render_batch_solution_panel
+
+        batch_select = render_batch_solution_panel(
+            APP_ROOT, CHAPTERS_DIR, save=_save_browse_batch_solution,
+            on_saved=_refresh_browse_batch_solution_results, render_preview=render_question_preview,
+        )
     if is_delete_mode:
         st.caption("删除会移除题目文件、题库索引记录和对应章节索引；原题目文件会自动备份到 .backups。若误删，可点右上角“恢复误删题目”恢复本次删除记录，或点“管理备份问题”查找历史备份；当前备份不会自动定期清理。")
     
@@ -8516,6 +8058,7 @@ def _page_browse_body(is_exam_mode=False, is_delete_mode=False, paper_type_scope
                 paper_type_scope=paper_type_scope,
                 rename_paths_key="recent_saved_paths",
                 prepared_assets=prepared_assets,
+                batch_select=batch_select,
             )
             st.divider()
         return
@@ -8523,7 +8066,8 @@ def _page_browse_body(is_exam_mode=False, is_delete_mode=False, paper_type_scope
     # === 如果激活了搜索，优先显示搜索结果 ===
     if not is_exam_mode and st.session_state.get("adv_search_active"):
         if _adv_search_has_query():
-            render_advanced_search_workspace(is_delete_mode=is_delete_mode, paper_type_scope=paper_type_scope)
+            render_advanced_search_workspace(is_delete_mode=is_delete_mode, paper_type_scope=paper_type_scope,
+                                             batch_select=batch_select)
             return  # 搜索状态下，不显示下方的常规浏览内容
         st.session_state["adv_search_active"] = False
     
@@ -8851,6 +8395,7 @@ def _page_browse_body(is_exam_mode=False, is_delete_mode=False, paper_type_scope
                                     "subj_all",
                                     paper_type_scope=paper_type_scope,
                                     prepared_assets=prepared_assets,
+                                    batch_select=batch_select,
                                 )
                                 st.divider()
                         elif selected_option:
@@ -8897,6 +8442,7 @@ def _page_browse_body(is_exam_mode=False, is_delete_mode=False, paper_type_scope
                                     "subj_year",
                                     paper_type_scope=paper_type_scope,
                                     prepared_assets=prepared_assets,
+                                    batch_select=batch_select,
                                 )
                                 st.divider()
 
@@ -9047,6 +8593,7 @@ def _page_browse_body(is_exam_mode=False, is_delete_mode=False, paper_type_scope
                                 "paper_all",
                                 paper_type_scope=paper_type_scope,
                                 prepared_assets=prepared_assets,
+                                batch_select=batch_select,
                             )
                             st.divider()
     
@@ -9057,7 +8604,7 @@ def _page_browse_body(is_exam_mode=False, is_delete_mode=False, paper_type_scope
             col_content = st.container()
             with col_content:
                 st.markdown('<div id="time-full-width-anchor"></div>', unsafe_allow_html=True)
-                render_time_browse_list(_time_browse_ctx, is_exam_mode, is_delete_mode, paper_type_scope)
+                render_time_browse_list(_time_browse_ctx, is_exam_mode, is_delete_mode, paper_type_scope, batch_select)
         else:
             # 删除 / 组卷等模式：保留原双栏布局
             col_nav, col_content = st.columns([1, 2.5])
@@ -9112,7 +8659,7 @@ def _page_browse_body(is_exam_mode=False, is_delete_mode=False, paper_type_scope
                 if fallback_ctx is None:
                     st.info("题库为空或索引未建立，请先一键重建题库索引。")
                 else:
-                    render_time_browse_list(fallback_ctx, is_exam_mode, is_delete_mode, paper_type_scope)
+                    render_time_browse_list(fallback_ctx, is_exam_mode, is_delete_mode, paper_type_scope, batch_select)
 
     # 编辑区域 (Split View) - 仅在选择了文件时显示，并严格限制在右栏内容区内
     if selected_file_path and os.path.exists(selected_file_path):
@@ -9151,6 +8698,7 @@ def _page_browse_body(is_exam_mode=False, is_delete_mode=False, paper_type_scope
                     f"selected_{selected_key}",
                     paper_type_scope=paper_type_scope,
                     prepared_assets=prepared_assets,
+                    batch_select=batch_select,
                 )
                         
             if not is_exam_mode and not is_delete_mode:
@@ -10942,7 +10490,7 @@ def page_tools():
     st.markdown("<br>", unsafe_allow_html=True)
 
     # 第三行工具
-    r3_c1, r3_c2, r3_c3 = st.columns([1, 1, 1])
+    r3_c1, r3_c2 = st.columns(2)
 
     with r3_c1:
         st.markdown("""
@@ -10961,63 +10509,10 @@ def page_tools():
             st.rerun()
 
     with r3_c2:
-        try:
-            semantic_status = semantic_index_status()
-            semantic_status_error = ""
-        except SemanticSearchError as exc:
-            semantic_status = {"count": 0, "model_name": ""}
-            semantic_status_error = str(exc)
-        status_text = "未建立"
-        if semantic_status.get("count"):
-            status_text = f"{semantic_status['count']} 道题"
         st.markdown("""
         <div class="tool-card">
-            <div class="tool-title">🧠 8. 语义搜索索引</div>
-            <div class="tool-desc">
-                使用可配置的 embedding 模型建立题干语义索引，供高级搜索中的“混合搜索”和“语义搜索”使用。索引是可重建的派生数据，不会修改题目文件或 CSV。
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
-        st.caption(f"当前状态：{status_text} · 模型：{semantic_status.get('model_name') or '未配置'}")
-        if semantic_status_error:
-            st.warning(f"索引状态读取失败：{semantic_status_error}")
-        force_rebuild = st.checkbox("强制重新生成已有向量", key="semantic_force_rebuild")
-        st.markdown("<style>div:has(> button[key='btn_rebuild_semantic']) { margin-top: -24px; padding: 0 20px; position: relative; z-index: 10; }</style>", unsafe_allow_html=True)
-        if st.button("🔄 更新语义索引", key="btn_rebuild_semantic", use_container_width=True):
-            config = _semantic_api_config()
-            progress_bar = st.progress(0)
-
-            def _semantic_progress(done, total):
-                progress_bar.progress(1.0 if total <= 0 else min(1.0, done / total))
-
-            try:
-                rows = _csv_index_cached(_csv_index_cache_token())
-                with st.spinner("正在生成题目 embedding，请稍候..."):
-                    result = build_semantic_index(
-                        rows,
-                        config["base_url"],
-                        config["api_key"],
-                        config["model_name"],
-                        force=force_rebuild,
-                        progress=_semantic_progress,
-                    )
-                progress_bar.empty()
-                _clear_advanced_search_result_cache()
-                st.success(f"语义索引已更新：处理 {result['updated']} 道，当前共 {result['total']} 道。")
-            except SemanticSearchError as exc:
-                progress_bar.empty()
-                st.error(str(exc))
-            except Exception as exc:
-                progress_bar.empty()
-                st.error(f"语义索引更新失败：{exc}")
-
-    with r3_c3:
-        st.markdown("""
-        <div class="tool-card">
-            <div class="tool-title">🔎 9. 搜索模式说明</div>
-            <div class="tool-desc">
-                精确筛选适合题号、年份、题型等明确条件；混合搜索在语义相关度基础上优先展示关键词命中的题目；语义搜索适合用自然语言描述考点。
-            </div>
+            <div class="tool-title">🔎 8. 搜索模式说明</div>
+            <div class="tool-desc">精确查找按关键词和指定字段筛选。模糊查找支持部分词语、近似词和常见物理关联词。</div>
         </div>
         """, unsafe_allow_html=True)
 
@@ -11027,7 +10522,7 @@ def page_tools():
     with r4_c1:
         st.markdown("""
         <div class="tool-card">
-            <div class="tool-title">🔎 10. 题目查重</div>
+            <div class="tool-title">🔎 9. 题目查重</div>
             <div class="tool-desc">
                 按题干内容扫描题库，识别完全重复和高度相似的题目，提供题目 ID、来源路径和并排预览，方便人工确认后处理。
             </div>
@@ -11042,7 +10537,7 @@ def page_tools():
     with r4_c2:
         st.markdown("""
         <div class="tool-card">
-            <div class="tool-title">🧾 11. 操作记录</div>
+            <div class="tool-title">🧾 10. 操作记录</div>
             <div class="tool-desc">
                 查看题目创建、编辑、重命名、删除、恢复和查重记录，便于追踪最近的数据变更。
             </div>
@@ -11636,8 +11131,6 @@ def page_tag_edit():
                             
                         # 同步更新到 CSV 索引
                         update_csv_index_for_edit(file_path, new_path, new_full_text, new_year, new_type, new_name, new_num, new_subject_str)
-                        _invalidate_semantic_for_file(file_path)
-                        _invalidate_semantic_for_file(new_path)
                             
                         st.success(f"更新成功！\n旧: {os.path.basename(file_path)}\n新: {new_filename}")
                         clear_statistics_cache()
@@ -11666,7 +11159,6 @@ def update_question_meta_fields(fpath, updates):
         path=os.path.abspath(fpath),
         details=f"fields={','.join(updates.keys())}",
     )
-    _invalidate_semantic_for_file(fpath)
     try:
         from utils.csv_ops import update_csv_index_for_edit
         # 从文件名解析基础信息
@@ -12451,47 +11943,6 @@ def _csv_index_cached(csv_token):
     from utils.csv_ops import read_csv_index
     return _filter_question_rows(read_csv_index())
 
-@st.cache_data(show_spinner=False, max_entries=2)
-def _advanced_search_index_cached(csv_token, paper_type_scope=None):
-    from utils.csv_ops import read_csv_index
-
-    return _advanced_search_items(_filter_question_rows(read_csv_index(), paper_type_scope))
-
-
-def _advanced_search_items(rows):
-    index_rows = []
-    for row in rows:
-        rel_path = (row.get("相对文件路径", "") or "").strip()
-        abs_path = os.path.join(CHAPTERS_DIR, rel_path) if rel_path else ""
-        filename = (row.get("文件名称", "") or "").strip()
-        if filename and not filename.lower().endswith(".tex"):
-            filename = filename + ".tex"
-
-        stem = row.get("题干", "") or ""
-        answer = row.get("答案", "") or ""
-        solution = row.get("解析", "") or ""
-        tags = row.get("标签", "") or ""
-        knowledge_points = row.get("知识点", "") or ""
-        physics_methods = row.get("物理方法", "") or ""
-        remark = row.get("备注", "") or ""
-
-        index_rows.append({
-            "row": row,
-            "file": filename,
-            "path": abs_path,
-            "type": (row.get("题型", "") or "").strip(),
-            "stem": stem,
-            "answer": answer,
-            "solution": solution,
-            "difficulty": row.get("难度星级", "") or "",
-            "tags": tags,
-            "knowledge_points": knowledge_points,
-            "physics_methods": physics_methods,
-            "remark": remark,
-            "full_text": "\n".join([stem, answer, solution, tags, knowledge_points, physics_methods, remark]),
-        })
-    return index_rows
-
 def get_statistics():
     return _get_statistics_cached(_csv_index_cache_token(), datetime.date.today().isoformat())
 
@@ -12700,9 +12151,9 @@ def render_statistics_dashboard():
         diff_counts = stats.get("difficulty_dist", {})
         components.html(generate_echarts_pie_html(type_counts, diff_counts, "题型与难度分布", skin=cur_skin, mode=cur_mode), height=370)
 
-# ================= 页面：规范说明 =================
+# ================= 页面：架构介绍 =================
 def page_manual():
-    st.header("📖 题库规范说明")
+    st.subheader("📖 题库规范说明")
     st.markdown("""
     **📂 一、 文件命名规范**
 
@@ -12740,8 +12191,21 @@ def page_manual():
     - **插图颜色**：模板已内置 `primaryblue`、`meterblue`、`accentorange` 等物理插图语义色别名（完整清单见 `UtopiaPhyCyclus_book.cls` 颜色定义段），也可使用 xcolor 基础色（red/blue/green/orange/cyan/gray 等）。AI 生成的其他未定义颜色会导致编译失败；TeX 录入的「编译诊断与修复建议」会给出来源行号，按提示改用已定义颜色或先 `\\definecolor` 即可。
     """, unsafe_allow_html=True)
 
-def page_system_intro():
+def page_system_intro(*, section_key="intro_section", initial_section="使用教程"):
     st.header("📘 架构介绍")
+    sections = ("使用教程", "规范指南")
+    section = st.radio(
+        "架构介绍栏目",
+        sections,
+        index=sections.index(initial_section),
+        key=section_key,
+        horizontal=True,
+        label_visibility="collapsed",
+    )
+    if section == "规范指南":
+        page_manual()
+        return
+
     st.markdown("先用一张题图、一个 TeX 文件或一页 PDF 练习录题，再从题库查找和组卷。每节教程都给出了操作入口和核对方法。")
 
     st.subheader("第一次使用")
@@ -12756,14 +12220,13 @@ def page_system_intro():
 #### 桌面版
 
 1. 打开「设置 → 模型连接」。在「默认连接」中选择已检测到的 Agent。未检测到时，从对应行安装，装好后点「重新检测」。选中后可用「复制登录命令」，在终端运行并按提示登录或完成授权。
-2. 图片识别和扫描件录入使用支持图片输入的连接，例如 Codex。选择「自定义 API」时，点「打开 API 设置」，填写地址、模型和密钥，再保存配置。识别图片时应选择支持图片输入的模型。
+2. 图片识别和扫描件录入使用支持图片输入的 Agent，例如 Codex。请在所选 Agent 中使用支持图片输入的模型。
 3. 到「设置 → 本地工具」检查 **Git** 和 **LaTeX（XeLaTeX）**。标记为「应用内置」或「已检测到」的工具已经可以使用。缺少工具时可点对应行的「安装」，完成后再点「重新检测」。
 4. 在「TeX 录入」打开演示题，确认能显示 PDF。再框选一处文字，发一条简单的修改指令，确认 Agent 能返回候选修改。
 
 #### 单独运行的 Streamlit 版
 
-- **图片识别与解答生成**可在「设置 → API 设置」中填写 API 地址、主模型和密钥。用「极小请求测试当前主模型可用性」验证后点「保存配置」。图片识别使用支持图片输入的模型。
-- **PDF 录入与框选修改**使用运行应用的电脑上的 Codex CLI。在终端运行 **codex --version** 确认已安装，再运行 **codex login** 完成登录。识别一页试卷或对一处公式试改，即可验证连接。
+- **图片识别、解答生成、PDF 录入与框选修改**使用运行应用的电脑上的 Codex CLI。在终端运行 **codex --version** 确认已安装，再运行 **codex login** 完成登录。识别一页试卷或对一处公式试改，即可验证连接。
 - **XeLaTeX** 用于编译中文题目、TikZ 图、PDF 预览和组卷 PDF。在运行应用的电脑上用 **xelatex --version** 确认可用；若命令找不到，把已安装的 TeX 发行版的可执行目录加入 PATH，然后重启服务。也可以在「TeX 录入」下载示例、载入并点「编译预览」验证。
 - **Git** 可用于获取和更新源码，也可以用来跟踪自己维护的 TeX 文件。在终端运行 **git --version** 验证安装。日常录题、检索和手动组卷可直接使用本机题库。
 """)
@@ -12830,7 +12293,7 @@ def page_system_intro():
 
 **文件名**　使用「年份-试卷类别-试卷名称-题号-知识板块.tex」，例如「2024-G-全国I卷-12-电磁感应，电路.tex」。多个板块用中文逗号分隔，第一个决定归档目录。
 
-**题目内容**　每题使用一个 problem 环境，五个参数与文件名对应。选择题用 choices 和 choice。答案与解析分别保存在 answer 和 solutions 环境。具体结构和命令示例见侧栏「规范指南」或「TeX 录入」里的示例文件。
+**题目内容**　每题使用一个 problem 环境，五个参数与文件名对应。选择题用 choices 和 choice。答案与解析分别保存在 answer 和 solutions 环境。具体结构和命令示例见本页「规范指南」或「TeX 录入」里的示例文件。
 
 **标签与索引**　题目 ID、难度、标签、备注等字段保存在源码的 Label Data 注释块。utils/question_index.sqlite3 是可重建的检索索引。桌面版和一键启动器会在启动、正常退出时检查和同步外部新增或修改的题目。批量移动、删除后需要清理旧索引条目时，在设置中打开「题库工具箱」，选择「一键重建/同步题库索引」。
 """)
@@ -12839,7 +12302,7 @@ def page_system_intro():
         st.markdown("""
 - **界面和工作流**　utopia_phycyclus_app.py 负责 Streamlit 页面与交互，desktop/ 下的源码负责桌面工作台。
 - **题库与检索**　utils/core_config.py 管理目录和分类，utils/question_index.py 负责索引和检索，utils/latex_ops.py 负责处理题目的 TeX 结构。
-- **模型与编译**　services/local_agent.py 对接桌面本地 Agent，services/ai_service.py 处理 API 请求，services/tex_compile_service.py 编译 TeX 和生成预览。
+- **模型与编译**　services/local_agent.py 对接本机 Agent，services/tex_compile_service.py 编译 TeX 和生成预览。
 - **组卷导出**　Test Paper Group/主题模板 提供排版模板，services/file_service.py 提供原子写入和备份。
 
 物理版由 YJW2000 维护，基于 JinLingxi（槿灵兮）开发的 MathCyclus 改造。项目代码采用 MIT，包含 PyMuPDF/MuPDF 的完整发行版遵循其 AGPL-3.0 许可要求。完整许可、依赖源码入口与构建脚本见项目仓库。
@@ -12854,7 +12317,7 @@ def page_system_intro():
 
 # ================= 页面：三级查找 =================
 # ================= 页面：三级查找嵌入组件 =================
-def render_advanced_search_inline(compact=False, search_result_count=None, mode_container=None):
+def render_advanced_search_inline(compact=False, search_result_count=None):
     results_page_size_options = [5, 10, 15, 20]
     default_results_page_size = 10
     if st.session_state.get("adv_results_page_size") not in (None, *results_page_size_options):
@@ -13135,36 +12598,6 @@ def render_advanced_search_inline(compact=False, search_result_count=None, mode_
             st.session_state["adv_search_active"] = False
             st.rerun()
 
-    if mode_container is not None:
-        # 浏览页：与「浏览模式」同一行，使用行内小标签，节省一行高度
-        with mode_container:
-            _lbl, _opts = st.columns([0.22, 1], gap="small")
-            with _lbl:
-                st.markdown('<div class="mc-inline-mode-label">检索模式</div>', unsafe_allow_html=True)
-            with _opts:
-                search_mode = st.radio(
-                    "检索模式",
-                    ["精确筛选", "混合搜索", "语义搜索"],
-                    horizontal=True,
-                    label_visibility="collapsed",
-                    key="adv_search_mode",
-                )
-    else:
-        # 检索工作区（窄侧栏）：保持标签在上方的原始形态，避免换行
-        search_mode = st.radio(
-            "检索模式",
-            ["精确筛选", "混合搜索", "语义搜索"],
-            horizontal=True,
-            key="adv_search_mode",
-        )
-    if search_mode != "精确筛选":
-        st.text_input(
-            "语义描述",
-            placeholder="例如：传送带模型中的临界条件与能量转化",
-            key="adv_semantic_query",
-            on_change=on_adv_search,
-        )
-
     search_opts = ["全文内容", "题目类型", "题目内容", "解答内容", "难度星级", "其他自由标签", "知识点", "物理方法"]
 
     if compact:
@@ -13191,8 +12624,7 @@ def render_advanced_search_inline(compact=False, search_result_count=None, mode_
         st.button("🔎 再次搜索", use_container_width=True, type="primary", on_click=on_adv_search)
 
         st.markdown('<span id="adv-search-compact-info-anchor"></span>', unsafe_allow_html=True)
-        semantic_query = st.session_state.get("adv_semantic_query", "") if search_mode != "精确筛选" else ""
-        if not (st.session_state.get("adv_search_active") and (q1 or q2 or q3 or semantic_query)):
+        if not (st.session_state.get("adv_search_active") and (q1 or q2 or q3)):
             st.info("输入查找条件后开始查找。")
             return
 
@@ -13200,8 +12632,6 @@ def render_advanced_search_inline(compact=False, search_result_count=None, mode_
         if q1: search_info.append(f"{t1}: `{q1}`")
         if q2: search_info.append(f"{t2}: `{q2}`")
         if q3: search_info.append(f"{t3}: `{q3}`")
-        if semantic_query: search_info.append(f"语义: `{semantic_query}`")
-        search_info.append(f"模式: `{search_mode}`")
         st.markdown(f"**检索条件**: {' | '.join(search_info)}")
 
         if search_result_count is not None:
@@ -13282,13 +12712,6 @@ def render_advanced_search_inline(compact=False, search_result_count=None, mode_
           div[data-testid="stMainBlockContainer"] hr {
             margin: 0.4rem 0 0.5rem !important;
           }
-          /* 行内小标题（检索模式） */
-          .mc-inline-mode-label {
-            font-size: 0.86rem;
-            line-height: 38px;
-            color: rgba(38, 35, 30, 0.62);
-            white-space: nowrap;
-          }
           /* 锚点容器本身不占高度，避免多加一层留白 */
           div[data-testid="element-container"]:has(#adv-search-inputs-anchor),
           div[data-testid="element-container"]:has(#adv-search-info-anchor),
@@ -13361,9 +12784,8 @@ def render_advanced_search_inline(compact=False, search_result_count=None, mode_
     q1 = st.session_state.get("adv_q1_sel" if t1 == "题目类型" else "adv_q1", "")
     q2 = st.session_state.get("adv_q2_sel" if t2 == "题目类型" else "adv_q2", "")
     q3 = st.session_state.get("adv_q3_sel" if t3 == "题目类型" else "adv_q3", "")
-    semantic_query = st.session_state.get("adv_semantic_query", "") if search_mode != "精确筛选" else ""
 
-    if not (st.session_state.get("adv_search_active") and (q1 or q2 or q3 or semantic_query)):
+    if not (st.session_state.get("adv_search_active") and (q1 or q2 or q3)):
         st.caption("👈 填好条件后点「开始查找」（或在输入框里按回车）即可在下方看到结果。")
         return
 
@@ -13375,16 +12797,13 @@ def render_advanced_search_inline(compact=False, search_result_count=None, mode_
         search_info.append(f"{t2}: `{q2}`")
     if q3:
         search_info.append(f"{t3}: `{q3}`")
-    if semantic_query:
-        search_info.append(f"语义: `{semantic_query}`")
-    search_info.append(f"模式: `{search_mode}`")
     search_str = " | ".join(search_info)
     st.markdown(f"**检索条件**: {search_str}")
     if st.button("❌ 退出搜索状态"):
         st.session_state["adv_search_active"] = False
         st.rerun()
 
-def render_advanced_search_workspace(is_delete_mode=False, paper_type_scope=None):
+def render_advanced_search_workspace(is_delete_mode=False, paper_type_scope=None, batch_select=False):
     results = _get_advanced_search_results(is_delete_mode=is_delete_mode, paper_type_scope=paper_type_scope)
     c_search, c_results = st.columns([0.72, 2.58], gap="large")
     with c_search:
@@ -13392,150 +12811,32 @@ def render_advanced_search_workspace(is_delete_mode=False, paper_type_scope=None
         render_advanced_search_inline(compact=True, search_result_count=len(results))
     with c_results:
         st.markdown('<div id="adv-search-right-anchor"></div>', unsafe_allow_html=True)
-        render_advanced_search_results(is_delete_mode=is_delete_mode, paper_type_scope=paper_type_scope, results=results, controls_in_sidebar=True)
+        render_advanced_search_results(is_delete_mode=is_delete_mode, paper_type_scope=paper_type_scope,
+                                       results=results, controls_in_sidebar=True, batch_select=batch_select)
 
 def _get_advanced_search_results(is_delete_mode=False, paper_type_scope=None):
-    search_mode = st.session_state.get("adv_search_mode", "精确筛选")
-    semantic_query = (st.session_state.get("adv_semantic_query", "") or "").strip() if search_mode != "精确筛选" else ""
-
-    t1 = st.session_state.get("adv_t1", "全文内容")
-    t2 = st.session_state.get("adv_t2", "全文内容")
-    t3 = st.session_state.get("adv_t3", "全文内容")
-
-    q1 = st.session_state.get("adv_q1_sel" if t1 == "题目类型" else "adv_q1", "")
-    q2 = st.session_state.get("adv_q2_sel" if t2 == "题目类型" else "adv_q2", "")
-    q3 = st.session_state.get("adv_q3_sel" if t3 == "题目类型" else "adv_q3", "")
-
-    def _row_match(item, s_type, s_query):
-        s_query = (s_query or "").strip()
-        if not s_query:
-            return True
-        if s_type == "题目类型":
-            return s_query == item["type"]
-        if s_type == "题目内容":
-            return s_query in item["stem"]
-        if s_type == "解答内容":
-            return s_query in item["solution"]
-        if s_type == "难度星级":
-            return s_query in item["difficulty"]
-        if s_type in ("标签", "其他自由标签"):
-            return s_query in item["tags"]
-        if s_type == "知识点":
-            return s_query in item["knowledge_points"]
-        if s_type == "物理方法":
-            return s_query in item["physics_methods"]
-        if s_type == "备注":
-            return s_query in item["remark"]
-        if s_type == "全文内容":
-            return s_query in item["full_text"]
-        return False
-
+    fields = [st.session_state.get(f"adv_t{level}", "全文内容") for level in (1, 2, 3)]
+    conditions = tuple(zip(fields, _adv_search_queries_from_session()))
     query_key = (
         _csv_index_cache_token(),
-        search_mode,
-        semantic_query,
-        t1,
-        q1,
-        t2,
-        q2,
-        t3,
-        q3,
+        conditions,
         paper_type_scope or "regular",
         "delete" if is_delete_mode else "edit",
     )
     if st.session_state.get("adv_last_query") == query_key and st.session_state.get("adv_last_results") is not None:
-        results = st.session_state.get("adv_last_results") or []
-    else:
-        filtered_rows = question_index.exact_rows(
-            [(t1, q1), (t2, q2), (t3, q3)], scope=paper_type_scope,
-            light=(search_mode == "精确筛选" or not semantic_query),
-        )
-        if search_mode == "精确筛选" or not semantic_query:
-            results = [{"file": row["文件名称"] + ".tex",
-                        "path": os.path.join(CHAPTERS_DIR, row["相对文件路径"]),
-                        "reason": "字段匹配"} for row in filtered_rows]
-            st.session_state["adv_last_query"] = query_key
-            st.session_state["adv_last_results"] = results
-            return results
-        search_rows = _advanced_search_items(filtered_rows)
+        return st.session_state["adv_last_results"]
 
-        results = []
-        with st.spinner("正在全库检索中..."):
-            filtered_items = []
-            for item in search_rows:
-                if q1 and not _row_match(item, t1, q1):
-                    continue
-                if q2 and not _row_match(item, t2, q2):
-                    continue
-                if q3 and not _row_match(item, t3, q3):
-                    continue
-                fpath = item["path"]
-                if not fpath or not os.path.exists(fpath):
-                    continue
-                filtered_items.append(item)
-
-            if search_mode == "精确筛选" or not semantic_query:
-                results = [
-                    {
-                        "file": item["file"] or os.path.basename(item["path"]),
-                        "path": item["path"],
-                        "reason": "字段匹配",
-                    }
-                    for item in filtered_items
-                ]
-            elif filtered_items:
-                config = _semantic_api_config()
-                row_map = {
-                    (item["row"].get("相对文件路径", "") or "").replace("/", "\\"): item
-                    for item in filtered_items
-                }
-                try:
-                    semantic_matches = semantic_search(
-                        semantic_query,
-                        [item["row"] for item in filtered_items],
-                        config["base_url"],
-                        config["api_key"],
-                        config["model_name"],
-                        top_k=max(1, len(filtered_items)),
-                    )
-                    for match in semantic_matches:
-                        relative_path = (match.get("path") or "").replace("/", "\\")
-                        item = row_map.get(relative_path)
-                        if not item:
-                            continue
-                        boost = _semantic_lexical_boost(_semantic_item_text(item), semantic_query) if search_mode == "混合搜索" else 0.0
-                        results.append({
-                            "file": item["file"] or os.path.basename(item["path"]),
-                            "path": item["path"],
-                            "score": match["score"] + boost,
-                            "semantic_score": match["score"],
-                            "reason": "语义 + 关键词" if boost else "语义相似",
-                        })
-                    results.sort(key=lambda result: result.get("score", 0.0), reverse=True)
-                except SemanticSearchError as exc:
-                    if search_mode == "混合搜索":
-                        st.warning(f"语义检索暂不可用，已退回关键词匹配：{exc}")
-                        for item in filtered_items:
-                            fallback_score = _semantic_lexical_boost(_semantic_item_text(item), semantic_query)
-                            if fallback_score <= 0:
-                                continue
-                            results.append({
-                                "file": item["file"] or os.path.basename(item["path"]),
-                                "path": item["path"],
-                                "score": fallback_score,
-                                "reason": "关键词回退",
-                            })
-                        results.sort(key=lambda result: result.get("score", 0.0), reverse=True)
-                    else:
-                        st.error(f"语义检索不可用：{exc}")
-
-        st.session_state["adv_last_query"] = query_key
-        st.session_state["adv_last_results"] = results
-
+    rows = question_index.exact_rows(conditions, scope=paper_type_scope, light=True)
+    results = [
+        {"file": row["文件名称"] + ".tex", "path": os.path.join(CHAPTERS_DIR, row["相对文件路径"])}
+        for row in rows
+    ]
+    st.session_state["adv_last_query"] = query_key
+    st.session_state["adv_last_results"] = results
     return results
 
 
-def render_advanced_search_results(is_delete_mode=False, paper_type_scope=None, results=None, controls_in_sidebar=False):
+def render_advanced_search_results(is_delete_mode=False, paper_type_scope=None, results=None, controls_in_sidebar=False, batch_select=False):
     results_page_size_options = [5, 10, 15, 20]
     default_results_page_size = 10
     if not controls_in_sidebar and st.session_state.get("adv_results_page_size") not in (None, *results_page_size_options):
@@ -13590,11 +12891,6 @@ def render_advanced_search_results(is_delete_mode=False, paper_type_scope=None, 
                 content = prepared_assets["content"]
 
             q_label = format_question_title(fname)
-            if res.get("semantic_score") is not None:
-                st.caption(f"{res.get('reason', '语义相似')} · 相关度 {max(-1.0, min(1.0, res['semantic_score'])):.0%}")
-            elif res.get("reason") == "关键词回退":
-                st.caption("关键词回退匹配")
-
             if is_delete_mode:
                 render_delete_question_item(fpath, q_label, content, key_prefix="delete_search")
                 st.divider()
@@ -13608,6 +12904,7 @@ def render_advanced_search_results(is_delete_mode=False, paper_type_scope=None, 
                 paper_type_scope=paper_type_scope,
                 prepared_assets=prepared_assets,
                 interactive_difficulty=True,
+                batch_select=batch_select,
             )
             st.divider()
     else:
@@ -14080,7 +13377,6 @@ def main():
     exam_nav_option = "🖨️  组卷排版"
     advanced_nav_option = "🔎  题目查找"
     intro_nav_option = "📘  架构介绍"
-    manual_nav_option = "📖  规范指南"
     settings_nav_option = "⚙️  设置"
     legacy_browse_nav_option = "🔍\n全局浏览与编辑"
 
@@ -14093,7 +13389,6 @@ def main():
         exam_nav_option,
         advanced_nav_option,
         intro_nav_option,
-        manual_nav_option,
         settings_nav_option,
     ]
     default_nav_option = stats_nav_option
@@ -14149,10 +13444,6 @@ def main():
         "📘  项目架构介绍": intro_nav_option,
         "📘\n项目介绍": intro_nav_option,
         "📘\n介绍": intro_nav_option,
-        "规范说明": manual_nav_option,
-        "📖  LaTeX规范指南": manual_nav_option,
-        "📖\n规范说明": manual_nav_option,
-        "📖\n规范": manual_nav_option,
         # 新四字短标签
         "📊  数据统计": stats_nav_option,
         "📝  智能录题": entry_nav_option,
@@ -14162,20 +13453,20 @@ def main():
         "🛠️  维护工具": settings_nav_option,
         "🔎  精确查找": advanced_nav_option,
         "📘  架构介绍": intro_nav_option,
-        "📖  规范指南": manual_nav_option,
         legacy_browse_nav_option: browse_nav_option,
     }
+    legacy_manual_options = {"规范说明", "📖  LaTeX规范指南", "📖\n规范说明", "📖\n规范", "📖  规范指南"}
 
     for state_key in ("main_nav_selection", "main_sidebar_radio"):
         saved_value = st.session_state.get(state_key)
+        if saved_value in legacy_manual_options:
+            st.session_state[state_key] = intro_nav_option
+            st.session_state["intro_section"] = "规范指南"
+            continue
         if saved_value and ("精确查找" in saved_value or "三级查找" in saved_value):
             st.session_state["search_subpage"] = "精确查找"
         elif saved_value and "模糊查找" in saved_value:
             st.session_state["search_subpage"] = "模糊查找"
-        if saved_value and ('API' in str(saved_value) or saved_value == '🔑\n设置'):
-            st.session_state['settings_subpage']='🔑 API设置'
-        elif saved_value and 'UI设置' in str(saved_value):
-            st.session_state['settings_subpage']='🎨 UI设置'
         if saved_value in legacy_nav_aliases:
             st.session_state[state_key] = legacy_nav_aliases[saved_value]
     if "main_nav_selection" not in st.session_state or st.session_state["main_nav_selection"] not in nav_options:
@@ -14247,16 +13538,12 @@ def main():
 
         # === 导航：分组渲染，使二级功能紧跟在其一级功能下方 ===
         # 有二级导航的一级项 → 允许插入的位置（索引）
-        _subnav_parents = {nav: nav_options.index(nav) for nav in (entry_nav_option, tex_entry_nav_option, settings_nav_option)}
+        _subnav_parents = {nav: nav_options.index(nav) for nav in (entry_nav_option, tex_entry_nav_option)}
         _active_nav = st.session_state.get("main_nav_selection", default_nav_option)
         _split_at = _subnav_parents.get(_active_nav)
 
         def _render_nav_suboptions(parent_option: str):
-            if parent_option == settings_nav_option:
-                if st.session_state.get('settings_subpage') not in ('🎨 UI设置','🔑 API设置'):
-                    st.session_state['settings_subpage']='🎨 UI设置'
-                st.radio('设置子功能',['🎨 UI设置','🔑 API设置'],key='settings_subpage',label_visibility='collapsed',on_change=_set_library_tools_open)
-            elif parent_option == entry_nav_option:
+            if parent_option == entry_nav_option:
                 if st.session_state.get("entry_mode_sidebar") not in ("单题录入", "批量试题录入", "同卷试题录入"):
                     st.session_state["entry_mode_sidebar"] = "单题录入"
                 st.radio(
@@ -14318,13 +13605,11 @@ def main():
             <div class="mc-sidebar-status">🟢 服务在线 · 题库引擎正常</div>
         """, unsafe_allow_html=True)
 
-        # UI and API settings share one parent navigation item.
         from services.sidebar_navigation import render_sidebar_flyouts
         render_sidebar_flyouts(nav_options, _select_main_navigation, {
             entry_nav_option: ('entry_mode_sidebar', ['单题录入', '批量试题录入', '同卷试题录入']),
             tex_entry_nav_option: ('tex_workspace_mode', ['单题录入', '批量试题录入', '同卷试题录入']),
             advanced_nav_option: ('search_subpage', ['精确查找', '模糊查找']),
-            settings_nav_option: ('settings_subpage', ['🎨 UI设置', '🔑 API设置']),
         })
 
 # Flyouts use one scoped event bridge; native widgets retain routing ownership.
@@ -14367,13 +13652,8 @@ def main():
             page_advanced_search()
     elif selected_nav == intro_nav_option:
         page_system_intro()
-    elif selected_nav == manual_nav_option:
-        page_manual()
     elif selected_nav == settings_nav_option:
-        if st.session_state.get('settings_subpage') == '🔑 API设置':
-            page_api_settings()
-        else:
-            page_ui_settings()
+        page_ui_settings()
     _mc_prof(f"route[{selected_nav}]", _mc_t)
     st.markdown(f'<span id="mc-route-ready" data-route="{html.escape(selected_nav, quote=True)}" style="display:none"></span>', unsafe_allow_html=True)
 

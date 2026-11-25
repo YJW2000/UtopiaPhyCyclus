@@ -4,9 +4,61 @@ from pathlib import Path
 
 from streamlit.testing.v1 import AppTest
 from services.fuzzy_search_service import build_documents, search, sort_results
+from utils import question_index
 
 
 class FuzzySearchTests(unittest.TestCase):
+    def test_exact_search_ignores_old_vector_settings_and_uses_local_index(self):
+        with tempfile.TemporaryDirectory() as folder:
+            csv_path = Path(folder, "utils", "题库索引表.csv")
+            for name in ("matching", "other"):
+                Path(folder, name + ".tex").write_text("test", encoding="utf-8")
+            question_index.replace_rows([
+                {"题目ID": "1", "文件名称": "matching", "相对文件路径": "matching.tex", "题干": "速度变化"},
+                {"题目ID": "2", "文件名称": "other", "相对文件路径": "other.tex", "解析": "速度变化"},
+            ], csv_path=csv_path)
+            script = '''
+from pathlib import Path
+from unittest.mock import patch
+import streamlit as st
+import utopia_phycyclus_app as app
+
+old_settings = {
+    "AI_EMBEDDING_BASE_URL": "http://127.0.0.1:1",
+    "AI_EMBEDDING_API_KEY": "fixture",
+    "AI_EMBEDDING_MODEL_NAME": "fixture",
+}
+
+def show_result(title, content, path, *args, **kwargs):
+    st.write("result:" + Path(path).name)
+
+with (
+    patch("utils.core_config.CSV_INDEX_PATH", __CSV_PATH__),
+    patch.object(app, "CHAPTERS_DIR", __CHAPTERS_PATH__),
+    patch.object(app, "_read_library_environment", return_value=old_settings),
+    patch.object(app, "load_question_editor_assets", return_value={"content": "test"}),
+    patch.object(app, "render_browse_question_editor_card", side_effect=show_result),
+):
+    app.page_advanced_search()
+'''.replace("__CSV_PATH__", repr(str(csv_path))).replace("__CHAPTERS_PATH__", repr(folder))
+            app_test = AppTest.from_string(script, default_timeout=40)
+            app_test.session_state["adv_search_mode"] = "语义搜索"
+            app_test.session_state["adv_semantic_query"] = "旧查询"
+            app_test.session_state["adv_search_active"] = True
+            app_test.run()
+
+            self.assertFalse(app_test.exception)
+            self.assertFalse(any(radio.key == "adv_search_mode" for radio in app_test.radio))
+            self.assertFalse(any(widget.key == "adv_semantic_query" for widget in app_test.text_input))
+            self.assertFalse(any("result:" in item.value for item in app_test.markdown))
+
+            app_test.selectbox(key="adv_t1").set_value("题目内容").run()
+            app_test.text_input(key="adv_q1").set_value("速度变化").run()
+
+            self.assertFalse(app_test.exception)
+            self.assertEqual([item.value for item in app_test.markdown if item.value.startswith("result:")],
+                             ["result:matching.tex"])
+
     def test_each_text_and_metadata_field_is_searchable(self):
         for field in ("题干", "标签", "知识点", "物理方法", "知识板块", "解析", "答案", "备注", "试卷名称"):
             with self.subTest(field=field):

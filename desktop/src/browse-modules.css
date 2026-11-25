@@ -1,0 +1,148 @@
+.module-browser {
+  container-type: inline-size;
+}
+
+.page-content .module-browser h1 {
+  font-size: 23px;
+  margin-bottom: 12px;
+}
+
+.browse-modes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px 10px;
+  margin-bottom: 12px;
+}
+
+.browse-modes label {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.page-content .browse-modes input {
+  margin: 0;
+  padding: 0;
+  accent-color: var(--mc-action-bg);
+}
+
+.module-browser .mc-card {
+  padding: 12px;
+  margin-bottom: 12px;
+  border-radius: 14px;
+}
+
+.browse-modules {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-top: 10px;
+}
+
+.page-content .browse-modules button {
+  padding: 4px 7px;
+  border-radius: 7px;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.page-content .browse-modules button[aria-pressed='true'] {
+  border-color: var(--mc-action-bg);
+  background: var(--mc-action-bg);
+  color: var(--mc-action-text);
+}
+
+.browse-settings {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.browse-settings label {
+  display: grid;
+  flex: 1 1 115px;
+  min-width: 0;
+  gap: 4px;
+  color: var(--mc-muted);
+  font-size: 12px;
+}
+
+.page-content .browse-settings select {
+  width: 100%;
+  min-width: 0;
+  padding: 5px;
+  font-size: 13px;
+}
+
+.browse-question-group + .browse-question-group {
+  margin-top: 10px;
+}
+
+.browse-question-group h3 {
+  margin: 0;
+  padding: 5px 8px;
+  border-radius: 6px 6px 0 0;
+  background: var(--mc-accent-soft);
+  font-size: 13px;
+}
+
+.page-content .module-browser button.question-link {
+  padding: 4px 6px;
+}
+
+.module-browser button.question-link[aria-current='true'] {
+  background: var(--mc-accent-soft);
+}
+
+.module-browser .question-link strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.module-browser .question-list button.quiet {
+  flex-shrink: 0;
+  padding: 4px 7px;
+  white-space: nowrap;
+}
+
+.module-browser .section-head {
+  flex-wrap: wrap;
+}
+
+.module-browser .section-head h2 {
+  overflow-wrap: anywhere;
+}
+
+@container (max-width: 270px) {
+  .browse-modules {
+    gap: 4px;
+  }
+
+  .page-content .browse-modules button {
+    padding: 3px 5px;
+  }
+
+  .module-browser .filters {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .module-browser .filters select {
+    min-width: 0;
+    padding: 5px;
+    font-size: 13px;
+  }
+
+  .module-browser .section-head {
+    margin-bottom: 8px;
+  }
+
+  .module-browser .solution-batch-actions {
+    gap: 5px 8px;
+  }
+}

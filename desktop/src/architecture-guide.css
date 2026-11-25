@@ -38,8 +38,13 @@
 }
 
 .guide-structure dd,
-.guide-lesson summary span {
+.guide-lesson summary span,
+.guide-contents > p {
   color: var(--mc-muted);
+}
+
+.guide-contents > p {
+  margin: 0 0 14px;
 }
 
 .guide-contents > div + div {
@@ -76,7 +81,7 @@
 }
 
 .guide-lesson-body {
-  padding: 0 0 16px 1.1em;
+  padding: 6px 0 16px 1.1em;
 }
 
 .guide-lesson-body ol,
@@ -91,7 +96,84 @@
 }
 
 .guide-lesson-body li + li {
-  margin-top: 6px;
+  margin-top: 10px;
+}
+
+.guide-screenshot {
+  max-width: 843px;
+  margin: 10px 0 16px;
+}
+
+.guide-screenshot button {
+  display: block;
+  position: relative;
+  width: 100%;
+  padding: 0;
+  overflow: hidden;
+  cursor: zoom-in;
+}
+
+.guide-screenshot img,
+.guide-screenshot-dialog img {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.guide-screenshot button span {
+  position: absolute;
+  inset-block-end: 9px;
+  inset-inline-end: 9px;
+  padding: 5px 9px;
+  border: 1px solid var(--mc-border);
+  border-radius: 6px;
+  background: var(--mc-surface);
+  color: var(--mc-text);
+  font-size: .8em;
+}
+
+.guide-screenshot figcaption {
+  margin-top: 5px;
+  color: var(--mc-muted);
+  font-size: .9em;
+}
+
+.guide-screenshot-dialog {
+  box-sizing: border-box;
+  width: max-content;
+  max-width: calc(100vw - 36px);
+  max-height: calc(100vh - 36px);
+  padding: 12px;
+  border: 1px solid var(--mc-border);
+  border-radius: 12px;
+  background: var(--mc-surface);
+  color: var(--mc-text);
+}
+
+.guide-screenshot-dialog::backdrop {
+  background: rgb(20 16 14 / 64%);
+}
+
+.guide-screenshot-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 10px;
+}
+
+.guide-screenshot-header h2 {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.guide-screenshot-header button {
+  flex-shrink: 0;
+}
+
+.guide-screenshot-dialog img {
+  max-height: calc(100vh - 110px);
+  object-fit: contain;
 }
 
 .guide-example {

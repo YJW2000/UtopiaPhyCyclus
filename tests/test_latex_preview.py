@@ -148,6 +148,95 @@ class PreviewLayoutCleanupTests(unittest.TestCase):
         self.assertIn(r'$\text{V}$', markdown)
         self.assertIn(r'\approx 2.47\,\Omega', markdown)
 
+    def test_scored_equations_keep_circled_numbers_and_marks(self):
+        source = r'''
+\begin{equation*}
+t_2=65-55=10\,\mathrm s.
+\tag*{\text{\textcircled{\scriptsize 1}\enspace（1分）}}
+\end{equation*}
+\begin{align*}
+0&=v_B-at_2
+\tag*{\text{\textcircled{\scriptsize 2}\enspace（1分）}}\\[3pt]
+a&=\frac{v_B}{t_2}=\boxed{1.4\,\mathrm{m/s^2}}.
+\tag*{\text{\textcircled{\scriptsize 3}\enspace（2分）}}
+\end{align*}
+评分：\textcircled{\scriptsize 1}至\textcircled{\scriptsize 3}。
+'''
+        markdown = self.render(source)
+        displays = re.findall(r'\$\$([\s\S]*?)\$\$', markdown)
+        self.assertEqual(3, len(displays))
+        for formula, number, marks in zip(displays, '①②③', ('1', '1', '2')):
+            self.assertEqual(1, formula.count(r'\tag*{'))
+            self.assertIn(number, formula)
+            self.assertIn('（' + marks + '分）', formula)
+            self.assertNotIn('$', formula)
+        self.assertIn(r'\boxed{1.4\,\mathrm{m/s^2}}', displays[2])
+        self.assertIn('评分：①至③。', markdown)
+        self.assertNotIn(r'\textcircled', markdown)
+        self.assertNotIn('[3pt]', markdown)
+        self.assertEqual([], _residual_commands_outside_math(markdown))
+
+    def test_nested_aligned_equation_survives_prose_cleanup(self):
+        source = r'''
+\begingroup
+\setlength{\abovedisplayskip}{6pt}
+\setlength{\belowdisplayskip}{6pt}
+\begin{equation*}
+\begin{aligned}
+Q_2&=\frac12CE^2-\frac12(m+CB^2l^2)v_2^2\\
+&=\frac{mCE^2}{2(m+CB^2l^2)}.
+\end{aligned}
+\tag*{\text{\textcircled{\scriptsize 12}\enspace（2分）}}
+\end{equation*}
+\begin{equation*}
+\frac{Q_2}{Q_1}<1,\qquad\boxed{Q_1>Q_2}.
+\tag*{\text{\textcircled{\scriptsize 13}\enspace（1分）}}
+\end{equation*}
+\endgroup
+'''
+        markdown = self.render(source)
+        displays = re.findall(r'\$\$([\s\S]*?)\$\$', markdown)
+        self.assertEqual(2, len(displays))
+        self.assertIn(r'\begin{aligned}', displays[0])
+        self.assertIn(r'\end{aligned}', displays[0])
+        self.assertIn('\\\\\n&=', displays[0])
+        self.assertIn(r'\qquad\boxed{Q_1>Q_2}', displays[1])
+        for formula in displays:
+            self.assertNotIn('$', formula)
+            self.assertNotIn('<br>', formula)
+        self.assertEqual([], _residual_commands_outside_math(markdown))
+
+    def test_tagged_alignment_keeps_nested_matrix_rows(self):
+        source = r'''\begin{align*}
+A&=\begin{pmatrix}1&2\\3&4\end{pmatrix}\tag{1}\\
+x&=2\tag{2}
+\end{align*}'''
+        markdown = self.render(source)
+        displays = re.findall(r'\$\$([\s\S]*?)\$\$', markdown)
+        self.assertEqual(2, len(displays))
+        self.assertIn(r'\begin{pmatrix}1&2\\3&4\end{pmatrix}', displays[0])
+        self.assertIn('\\end{aligned}\n\\tag{1}', displays[0])
+        self.assertIn('\\end{aligned}\n\\tag{2}', displays[1])
+
+    def test_math_emphasis_and_cases_are_not_rewritten_as_markdown(self):
+        source = (r'\textbf{正文} $\textbf{单位}\quad\underline{x}$'
+                  r'\[f(x)=\begin{cases}x&x>0\\0&x\le0\end{cases}\]')
+        markdown = self.render(source)
+        self.assertIn('**正文**', markdown)
+        self.assertIn(r'$\textbf{单位}\quad\underline{x}$', markdown)
+        self.assertIn(r'\begin{cases}x&x>0\\0&x\le0\end{cases}', markdown)
+
+    def test_table_row_spacing_does_not_swallow_following_math(self):
+        source = r'\begin{tabular}{cc}甲 & $1$\\[3pt]乙 & $2$\end{tabular} 后文 $x$。'
+        markdown = self.render(source)
+        self.assertIn('$1$', markdown)
+        self.assertIn('$2$', markdown)
+        self.assertIn('后文 $x$。', markdown)
+        self.assertNotIn('MCMATHPREVIEWTOKEN', markdown)
+
+    def test_unclosed_formula_is_not_truncated_while_editing(self):
+        self.assertEqual('待补公式 $x+1', self.render('待补公式 $x+1'))
+
     def test_underline_blank_inside_math_stays_katex_safe(self):
         """公式里的填空线不能变成 <u>/&nbsp;，否则 KaTeX 解析失败显示公式源码。"""
         source = (r'整理出以 $\frac{1}{U}$ 为纵坐标、$\frac{1}{R}$ 为横坐标的一次函数表达式：'
@@ -209,6 +298,29 @@ E = U + Ir
 
 
 class ImportedQuestionPreviewTests(unittest.TestCase):
+    def test_hasanzhong_scoring_equations_preserve_all_marks(self):
+        for number, tag_count in ((13, 7), (14, 10), (15, 13)):
+            path = ROOT / 'output' / 'hasanzhong_2026_remaining_v2' / f'q{number}.tex'
+            if not path.exists():
+                self.skipTest('哈三中原题文件不存在')
+            with self.subTest(question=number):
+                source = path.read_text(encoding='utf-8')
+                with patch('utils.latex_ops._tikz_image_markdown', return_value='[IMG]'):
+                    markdown = latex_to_markdown(source, show_title=False)
+                displays = re.findall(r'\$\$([\s\S]*?)\$\$', markdown)
+                tagged = [formula for formula in displays if r'\tag*{' in formula]
+                self.assertEqual(tag_count, len(tagged))
+                for index, formula in enumerate(tagged, 1):
+                    self.assertIn(chr(0x2460 + index - 1), formula)
+                    self.assertEqual(1, formula.count(r'\tag*{'))
+                    self.assertNotIn('$', formula)
+                    self.assertNotIn('<br>', formula)
+                original_scores = re.findall(r'\\tag\*\{[^\n]*?（(\d+)分）', source)
+                rendered_scores = [re.search(r'（(\d+)分）', formula).group(1) for formula in tagged]
+                self.assertEqual(original_scores, rendered_scores)
+                self.assertEqual([], _residual_commands_outside_math(markdown))
+                self.assertNotIn(r'\textcircled', markdown)
+
     def test_imported_bank_question_preview_has_no_layout_code(self):
         if not BANK_QUESTION.exists():
             self.skipTest('题库题目不存在')

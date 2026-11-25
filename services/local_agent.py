@@ -12,7 +12,9 @@ import subprocess
 import sys
 from tempfile import TemporaryDirectory
 
-from services.desktop_tool_paths import fresh_tool_path
+from services.desktop_tool_paths import (
+    configured_agent_command, fresh_tool_path, managed_papilot_agent, resolve_agent_command,
+)
 from services.local_codex import _find_codex, _run_codex_json
 from services.local_process import run
 
@@ -20,7 +22,7 @@ from services.local_process import run
 @dataclass(frozen=True)
 class LocalAgent:
     label: str
-    binary: str
+    binary: str | None
     login: str
     setup: str
     images: bool = True
@@ -38,6 +40,12 @@ LOCAL_AGENTS = {
     'qoder': LocalAgent('Qoder CLI', 'qoder', 'qoder login', '使用本机已登录的 Qoder CLI。图片需使用支持视觉的模型。', alias='qodercli'),
     'agy': LocalAgent('Antigravity CLI (agy)', 'agy', 'agy acp --login', '用本机 Antigravity CLI 登录 Google 账号后返回题库。'),
     'workbuddy': LocalAgent('WorkBuddy', 'workbuddy', '', '沿用独立 WorkBuddy ACP 启动器的登录。图片需由该启动器和模型支持。'),
+    'pi': LocalAgent('Pi', 'pi', 'pi', '在终端运行 Pi，输入 /login 登录，然后选择模型。图片需由所选模型支持。'),
+    'grok': LocalAgent('Grok Build', 'grok', 'grok login', '使用 Grok Build CLI 的现有登录。图片需由所选模型支持。'),
+    'kimi': LocalAgent('Kimi Code', 'kimi', 'kimi login', '使用本机 Kimi Code CLI 的登录。图片需由所选模型支持。'),
+    'deepseek': LocalAgent('DeepSeek Harness', 'dsh', 'dsh web', '在 DeepSeek Harness 中登录，再使用本机 dsh 启动器。', images=False),
+    'qwen': LocalAgent('Qwen Code', 'qwen', 'qwen', '在终端启动 Qwen Code 并完成登录。图片需由所选模型支持。'),
+    'glm': LocalAgent('GLM', None, '', '在本机完成 GLM 凭据配置后重新检测。使用文本模型 GLM-5.3。', images=False),
 }
 
 
@@ -48,11 +56,26 @@ def _find_agent(agent_id, tool_path):
         from services.local_agent_workbuddy import find_workbuddy_launcher
         return find_workbuddy_launcher(tool_path)
     agent = LOCAL_AGENTS[agent_id]
-    return shutil.which(agent.binary, path=tool_path) or (shutil.which(agent.alias, path=tool_path) if agent.alias else None)
+    if agent.binary is None:
+        return None
+    command = configured_agent_command('CURSOR' if agent_id == 'cursor' else agent.binary.upper())
+    if command is not None:
+        return resolve_agent_command(command, tool_path)
+    executable = shutil.which(agent.binary, path=tool_path)
+    if not executable and agent.alias:
+        executable = shutil.which(agent.alias, path=tool_path)
+    return executable or managed_papilot_agent(agent_id)
 
 
 def _login_command(agent, executable):
-    if agent.alias and executable and Path(executable).stem.lower() == agent.alias:
+    if not executable or not agent.login:
+        return agent.login
+    launcher = Path(executable)
+    if os.name == 'nt' and launcher.is_absolute():
+        quoted_path = str(launcher).replace("'", "''")
+        _, space, arguments = agent.login.partition(' ')
+        return f"& '{quoted_path}'{space}{arguments}"
+    if agent.alias and launcher.stem.lower() == agent.alias:
         return agent.login.replace(agent.binary, agent.alias, 1)
     return agent.login
 
@@ -63,10 +86,13 @@ def _setup_help(agent, executable):
 
 
 def agent_status(tool_path):
+    from services.local_agent_glm import glm_configured
+
     result = []
     for agent_id, agent in LOCAL_AGENTS.items():
         executable = _find_agent(agent_id, tool_path)
-        result.append(dict(id=agent_id, label=agent.label, installed=bool(executable), path=executable,
+        installed = glm_configured() if agent_id == 'glm' else bool(executable)
+        result.append(dict(id=agent_id, label=agent.label, installed=installed, path=executable,
                            images=agent.images, loginCommand=_login_command(agent, executable), setup=agent.setup, auth='unknown'))
     return result
 
@@ -187,6 +213,9 @@ def _acp(provider, executable, directory, prompt, schema, images, env, timeout):
     elif provider == 'workbuddy':
         from services.local_agent_workbuddy import workbuddy_acp_command
         command = workbuddy_acp_command(executable, directory, env)
+    else:
+        from services.local_agent_papilot_acp import papilot_acp_command
+        command = papilot_acp_command(provider, executable, directory, env)
     task = _structured_prompt(prompt, schema)
     if images:
         task += '\n\n本次任务包含图片，若当前模型无法读取图片，请只返回 {"utopia_error":"image_unsupported"}。'
@@ -232,17 +261,19 @@ def _decode_output(value, schema):
 
 
 def run_agent_json(provider, prompt, schema, images, *, timeout=180):
-    if provider == 'api':
-        from services.desktop_model import request_api_json
-        return request_api_json(prompt, schema, images, timeout)
+    if not isinstance(provider, str) or provider not in LOCAL_AGENTS:
+        raise ValueError('请选择可用的本机 Agent。')
+    if images:
+        require_image_support(provider)
+    if provider == 'glm':
+        from services.local_agent_glm import glm_request
+        return glm_request(prompt, schema, images, timeout=timeout)
     tool_path = fresh_tool_path()
     if provider == 'codex':
         return _run_codex_json(prompt, schema, images, timeout=timeout, tool_path=tool_path,
                                env=_agent_environment(tool_path))
 
     agent = LOCAL_AGENTS[provider]
-    if images:
-        require_image_support(provider)
     executable = _find_agent(provider, tool_path)
     if not executable:
         raise RuntimeError(f'未找到 {agent.label} 的可用启动器。请在设置中检查安装。{_setup_help(agent, executable)}')
@@ -253,6 +284,9 @@ def run_agent_json(provider, prompt, schema, images, *, timeout=180):
             env = _agent_environment(tool_path)
             if provider == 'claude':
                 value = _claude(executable, directory, prompt, schema, images, env, timeout)
+            elif provider == 'pi':
+                from services.local_agent_pi import pi_request
+                value = pi_request(executable, directory, prompt, schema, images, env, timeout)
             else:
                 value = _acp(provider, executable, directory, prompt, schema, images, env, timeout)
         return _decode_output(value, schema)
