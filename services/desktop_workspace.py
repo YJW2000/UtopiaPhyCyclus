@@ -19,9 +19,10 @@ from services.desktop_revision import (
     changed_ranges, chat_revision, decode_attachments, offsets, rebase_selections, utf16_length,
 )
 from services.file_service import atomic_write_text
-from services.local_agent import require_image_support
+from services.local_agent import LOCAL_AGENTS, require_image_support
 from services.local_process import check_cancelled
 from services.pdf_import_service import import_pdf, inspect_pdf
+from services.pdf_selection_edit import locate_pdf_selection
 from services.tex_compile_service import compile_tex_preview
 from services.tex_import_service import decode_tex, parse_tex_questions, replace_parsed_problem_header
 from utils.core_config import CHAPTERS_DIR, SUBJECTS
@@ -108,6 +109,7 @@ class DesktopWorkspace:
             'workspace.import_pdf': self.import_document,
             'workspace.reconstruct': self.reconstruct,
             'workspace.compile': self.compile,
+            'workspace.locate': self.locate,
             'workspace.chat': self.chat,
             'workspace.apply': self.apply,
             'workspace.dismiss': self.dismiss,
@@ -546,6 +548,23 @@ class DesktopWorkspace:
 
         return self.jobs.submit(compile_job, document['id'])
 
+    def locate(self, params):
+        with self.lock:
+            document = self._read(params.get('id'))
+            self._check_revision(document, params)
+            source = document['source']
+            preview = document.get('previewPath')
+            if not preview or preview != params.get('previewPath') or document.get('_previewHash') != _sha(source):
+                raise ValueError('预览与源码版本不一致，请重新编译并框选。')
+
+        def locate_job(job):
+            job.progress('正在定位选区对应的 LaTeX 源码')
+            span = locate_pdf_selection(source, Path(preview).read_bytes(), params.get('page'), params.get('rect'),
+                                        source_map=self._source_map(preview), pdf_lock=self.pdf_lock)
+            job.publish(lambda: dict(start=utf16_length(source[:span['start']]), end=utf16_length(source[:span['end']])))
+
+        return self.jobs.submit(locate_job, document['id'])
+
     def _proposal(self, document, changes, scope, selection, job):
         source = document['source']
         updated = source
@@ -590,7 +609,9 @@ class DesktopWorkspace:
         if scope not in ('selection', 'document'):
             raise ValueError('对话范围无效。')
         attachments, images = decode_attachments(params.get('attachments', []))
-        provider = selected_provider(self.state)
+        provider = params.get('agent', selected_provider(self.state))
+        if not isinstance(provider, str) or provider != 'api' and provider not in LOCAL_AGENTS:
+            raise ValueError('请选择可用的本机 Agent。')
         with self.lock:
             document = self._read(params.get('id'))
             self._check_revision(document, params)
@@ -621,6 +642,18 @@ class DesktopWorkspace:
                 raise ValueError('预览已刷新，请在当前页面重新框选。')
             if images or pdf_selections:
                 require_image_support(provider)
+            history = document['messages'][:]
+            if 'historyAfter' in params:
+                boundary = params['historyAfter']
+                if boundary is None:
+                    history = []
+                else:
+                    for index, message in enumerate(history):
+                        if message['id'] == boundary:
+                            history = history[index + 1:]
+                            break
+                    else:
+                        raise ValueError('这条任务的对话起点已失效，请重新创建任务。')
             user_message = self._message('user', scope, prompt.strip(), attachments=attachments)
             document['messages'].append(user_message)
             self._write(document)
@@ -634,7 +667,7 @@ class DesktopWorkspace:
                     raise ValueError('请先编译当前草稿。')
                 pdf = Path(preview).read_bytes()
                 source_map = self._source_map(preview)
-            reply, changes = chat_revision(new_source, prompt, scope, ranges, document['messages'][:-1], images,
+            reply, changes = chat_revision(new_source, prompt, scope, ranges, history, images,
                                            pdf=pdf, pdf_selections=pdf_selections, source_map=source_map, pdf_lock=self.pdf_lock)
             check_cancelled()
             proposal = self._proposal(document, changes, scope, ranges[0] if len(ranges) == 1 else None, job) if changes else None

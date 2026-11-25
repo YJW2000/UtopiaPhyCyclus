@@ -94,6 +94,7 @@ OSFONTDIR = $TEXMFROOT/texmf-dist/fonts/opentype//;$TEXMFROOT/texmf-dist/fonts/t
 <fontconfig>
   <dir prefix="relative">texmf-dist/fonts/opentype</dir>
   <dir prefix="relative">texmf-dist/fonts/truetype</dir>
+  <dir>WINDOWSFONTDIR</dir>
   <cachedir prefix="relative">font-cache</cachedir>
   <config><rescan><int>0</int></rescan></config>
 </fontconfig>

@@ -32,7 +32,7 @@ const METHODS = new Set([
   'workspace.fileInfo', 'workspace.saveFileInfo',
   'library.check', 'library.maintenanceStatus', 'context.chat', 'ui.load', 'ui.save', 'ui.providers',
   'workspace.list', 'workspace.open', 'workspace.resume', 'workspace.create',
-  'workspace.save', 'workspace.import_pdf', 'workspace.reconstruct', 'workspace.compile', 'workspace.chat',
+  'workspace.save', 'workspace.import_pdf', 'workspace.reconstruct', 'workspace.compile', 'workspace.locate', 'workspace.chat',
   'workspace.apply', 'workspace.dismiss', 'workspace.undo', 'workspace.export', 'workspace.export_tex', 'workspace.export_pdf',
   'workspace.chapters', 'task.get', 'task.cancel',
 ]);

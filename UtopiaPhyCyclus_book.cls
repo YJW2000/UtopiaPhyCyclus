@@ -136,6 +136,7 @@
 
 % Prefer the document's CJK font. Consult installed fonts only for missing glyphs.
 \ifdefined\setCJKfallbackfamilyfont
+  \xeCJKsetup{CJKmath=true}
   \providecommand\UtopiaSystemFontDir{C:/Windows/Fonts/}
   \def\utopia@cjkfallbacks{}
   \newcommand\utopia@addcjkfallback[1]{%
@@ -156,10 +157,19 @@
     \setCJKfallbackfamilyfont{\CJKrmdefault}[Path=\UtopiaSystemFontDir]{#1}%
     \setCJKfallbackfamilyfont{\CJKsfdefault}[Path=\UtopiaSystemFontDir]{#1}%
     \setCJKfallbackfamilyfont{\CJKttdefault}[Path=\UtopiaSystemFontDir]{#1}%
+    \ifdefined\songti\setCJKfallbackfamilyfont{zhsong}[Path=\UtopiaSystemFontDir]{#1}\fi
+    \ifdefined\heiti\setCJKfallbackfamilyfont{zhhei}[Path=\UtopiaSystemFontDir]{#1}\fi
+    \ifdefined\kaishu\setCJKfallbackfamilyfont{zhkai}[Path=\UtopiaSystemFontDir]{#1}\fi
+    \ifdefined\fangsong\setCJKfallbackfamilyfont{zhfs}[Path=\UtopiaSystemFontDir]{#1}\fi
   }
   \ifx\utopia@cjkfallbacks\@empty\else
     \expandafter\utopia@setcjkfallbacks\expandafter{\utopia@cjkfallbacks}
     \xeCJKsetup{AutoFallBack=true}
+    \IfFileExists{\UtopiaSystemFontDir NotoSerifSC-VF.ttf}{%
+      \setCJKmathfont[Path=\UtopiaSystemFontDir]{NotoSerifSC-VF.ttf}%
+    }{\IfFileExists{\UtopiaSystemFontDir simsun.ttc}{%
+      \setCJKmathfont[Path=\UtopiaSystemFontDir]{simsun.ttc}%
+    }{}}%
     % Plain-text symbols from copied questions can use the same font fallback.
     % They keep normal category codes, including when used in figure filenames.
     \xeCJKDeclareCharClass{CJK}{%

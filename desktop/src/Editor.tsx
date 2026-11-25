@@ -2,10 +2,13 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { FormEvent, KeyboardEvent, PointerEvent } from 'react'
 import { EditorChat, EditorModal } from './EditorChat'
 import { EditorPdf } from './EditorPdf'
-import type { PdfNavigation, PdfPosition } from './EditorPdf'
+import type { PdfAnnotationAction, PdfFit, PdfNavigation, PdfPosition, PdfTool, PdfViewState } from './EditorPdf'
 import PaneDivider from './PaneDivider'
+import { WorkbenchBookmarks, WorkbenchFind, WorkbenchIcon, WorkbenchRail, WorkbenchToolbar } from './WorkbenchToolbar'
+import type { WorkbenchAction } from './WorkbenchToolbar'
 import { editorCall, errorMessage, pollEditorTask } from './editorContract'
 import type { EditorAttachment, EditorCompileResult, EditorDocument, EditorMessage, EditorProposal, EditorSelection, PdfPanel } from './editorContract'
+import type { ProviderId } from './settingsContract'
 import './editor.css'
 
 export type { EditorDocument } from './editorContract'
@@ -13,6 +16,7 @@ export type { EditorDocument } from './editorContract'
 type Mode = 'review' | 'split' | 'chat'
 type View = 'preview' | 'source' | 'original' | 'compare'
 type Sheet = 'library' | 'recognize'
+type Utility = 'find' | 'bookmarks' | 'notes'
 
 interface Props {
   document: EditorDocument
@@ -38,6 +42,7 @@ interface Layout {
   chatWidth: number
   documentWidth: number
   pdf: Record<PdfPanel, PdfPosition>
+  pdfFit?: Partial<Record<PdfPanel, PdfFit>>
   sourceScroll: number
   compareText: boolean
 }
@@ -46,9 +51,12 @@ interface ChatRun { controller: AbortController; id?: string; message: EditorMes
 interface CompareState { id: string; before?: string; after?: string; loading: boolean; error?: string }
 interface BankExport { files: { file: string; status: 'success' | 'skip' | 'error'; message: string }[] }
 
-const modes: [Mode, string, string][] = [['review', '审阅', 'file'], ['split', '分屏', 'split'], ['chat', '聊天', 'chat']]
-const views: [View, string][] = [['preview', 'PDF 预览'], ['source', 'LaTeX'], ['original', '原卷'], ['compare', '修改对照']]
 const questionKinds = ['单项选择题', '多项选择题', '实验题', '计算题']
+const pdfTools = [
+  ['select', '选取文字', 'select'], ['hand', '抓手拖动', 'hand'], ['crop', '框选 PDF', 'region'],
+  ['magic', '魔法笔', 'magic'], ['mark', '高亮标记', 'mark'], ['note', 'PDF 批注', 'note'],
+  ['trim', '裁剪页边距', 'crop'],
+] as const
 const activeChatDrafts = new Map<string, { prompt: string; attachments: EditorAttachment[] }>()
 const chatPanelId = 'workbench-chat-pane'
 const chatMinWidth = 280
@@ -92,6 +100,9 @@ export { Editor }
 function Workbench({ document, docked = false, onExpand, onEditFileInfo, onChange, onClose }: Props) {
   const draftKey = `utopia-workbench-draft-${document.id}`
   const layoutKey = `utopia-workbench-${docked ? 'dock-layout' : 'layout'}-${document.id}`
+  const bookmarkKey = `utopia-workbench-bookmarks-${document.id}`
+  const historyKey = `utopia-workbench-history-${document.id}`
+  const agentKey = `utopia-workbench-agent-${document.id}`
   const [record, setRecord] = useState(document)
   const [draft, setDraft] = useState(() => {
     const cached = parseStored<{ baseRevision?: number; draft: Draft }>(draftKey)
@@ -107,11 +118,23 @@ function Workbench({ document, docked = false, onExpand, onEditFileInfo, onChang
   const [notice, setNotice] = useState('')
   const [compileLog, setCompileLog] = useState('')
   const [showLog, setShowLog] = useState(false)
-  const [cropPanel, setCropPanel] = useState<PdfPanel>()
   const [navigation, setNavigation] = useState<Partial<Record<PdfPanel, PdfNavigation>>>({})
+  const [focusedPdf, setFocusedPdf] = useState<PdfPanel>()
+  const [tool, setTool] = useState<PdfTool>('select')
+  const [pdfViews, setPdfViews] = useState<Partial<Record<PdfPanel, PdfViewState>>>({})
+  const [annotationCommands, setAnnotationCommands] = useState<Partial<Record<PdfPanel, PdfAnnotationAction>>>({})
+  const [utility, setUtility] = useState<Utility>()
+  const [find, setFind] = useState({ query: '', index: 0 })
+  const [bookmarks, setBookmarks] = useState(() => parseStored<Partial<Record<PdfPanel, number[]>>>(bookmarkKey) ?? {})
+  const [historyAfter, setHistoryAfter] = useState(() => parseStored<string>(historyKey))
+  const [showHistory, setShowHistory] = useState(false)
+  const [agent, setAgent] = useState(() => parseStored<ProviderId>(agentKey))
+  const [locateMode, setLocateMode] = useState(false)
+  const [locatingSource, setLocatingSource] = useState(false)
   const [attachments, setAttachments] = useState<EditorAttachment[]>(() => activeChatDrafts.get(document.id)?.attachments ?? [])
   const [prompt, setPrompt] = useState(() => activeChatDrafts.get(document.id)?.prompt ?? '')
   const [chatStatus, setChatStatus] = useState('')
+  const [proposalBusy, setProposalBusy] = useState(false)
   const [pending, setPending] = useState<EditorMessage>()
   const [proposalId, setProposalId] = useState<string>()
   const [compare, setCompare] = useState<CompareState>()
@@ -120,9 +143,9 @@ function Workbench({ document, docked = false, onExpand, onEditFileInfo, onChang
   const [sheetError, setSheetError] = useState('')
   const [chapters, setChapters] = useState<string[]>([])
   const [sourceRange, setSourceRange] = useState({ start: 0, end: 0 })
-  const [commandsOpen, setCommandsOpen] = useState(false)
-  const [pairOpen, setPairOpen] = useState(false)
+  const [renaming, setRenaming] = useState(false)
   const sourceArea = useRef<HTMLTextAreaElement>(null)
+  const chatPane = useRef<HTMLElement>(null)
   const lineNumbers = useRef<HTMLDivElement>(null)
   const sourceScroll = useRef(layout.sourceScroll)
   const latestDraft = useRef(draft)
@@ -148,6 +171,19 @@ function Workbench({ document, docked = false, onExpand, onEditFileInfo, onChang
   const preciseCaptures = preview.source === draft.source
     ? attachments.filter(item => item.panel === 'preview' && item.previewPath === preview.path && item.rect && item.page)
     : []
+  const messages = record.messages ?? []
+  const boundary = historyAfter ? messages.findIndex(message => message.id === historyAfter) : -1
+  const taskMessages = showHistory ? messages : messages.slice(boundary + 1)
+  const taskProposals = boundary < 0 || showHistory ? proposals : proposals.filter(item => taskMessages.some(message => message.proposalId === item.id))
+  const pdfPanels: PdfPanel[] = layout.view === 'compare'
+    ? layout.compareText || !proposal ? [] : ['before', 'after']
+    : [layout.view, layout.pair].filter((view): view is 'preview' | 'original' => view === 'preview' || view === 'original')
+  const activePdf = focusedPdf && pdfPanels.includes(focusedPdf) ? focusedPdf : pdfPanels[0]
+  const pdfView = activePdf ? pdfViews[activePdf] : undefined
+  const mainPdfView = record.pdfPath && !draft.source.trim() ? 'original' : 'preview'
+  const rememberPdfView = useMemo(() => Object.fromEntries((['preview', 'original', 'before', 'after'] as const).map(panel => [
+    panel, (view: PdfViewState) => setPdfViews(previous => ({ ...previous, [panel]: view })),
+  ])) as Record<PdfPanel, (view: PdfViewState) => void>, [])
 
   const attachSource = useCallback((node: HTMLTextAreaElement | null) => {
     if (node) {
@@ -383,6 +419,9 @@ function Workbench({ document, docked = false, onExpand, onEditFileInfo, onChang
       const params: Record<string, unknown> = { id: document.id, prompt: text, source, attachments, scope, revision: latestRecord.current.revision }
       if (selectionOnly && selected) params.selection = { start: selected.start, end: selected.end }
       if (selectionOnly && screenshots.length) params.pdfSelections = screenshots
+      setShowHistory(false)
+      if (boundary >= 0) params.historyAfter = historyAfter
+      if (agent) params.agent = agent
       const job = await editorCall<{ taskId: string }>('workspace.chat', params)
       run.id = job.taskId
       if (run.controller.signal.aborted) { await editorCall('task.cancel', { id: job.taskId }); return }
@@ -430,6 +469,8 @@ function Workbench({ document, docked = false, onExpand, onEditFileInfo, onChang
   }
 
   async function updateProposal(operation: 'apply' | 'dismiss' | 'undo', item?: EditorProposal) {
+    if (proposalBusy) return
+    setProposalBusy(true)
     try {
       await persist()
       const next = await editorCall<EditorDocument>(`workspace.${operation}`, {
@@ -445,11 +486,12 @@ function Workbench({ document, docked = false, onExpand, onEditFileInfo, onChang
         if (!next.previewPath) void compileCurrent(next.source)
       }
     } catch (error) { setChatStatus(errorMessage(error)); setNotice(errorMessage(error)) }
+    finally { setProposalBusy(false) }
   }
 
   function compareProposal(item: EditorProposal) {
     setProposalId(item.id)
-    setLayout(previous => ({ ...previous, mode: previous.mode === 'chat' ? 'split' : previous.mode, view: 'compare', pair: undefined }))
+    changeView('compare')
   }
 
   async function comparePdfs(item: EditorProposal) {
@@ -469,8 +511,114 @@ function Workbench({ document, docked = false, onExpand, onEditFileInfo, onChang
   }
 
   function changeView(view: View) {
-    setPairOpen(false)
-    setLayout(previous => ({ ...previous, view, pair: undefined }))
+    setLocateMode(false)
+    setAnnotationCommands({})
+    setUtility(undefined)
+    setFind({ query: '', index: 0 })
+    setLayout(previous => ({ ...previous, mode: previous.mode === 'chat' ? 'split' : previous.mode, view, pair: undefined }))
+  }
+
+  function changePair(view: 'source' | 'original') {
+    setLocateMode(false)
+    setAnnotationCommands({})
+    setUtility(undefined)
+    setFind({ query: '', index: 0 })
+    setFocusedPdf('preview')
+    setLayout(previous => ({ ...previous, mode: previous.mode === 'chat' ? 'split' : previous.mode, view, pair: 'preview' }))
+  }
+
+  function focusChat() {
+    setLayout(previous => previous.mode === 'review' ? { ...previous, mode: 'split' } : previous)
+    requestAnimationFrame(() => chatPane.current?.querySelector('textarea')?.focus())
+  }
+
+  function choosePdfTool(next: PdfTool) {
+    setLocateMode(false)
+    setTool(next)
+  }
+
+  function armSourceLocate() {
+    if (locateMode) {
+      choosePdfTool('select')
+      return
+    }
+    if (!preview.path || preview.source !== draft.source) {
+      setNotice('请先编译当前 LaTeX，再在 PDF 中框选要定位的内容。')
+      return
+    }
+    setNotice('')
+    changeView('preview')
+    setFocusedPdf('preview')
+    setTool('crop')
+    setLocateMode(true)
+  }
+
+  async function locateSource(capture: EditorAttachment) {
+    if (!locateMode) {
+      addCapture(capture)
+      return
+    }
+    if (capture.panel !== 'preview' || !capture.page || !capture.rect || !preview.path) return
+    const source = latestDraft.current.source
+    choosePdfTool('select')
+    setLocatingSource(true)
+    try {
+      const saved = await persist()
+      const span = await runTask<{ start: number; end: number }>('workspace.locate', {
+        revision: saved.revision, previewPath: preview.path, page: capture.page, rect: capture.rect,
+      })
+      if (lifecycle.current?.signal.aborted) return
+      if (latestDraft.current.source !== source) throw new Error('源码已修改，请重新编译后框选。')
+      changePair('source')
+      requestAnimationFrame(() => {
+        const editor = sourceArea.current
+        if (!editor) return
+        editor.focus()
+        editor.setSelectionRange(span.start, span.end)
+        setSourceRange(span)
+        const lineHeight = Number.parseFloat(getComputedStyle(editor).lineHeight)
+        editor.scrollTop = (source.slice(0, span.start).split('\n').length - 1) * lineHeight - editor.clientHeight / 3
+      })
+    } catch (error) { setNotice(errorMessage(error)) }
+    finally { setLocatingSource(false) }
+  }
+
+  function startNewTask() {
+    const last = messages.at(-1)
+    setHistoryAfter(last?.id)
+    storeValue(historyKey, last?.id)
+    setShowHistory(false)
+    setChatStatus('')
+    focusChat()
+  }
+
+  function jumpToPage(panel: PdfPanel, page: number) {
+    const count = pdfViews[panel]?.pageCount
+    if (!count || !Number.isFinite(page)) return
+    const target = Math.max(1, Math.min(count, Math.round(page)))
+    setNavigation(previous => ({ ...previous, [panel]: { page: target, stamp: ++navigationStamp.current } }))
+    setPdfPosition(panel, target, 0, true)
+  }
+
+  function changeZoom(panel: PdfPanel, zoom: number | 'width' | 'page') {
+    const fit = typeof zoom === 'number' ? 'custom' : zoom
+    const factor = typeof zoom === 'number' ? zoom : 1
+    setLayout(previous => ({
+      ...previous,
+      pdfFit: { ...previous.pdfFit, [panel]: fit },
+      pdf: { ...previous.pdf, [panel]: { ...previous.pdf[panel], zoom: factor } },
+    }))
+  }
+
+  function toggleBookmark(panel: PdfPanel, page: number) {
+    const pages = bookmarks[panel] ?? []
+    const updated = { ...bookmarks, [panel]: pages.includes(page) ? pages.filter(item => item !== page) : [...pages, page].sort((a, b) => a - b) }
+    setBookmarks(updated)
+    storeValue(bookmarkKey, updated)
+  }
+
+  function controlAnnotation(type: 'undo' | 'redo') {
+    if (activePdf) setAnnotationCommands(previous => ({ ...previous, [activePdf]: { type, stamp: ++navigationStamp.current } }))
   }
 
   function setPdfPosition(panel: PdfPanel, page: number, offset: number, fromScroll: boolean) {
@@ -516,11 +664,16 @@ function Workbench({ document, docked = false, onExpand, onEditFileInfo, onChang
   }
 
   function renderPdf(panel: PdfPanel, path: string | null | undefined, label: string, empty: string, waiting = false) {
-    return <EditorPdf path={path} label={label} panel={panel} position={layout.pdf[panel]} navigation={navigation[panel]} pending={waiting} empty={empty} crop={cropPanel === panel}
-      onCropToggle={() => setCropPanel(current => current === panel ? undefined : panel)} onCapture={addCapture}
-      annotationKey={record.id} onAnnotation={annotatePdf}
-      onNavigate={(page, offset, fromScroll) => setPdfPosition(panel, page, offset, fromScroll)}
-      onZoom={zoom => setLayout(previous => ({ ...previous, pdf: { ...previous.pdf, [panel]: { ...previous.pdf[panel], zoom } } }))} />
+    const currentTool = panel === activePdf ? tool : 'select'
+    return <>
+      {pdfPanels.length > 1 && <div className="wb-panel-caption" data-active={panel === activePdf || undefined} onClick={() => setFocusedPdf(panel)}><button type="button" className="wb-btn" aria-pressed={panel === activePdf}>{label}</button></div>}
+      <EditorPdf path={path} label={label} panel={panel} position={layout.pdf[panel]} fit={layout.pdfFit?.[panel]} navigation={navigation[panel]} pending={waiting} empty={empty}
+        hideToolbar tool={currentTool} onToolChange={choosePdfTool} crop={currentTool === 'crop'} onCropToggle={() => choosePdfTool(tool === 'crop' ? 'select' : 'crop')}
+        search={utility === 'find' && panel === activePdf ? find : undefined} onViewState={rememberPdfView[panel]} onFocusPanel={() => setFocusedPdf(panel)}
+        onCapture={capture => void locateSource(capture)} annotationKey={record.id} onAnnotation={annotatePdf} annotationAction={annotationCommands[panel]}
+        onNavigate={(page, offset, fromScroll) => setPdfPosition(panel, page, offset, fromScroll)}
+        onZoom={zoom => changeZoom(panel, zoom)} />
+    </>
   }
 
   function renderView(view: Exclude<View, 'compare'>) {
@@ -561,6 +714,12 @@ function Workbench({ document, docked = false, onExpand, onEditFileInfo, onChang
           if (!currentComparison?.loading && !(currentComparison?.before && currentComparison?.after) && !(proposal.beforePath && proposal.afterPath)) void comparePdfs(proposal)
         }}>PDF 对照</button>
         {!layout.compareText && <label className="wb-sync"><input type="checkbox" checked={layout.sync} onChange={event => setLayout(previous => ({ ...previous, sync: event.target.checked }))} /> 联动翻页</label>}
+        {proposal.status === 'pending' && <div className="wb-comparison-resolve" aria-label="审阅修改提案">
+          <button type="button" className="wb-btn" disabled={proposalBusy || Boolean(pending)} onClick={() => void updateProposal('dismiss', proposal)}>放弃</button>
+          <button type="button" className="wb-btn wb-primary" disabled={proposalBusy || Boolean(pending) || proposal.baseSource !== draft.source}
+            title={proposal.baseSource !== draft.source ? '源码已修改，请重新生成修改提案。' : undefined}
+            onClick={() => void updateProposal('apply', proposal)}>采用</button>
+        </div>}
       </div>
       {!layout.compareText && currentComparison?.error && <div className="wb-notice" role="status">部分对照预览编译失败。 <button type="button" className="wb-btn" onClick={() => { setCompileLog(currentComparison.error ?? ''); setShowLog(true) }}>编译日志</button></div>}
       <div className="wb-document-panes">
@@ -645,7 +804,6 @@ function Workbench({ document, docked = false, onExpand, onEditFileInfo, onChang
   }
 
   async function exportTex() {
-    setCommandsOpen(false)
     try {
       const path = await window.utopia.saveFile('tex', `${latestDraft.current.title}.tex`)
       if (!path) return
@@ -656,7 +814,6 @@ function Workbench({ document, docked = false, onExpand, onEditFileInfo, onChang
   }
 
   async function exportPdf() {
-    setCommandsOpen(false)
     try {
       const path = await window.utopia.saveFile('pdf', `${latestDraft.current.title}.pdf`)
       if (!path) return
@@ -674,82 +831,141 @@ function Workbench({ document, docked = false, onExpand, onEditFileInfo, onChang
   }
 
   async function editFileInfo() {
-    setCommandsOpen(false)
     try { onEditFileInfo?.(await persist()) }
     catch { /* The save status already shows the error. */ }
   }
 
+  const pdfReady = Boolean(pdfView?.pageCount) && layout.mode !== 'chat'
+  const buildUtilityAction = (id: Utility, label: string, icon: WorkbenchAction['icon']): WorkbenchAction => ({
+    id, label, icon, pressed: utility === id, disabled: !pdfReady && (id !== 'notes' || !draft.selections.length),
+    onClick: () => setUtility(value => value === id ? undefined : id),
+  })
+  const toolbarActions = [buildUtilityAction('notes', '查看批注和标记', 'note')]
+  const pdfActions: WorkbenchAction[] = pdfTools.map(([id, label, icon]) => ({
+    id, label, icon, disabled: !pdfReady, pressed: !locateMode && tool === id, onClick: () => choosePdfTool(id),
+  }))
+  pdfActions.push(
+    buildUtilityAction('find', '搜索 PDF', 'find'),
+    { id: 'locate-source', label: '同步定位源码', icon: 'sync', disabled: locatingSource || !draft.source.trim(), pressed: locateMode, onClick: armSourceLocate },
+    { id: 'show-source', label: '查看 LaTeX 源码', icon: 'source', pressed: layout.view === 'source', onClick: () => changeView('source') },
+  )
+  const layoutActions: WorkbenchAction[] = [
+    { id: 'layout-pdf', label: '仅看题目', icon: 'file', pressed: layout.mode === 'review', onClick: () => setLayout(previous => ({ ...previous, mode: 'review' })) },
+    { id: 'layout-split', label: '题目与聊天分栏', icon: 'split', pressed: layout.mode === 'split', onClick: () => setLayout(previous => ({ ...previous, mode: 'split' })) },
+    { id: 'layout-chat', label: '仅看聊天', icon: 'chat', pressed: layout.mode === 'chat', onClick: () => setLayout(previous => ({ ...previous, mode: 'chat' })) },
+    { id: 'source', label: '查看 LaTeX 源码', icon: 'source', pressed: layout.view === 'source' && !layout.pair, onClick: () => changeView('source') },
+    { id: 'original', label: `查看${originalLabel}`, icon: 'file', pressed: layout.view === 'original' && !layout.pair, disabled: !record.pdfPath, onClick: () => changeView('original') },
+    { id: 'source-pdf', label: 'LaTeX ＋ PDF 预览', icon: 'split', pressed: layout.view === 'source' && !!layout.pair, onClick: () => changePair('source') },
+    { id: 'original-pdf', label: `${originalLabel} ＋ 重建 PDF`, icon: 'split', pressed: layout.view === 'original' && !!layout.pair, disabled: !record.pdfPath, onClick: () => changePair('original') },
+    ...(layout.pair ? [{ id: 'single-document', label: '关闭并排', onClick: () => changeView(layout.view) }] : []),
+    ...(layout.view === 'original' && layout.pair === 'preview' ? [{
+      id: 'sync', label: '联动翻页', icon: 'sync' as const, pressed: layout.sync,
+      onClick: () => setLayout(previous => ({ ...previous, sync: !previous.sync })),
+    }] : []),
+  ]
+  const fileActions: WorkbenchAction[] = [
+    { id: 'rename', label: '编辑题目标题', onClick: () => setRenaming(true) },
+    ...(onEditFileInfo ? [{ id: 'file-info', label: '修改文件信息', onClick: () => void editFileInfo() }] : []),
+    { id: 'save', label: '另存入库', icon: 'save', disabled: !draft.source.trim(), onClick: () => openSheet('library') },
+    ...(record.pdfPath ? [{ id: 'recognize', label: reconstructing ? '正在识别…' : recognitionLabel, disabled: reconstructing, onClick: startRecognition }] : []),
+    { id: 'export-pdf', label: exporting ? '正在导出…' : '导出 PDF', icon: 'export', disabled: exporting || !draft.source.trim(), onClick: () => void exportPdf() },
+    { id: 'export-tex', label: '导出 LaTeX', icon: 'export', disabled: !draft.source.trim(), onClick: () => void exportTex() },
+    { id: 'undo-proposal', label: '撤销上次采用', icon: 'undo', disabled: !record.canUndo || proposalBusy, onClick: () => void updateProposal('undo') },
+    ...(docked && onExpand ? [{ id: 'expand', label: '展开编辑工作区', icon: 'expand' as const, onClick: onExpand }] : []),
+  ]
+  if (record.pdfPath && !draft.source.trim()) {
+    toolbarActions.unshift({ id: 'recognize', label: reconstructing ? '正在识别…' : recognitionLabel, icon: 'refresh', disabled: reconstructing, onClick: startRecognition })
+  }
+
   return <div className={`wb-workbench wb-mode-${layout.mode}${docked ? ' wb-docked' : ''}`}>
-    <header className="wb-header">
-      <div className="wb-document-title">
-        <button type="button" className="wb-icon wb-back" onClick={() => void close()} aria-label={docked ? '关闭题目详情' : '返回'} title={docked ? '关闭题目详情' : '返回'}><WorkbenchIcon name={docked ? 'close' : 'back'} /></button>
-        <div className="wb-title-block">
-          <input aria-label="题目标题" value={draft.title} onChange={event => updateDraft({ ...latestDraft.current, title: event.target.value })} />
-          <span role="status">{saveState || (changed ? '保存中…' : draft.source ? '工作稿已保存' : record.pdfPath ? `${originalLabel}已载入` : '工作稿')}</span>
-        </div>
-        {docked && onExpand && <button type="button" className="wb-icon" onClick={onExpand} aria-label="展开编辑工作区" title="展开编辑工作区"><WorkbenchIcon name="expand" /></button>}
-      </div>
-      <nav className="wb-mode-switch" aria-label="编辑工作区模式">
-        {modes.map(([mode, title, icon]) => <button type="button" key={mode} aria-pressed={layout.mode === mode} onClick={() => setLayout(previous => ({ ...previous, mode }))}><WorkbenchIcon name={icon} /> <span>{title}</span></button>)}
-      </nav>
-      <div className="wb-header-actions">
-        {record.pdfPath && !draft.source.trim() && <button type="button" className="wb-btn" disabled={reconstructing} onClick={startRecognition}>{reconstructing ? '正在识别…' : recognitionLabel}</button>}
-        <button type="button" className="wb-btn" title={preview.path && preview.source !== draft.source ? '源码已有变化，重新编译 PDF' : '编译 PDF'} disabled={compiling || !draft.source.trim()} onClick={() => void compileCurrent()}>
-          <WorkbenchIcon name="refresh" /> <span>{compiling ? '正在编译…' : '编译 PDF'}</span>
-        </button>
-        <button type="button" className="wb-btn wb-primary" disabled={!draft.source.trim()} onClick={() => openSheet('library')}><WorkbenchIcon name="save" /> <span>另存入库</span></button>
-        <div className="wb-popover-anchor">
-          <button type="button" className="wb-icon" aria-label="更多操作" aria-expanded={commandsOpen} onClick={() => setCommandsOpen(value => !value)}>⋯</button>
-          {commandsOpen && <div className="wb-popover" onBlur={event => { if (!event.currentTarget.parentElement?.contains(event.relatedTarget)) setCommandsOpen(false) }}>
-            {onEditFileInfo && <button type="button" onClick={() => void editFileInfo()}>修改文件信息</button>}
-            {record.pdfPath && <button type="button" disabled={reconstructing} onClick={() => { setCommandsOpen(false); startRecognition() }}>{recognitionLabel}</button>}
-            <button type="button" disabled={exporting || !draft.source.trim()} onClick={() => void exportPdf()}>{exporting ? '正在导出…' : '导出 PDF'}</button>
-            <button type="button" disabled={!draft.source.trim()} onClick={() => void exportTex()}>导出 LaTeX</button>
-            <button type="button" disabled={!record.canUndo} onClick={() => { setCommandsOpen(false); void updateProposal('undo') }}>撤销上次采用</button>
-          </div>}
-        </div>
-      </div>
-    </header>
+    <WorkbenchToolbar title={`${draft.title} · ${saveState || (changed ? '保存中…' : '工作稿已保存')}`} view={layout.view === 'compare' ? 'changes' : activePdf ? 'pdf' : 'source'}
+      onPdf={() => changeView(mainPdfView)} onChanges={() => changeView('compare')} changeCount={proposals.filter(item => item.status === 'pending').length}
+      pdf={activePdf && layout.mode !== 'chat' ? {
+        page: layout.pdf[activePdf].page, pageCount: pdfView?.pageCount ?? 0, outline: pdfView?.outline ?? [],
+        zoom: layout.pdf[activePdf].zoom, fit: layout.pdfFit?.[activePdf] ?? (layout.pdf[activePdf].zoom === 1 ? 'width' : 'custom'),
+        onPage: page => jumpToPage(activePdf, page), onZoom: zoom => changeZoom(activePdf, zoom),
+      } : undefined}
+      status={saveState || (changed ? '保存中…' : undefined)} actions={toolbarActions} fileActions={fileActions} layoutActions={layoutActions}
+      compile={{ id: 'compile', label: compiling ? '正在编译…' : '编译 PDF', disabled: compiling || !draft.source.trim(), onClick: () => void compileCurrent() }}
+      chat={{ id: 'chat', label: layout.mode === 'review' ? '展开题目助手' : '收起题目助手', pressed: layout.mode !== 'review', onClick: () => {
+        if (layout.mode === 'review') focusChat()
+        else setLayout(previous => ({ ...previous, mode: 'review' }))
+      } }}
+      newTask={{ id: 'new-task', label: '新任务', disabled: Boolean(pending), onClick: startNewTask }} />
     {notice && <div className="wb-notice" role="status"><span>{notice}</span>{compileLog && <button type="button" className="wb-btn" onClick={() => setShowLog(true)}>编译日志</button>}<button type="button" className="wb-icon" aria-label="关闭提示" onClick={() => setNotice('')}>×</button></div>}
+    {(locateMode || locatingSource) && <div className="wb-notice" role="status">{locatingSource ? '正在定位对应的 LaTeX 源码…' : '在 PDF 上框选内容，查看对应的 LaTeX 源码。'}
+      {locateMode && <button type="button" className="wb-icon" aria-label="取消定位源码" onClick={() => choosePdfTool('select')}>×</button>}
+    </div>}
     {reconstructing && <div className="wb-notice" role="status">{recognitionProgress || (imageInput ? '正在识别图片…' : '正在识别所选页面，可继续查看原卷。')}</div>}
     <div className="wb-body">
+      <WorkbenchRail actions={pdfActions}
+        history={[
+          { id: 'undo-mark', label: '撤销 PDF 标记', icon: 'undo', disabled: !pdfReady || !pdfView?.canUndo, onClick: () => controlAnnotation('undo') },
+          { id: 'redo-mark', label: '重做 PDF 标记', icon: 'redo', disabled: !pdfReady || !pdfView?.canRedo, onClick: () => controlAnnotation('redo') },
+          { id: 'task-history', label: showHistory ? '返回当前任务' : '查看聊天历史', icon: 'chat', disabled: boundary < 0, pressed: showHistory, onClick: () => { setShowHistory(previous => !previous); focusChat() } },
+        ]}
+        bookmarks={[
+          buildUtilityAction('bookmarks', '页面书签', 'bookmarks'),
+          { id: 'close', label: docked ? '关闭题目详情' : '返回', icon: docked ? 'close' : 'back', onClick: () => void close() },
+        ]} />
       <main className="wb-document" hidden={layout.mode === 'chat'}>
-        <div className="wb-document-tools">
-          <nav className="wb-view-switch" aria-label="题目面板">
-            {views.map(([id, title]) => <button type="button" key={id} aria-pressed={layout.view === id || layout.pair === id} onClick={() => changeView(id)}>{id === 'original' ? originalLabel : title}</button>)}
-          </nav>
-          <div className="wb-layout-tools">
-            {layout.pair && [layout.view, layout.pair].every(view => view === 'preview' || view === 'original') && <label className="wb-sync"><input type="checkbox" checked={layout.sync} onChange={event => setLayout(previous => ({ ...previous, sync: event.target.checked }))} /> 联动翻页</label>}
-            <div className="wb-popover-anchor">
-              <button type="button" className="wb-btn" aria-expanded={pairOpen} onClick={() => setPairOpen(value => !value)}><WorkbenchIcon name="split" /> 并排 <span aria-hidden="true">⌄</span></button>
-              {pairOpen && <div className="wb-popover" onBlur={event => { if (!event.currentTarget.parentElement?.contains(event.relatedTarget)) setPairOpen(false) }}>
-                <button type="button" onClick={() => { setLayout(previous => ({ ...previous, view: 'source', pair: 'preview' })); setPairOpen(false) }}>LaTeX ＋ PDF 预览</button>
-                <button type="button" onClick={() => { setLayout(previous => ({ ...previous, view: 'original', pair: 'preview' })); setPairOpen(false) }}>{originalLabel} ＋ 重建 PDF</button>
-                <button type="button" onClick={() => changeView('compare')}>修改前 ＋ 修改后</button>
-                {layout.pair && <button type="button" onClick={() => changeView(layout.view)}>关闭并排</button>}
-              </div>}
-            </div>
-          </div>
-        </div>
+        {utility === 'find' && activePdf && <div className="wb-document-utility wb-document-find">
+          <WorkbenchFind query={find.query} index={pdfView?.matches ? find.index % pdfView.matches : 0} count={pdfView?.matches ?? 0} loading={pdfView?.searching}
+            onQuery={query => setFind({ query, index: 0 })} onClose={() => setUtility(undefined)} onNavigate={delta => {
+              const count = pdfView?.matches ?? 0
+              if (count) setFind(previous => ({ ...previous, index: (previous.index + delta + count) % count }))
+            }} />
+        </div>}
+        {utility === 'bookmarks' && activePdf && pdfReady && <div className="wb-document-utility">
+          <WorkbenchBookmarks pages={(bookmarks[activePdf] ?? []).filter(page => page <= (pdfView?.pageCount ?? 0))} page={layout.pdf[activePdf].page}
+            onPage={page => jumpToPage(activePdf, page)} onToggle={() => toggleBookmark(activePdf, layout.pdf[activePdf].page)} onClose={() => setUtility(undefined)} />
+        </div>}
+        {utility === 'notes' && <section className="wb-document-utility wb-note-list" aria-label="批注和标记">
+          <header><strong>批注和标记</strong><button type="button" className="wb-icon" aria-label="关闭批注" onClick={() => setUtility(undefined)}>×</button></header>
+          {activePdf && pdfView?.notes.map(note => <button key={note.id} type="button" className="wb-btn" onClick={() => {
+            jumpToPage(activePdf, note.page)
+            setAnnotationCommands(previous => ({ ...previous, [activePdf]: { type: 'open', id: note.id, stamp: ++navigationStamp.current } }))
+            setUtility(undefined)
+          }}>第 {note.page} 页　{note.label}</button>)}
+          {draft.selections.map(selection => <button key={selection.id} type="button" className="wb-btn" onClick={() => {
+            changeView('source')
+            requestAnimationFrame(() => selectSource(selection.id))
+          }}>{selection.label}</button>)}
+          {!pdfView?.notes.length && !draft.selections.length && <p>还没有批注。可用左侧的 PDF 批注、高亮标记和魔法笔添加。</p>}
+        </section>}
         {layout.view === 'compare' ? renderComparison() : layout.pair ? <div className="wb-document-panes">
           <div className="wb-document-panel" style={{ flexBasis: `${layout.documentWidth}%` }}>{renderView(layout.view)}</div>
           {documentDivider()}
           <div className="wb-document-panel wb-document-panel-grow">{renderView(layout.pair)}</div>
         </div> : renderView(layout.view)}
       </main>
-      {layout.mode !== 'chat' && <PaneDivider open={layout.mode === 'split'} panelId={chatPanelId} label="题目助手"
+      {layout.mode === 'split' && <PaneDivider open panelId={chatPanelId} label="题目助手"
         width={layout.chatWidth} minWidth={chatMinWidth} maxWidth={chatMaxWidth} maxFraction={chatMaxFraction}
         onToggle={() => setLayout(previous => ({ ...previous, mode: previous.mode === 'split' ? 'review' : 'split' }))}
         onWidthChange={width => setLayout(previous => ({ ...previous, chatWidth: width }))} />}
-      <aside id={chatPanelId} className="wb-chat-pane" hidden={layout.mode === 'review'} style={layout.mode === 'split' ? {
+      <aside ref={chatPane} id={chatPanelId} className="wb-chat-pane" hidden={layout.mode === 'review'} style={layout.mode === 'split' ? {
         width: `clamp(min(${chatMinWidth}px, ${chatMaxFraction * 100}%), ${layout.chatWidth}px, min(${chatMaxWidth}px, ${chatMaxFraction * 100}%))`,
       } : undefined}>
-        <EditorChat messages={record.messages ?? []} proposals={proposals} attachments={attachments} selection={selected} prompt={prompt} status={chatStatus}
+        <EditorChat messages={taskMessages} proposals={taskProposals} attachments={attachments} selection={selected} prompt={prompt} status={chatStatus}
+          agent={agent} onAgent={id => { setAgent(id); storeValue(agentKey, id) }}
           pending={pending} busy={Boolean(pending)} hasPdfSelection={preciseCaptures.length > 0} onPrompt={setPrompt} onAttach={files => void attachFiles(files)}
           onRemove={id => setAttachments(previous => previous.filter(item => item.id !== id))} onClearSelection={() => selectSource(null)} onSend={scope => void sendChat(scope)}
           onStop={() => void stopChat()} onApply={item => void updateProposal('apply', item)} onDismiss={item => void updateProposal('dismiss', item)} onCompare={compareProposal} />
       </aside>
     </div>
+    {renaming && <EditorModal title="编辑题目标题" onClose={() => setRenaming(false)}>
+      <form className="wb-form" onSubmit={event => {
+        event.preventDefault()
+        const title = String(new FormData(event.currentTarget).get('title') ?? '').trim()
+        if (!title) return
+        updateDraft({ ...latestDraft.current, title })
+        setRenaming(false)
+        void persist().catch(() => {})
+      }}>
+        <label>题目标题<input name="title" defaultValue={draft.title} required autoFocus /></label>
+        <div className="wb-form-actions"><button type="button" className="wb-btn" onClick={() => setRenaming(false)}>取消</button><button type="submit" className="wb-btn wb-primary">保存标题</button></div>
+      </form>
+    </EditorModal>}
     {showLog && <EditorModal title="LaTeX 编译日志" onClose={() => setShowLog(false)}><pre className="wb-log">{compileLog}</pre></EditorModal>}
     {sheet && <EditorModal title={sheet === 'library' ? '另存入题库' : '识别原卷'} onClose={() => { if (!sheetBusy) setSheet(undefined) }}>
       <form className="wb-form" onSubmit={event => void submitSheet(event)}>
@@ -805,15 +1021,4 @@ async function readAttachment(file: File): Promise<EditorAttachment> {
   ctx.drawImage(image, 0, 0, canvas.width, canvas.height)
   image.close()
   return { id: crypto.randomUUID(), title: file.name, dataUrl: canvas.toDataURL('image/jpeg', 0.88) }
-}
-
-function WorkbenchIcon({ name, size = 16 }: { name: string; size?: number }) {
-  const paths: Record<string, string> = {
-    close: 'm6 6 12 12M6 18 18 6', expand: 'M9 4H4v5M15 4h5v5M20 15v5h-5M4 15v5h5',
-    back: 'm12 6-6 6 6 6M6 12h13', file: 'M7 3h7l4 4v14H7zM14 3v5h4m-8 4h5m-5 4h5',
-    split: 'M3 5h18v14H3zM12 5v14', chat: 'M20 11.5a7.5 7.5 0 0 1-7.5 7.5H5l1.7-3A7.5 7.5 0 1 1 20 11.5z',
-    refresh: 'M19 11a7 7 0 0 0-12-4L4 10m0 0V5m0 5h5m-4 3a7 7 0 0 0 12 4l3-3m0 0v5m0-5h-5',
-    save: 'M5 4h12l2 2v14H5zM8 4v5h8V4M8 20v-7h8v7',
-  }
-  return <svg width={size} height={size} viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.65" strokeLinecap="round" strokeLinejoin="round"><path d={paths[name]} /></svg>
 }
