@@ -13,13 +13,21 @@ const TOOLS = new Map([
   ['opencode', { label: 'OpenCode CLI', command: 'opencode', npm: '@opencode/cli', node: 20, helpUrl: 'https://opencode.ai/docs/' }],
   ['gemini', { label: 'Gemini CLI', command: 'gemini', npm: '@google/gemini-cli', node: 20, helpUrl: 'https://github.com/google-gemini/gemini-cli/blob/main/docs/get-started/installation.mdx' }],
   ['cursor', { label: 'Cursor CLI', command: 'cursor-agent', helpUrl: 'https://cursor.com/docs/cli/installation' }],
+  ['codebuddy', { label: 'CodeBuddy CLI', command: 'codebuddy', npm: '@tencent-ai/codebuddy-code', node: '18.20.8', helpUrl: 'https://www.codebuddy.cn/docs/cli/installation' }],
+  ['qoder', { label: 'Qoder CLI', command: 'qoder', alias: 'qodercli', installer: 'https://qoder.com/install.ps1', helpUrl: 'https://docs.qoder.com/cli/installation' }],
+  ['agy', { label: 'Antigravity CLI (agy)', command: 'agy', installer: 'https://antigravity.google/cli/install.ps1', helpUrl: 'https://antigravity.google/docs/getting-started?tab=cli' }],
+  ['workbuddy', { label: 'WorkBuddy', launcher: true, helpUrl: 'https://cloud.tencent.com/document/product/1831/137025' }],
 ]);
 
 const POWERSHELL_UTF8 = '[Console]::OutputEncoding = [Text.UTF8Encoding]::new($false);';
 const WINDOWS_LOCATIONS = `${POWERSHELL_UTF8}
   $codex = Get-AppxPackage -Name OpenAI.Codex -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty InstallLocation;
   @{ machine = [Environment]::GetEnvironmentVariable('Path', 'Machine');
-     user = [Environment]::GetEnvironmentVariable('Path', 'User'); codex = $codex } | ConvertTo-Json -Compress`;
+     user = [Environment]::GetEnvironmentVariable('Path', 'User'); codex = $codex;
+     workbuddyUser = [Environment]::GetEnvironmentVariable('UTOPIA_WORKBUDDY_BIN', 'User');
+     workbuddyMachine = [Environment]::GetEnvironmentVariable('UTOPIA_WORKBUDDY_BIN', 'Machine');
+     papilotUser = [Environment]::GetEnvironmentVariable('PAPILOT_WORKBUDDY_BIN', 'User');
+     papilotMachine = [Environment]::GetEnvironmentVariable('PAPILOT_WORKBUDDY_BIN', 'Machine') } | ConvertTo-Json -Compress`;
 const CURSOR_INSTALL = `${POWERSHELL_UTF8}
   $ErrorActionPreference = 'Stop';
   if (Test-Path -LiteralPath (Join-Path $env:LOCALAPPDATA 'cursor-agent')) { throw 'Cursor CLI already has an installation directory.' }
@@ -124,7 +132,8 @@ function createEnvironment({ resources, env = process.env, platform = process.pl
     if (windows) {
       const programFiles = uniquePaths([env.PROGRAMW6432, env.ProgramFiles || env.PROGRAMFILES, env['ProgramFiles(x86)'],
         path.join(local, 'Programs')], true);
-      defaults.push(prefix, cursorDirectory, path.join(local, 'Microsoft', 'WindowsApps'),
+      defaults.push(prefix, cursorDirectory, path.join(local, 'agy', 'bin'), path.join(local, 'codebuddy', 'bin'),
+        path.join(local, 'Microsoft', 'WindowsApps'),
         path.join(local, 'Microsoft', 'WinGet', 'Links'),
         ...programFiles.flatMap(base => [path.join(base, 'Git', 'cmd'), path.join(base, 'Git', 'bin'),
           path.join(base, 'MiKTeX', 'miktex', 'bin', 'x64'), path.join(base, 'MiKTeX', 'miktex', 'bin'), path.join(base, 'nodejs')]),
@@ -134,7 +143,10 @@ function createEnvironment({ resources, env = process.env, platform = process.pl
     const runtime = windows && await isFile(bundledNode) ? [path.dirname(bundledNode)] : [];
     const directories = uniquePaths([...runtime, ...pathValues, ...defaults], windows);
     const extended = { ...env, PATH: directories.join(path.delimiter) };
-    const winEnvironment = { directories, env: extended, codex: registry.codex };
+    const workbuddy = [env.UTOPIA_WORKBUDDY_BIN, registry.workbuddyUser, registry.workbuddyMachine,
+      env.PAPILOT_WORKBUDDY_BIN, registry.papilotUser, registry.papilotMachine]
+      .find(value => typeof value === 'string' && value.trim())?.trim().replace(/^"|"$/g, '');
+    const winEnvironment = { directories, env: extended, codex: registry.codex, workbuddy };
     const winget = windows && await probe('winget', winEnvironment, [], ['.exe']);
     return { ...winEnvironment, winget: winget?.path || null, hasPowerShell: windows && await isFile(powershell) };
   }
@@ -143,13 +155,14 @@ function createEnvironment({ resources, env = process.env, platform = process.pl
     return directories.flatMap(directory => extension.map(suffix => path.join(directory, `${name}${suffix}`)));
   }
 
-  async function probe(name, host, fallback = [], extension) {
+  async function probe(name, host, fallback = [], extension, flag = '--version') {
     const preferred = name === 'xelatex' ? [bundledTex] : [];
-    for (const filename of uniquePaths([...preferred, ...locations(name, host, extension), ...fallback], windows)) {
+    const candidates = name ? locations(name, host, extension) : [];
+    for (const filename of uniquePaths([...preferred, ...candidates, ...fallback], windows)) {
       if (!await isFile(filename)) continue;
       const shim = windows && /\.(cmd|bat)$/i.test(filename);
       const executable = shim ? powershell : filename;
-      const args = shim ? [...shellArgs, `${POWERSHELL_UTF8} & $env:UTOPIA_TOOL_VERSION_PATH --version; exit $LASTEXITCODE`] : ['--version'];
+      const args = shim ? [...shellArgs, `${POWERSHELL_UTF8} & $env:UTOPIA_TOOL_VERSION_PATH ${flag}; exit $LASTEXITCODE`] : [flag];
       const result = await run(executable, args, {
         env: shim ? { ...host.env, UTOPIA_TOOL_VERSION_PATH: filename } : host.env, cwd: home, timeout: 6_000,
       });
@@ -163,28 +176,49 @@ function createEnvironment({ resources, env = process.env, platform = process.pl
       const npm = path.join(path.dirname(node), 'node_modules', 'npm', 'bin', 'npm-cli.js');
       if (!await isFile(npm) || !await isFile(node)) continue;
       const result = await run(node, ['--version'], { env: host.env, cwd: home, timeout: 5_000 });
-      if (result.code === 0 && Number(result.output.trim().match(/^v(\d+)\./)?.[1]) >= minimum) return { node, npm };
+      const version = result.output.trim().match(/^v(\d+\.\d+\.\d+)/)?.[1];
+      if (result.code === 0 && nodeSupports(version, minimum)) return { node, npm, version };
     }
     return null;
+  }
+
+  function nodeSupports(version, minimum) {
+    if (!version || !minimum) return false;
+    const installed = version.split('.').map(Number);
+    const required = String(minimum).split('.').map(Number);
+    for (let part = 0; part < installed.length; part++) {
+      const difference = installed[part] - (required[part] || 0);
+      if (difference) return difference > 0;
+    }
+    return true;
   }
 
   async function describe(id, host, npm) {
     const tool = TOOLS.get(id);
     const storeCodex = windows && host.codex && path.isAbsolute(host.codex)
       ? [path.join(host.codex, 'app', 'resources', 'codex.exe')] : [];
-    const result = await probe(tool.command, host, id === 'codex' ? storeCodex : []);
+    const launcher = host.workbuddy;
+    const allowedLauncher = tool.launcher && launcher && path.isAbsolute(launcher) && (
+      !windows || /\.(exe|cmd|bat)$/i.test(launcher) &&
+        (path.basename(launcher).toLowerCase() !== 'workbuddy.exe' ||
+          !await isFile(path.join(path.dirname(launcher), 'resources', 'app.asar')))
+    );
+    const result = tool.launcher
+      ? (allowedLauncher && await probe(null, host, [launcher], undefined, '--help'))
+      : await probe(tool.command, host, id === 'codex' ? storeCodex : []) ||
+        (tool.alias && await probe(tool.alias, host));
     const bundled = result?.path === bundledTex;
     const texDirectories = result ? [path.dirname(result.path), ...host.directories] : host.directories;
     const syncTeX = id === 'latex' && result
       ? (await Promise.all(locations('synctex', { directories: texDirectories }).map(isFile))).some(Boolean) : null;
     const installing = active?.id === id;
-    const installMethod = tool.npm ? 'npm' : id === 'cursor' ? 'Cursor 官方安装器' : 'WinGet';
+    const installMethod = tool.launcher ? null : tool.npm ? 'npm' : tool.installer || id === 'cursor' ? '官方安装器' : 'WinGet';
     const canBootstrap = Boolean(host.winget || host.hasPowerShell);
-    const npmReady = npm && npm.minimum >= tool.node;
+    const npmReady = nodeSupports(npm?.version, tool.node);
     const cursorPartial = id === 'cursor' && !result && windows
       && await fs.lstat(cursorDirectory).then(() => true, error => error.code !== 'ENOENT');
-    const installerAvailable = windows && (tool.npm ? npmReady || canBootstrap
-      : id === 'cursor' ? host.hasPowerShell && !cursorPartial : canBootstrap);
+    const installerAvailable = windows && !tool.launcher && (tool.npm ? npmReady || canBootstrap
+      : tool.installer || id === 'cursor' ? host.hasPowerShell && !cursorPartial : canBootstrap);
     let detail = null;
     if (id === 'latex' && result) {
       detail = syncTeX ? '已检测到 SyncTeX，可用于 PDF 与源码定位。' : '已检测到 XeLaTeX，缺少用于 PDF 正反向定位的 SyncTeX。';
@@ -192,6 +226,9 @@ function createEnvironment({ resources, env = process.env, platform = process.pl
     if (!result) {
       if (active && !installing) detail = '请等待当前安装完成。';
       else if (failures.has(id)) detail = failures.get(id);
+      else if (tool.launcher) detail = host.workbuddy
+        ? '无法启动已配置的 WorkBuddy ACP 启动器，请检查路径和安装。'
+        : '请将 UTOPIA_WORKBUDDY_BIN 指向已登录的 WorkBuddy ACP 启动器，再重新检测。也可沿用 PAPILOT_WORKBUDDY_BIN。';
       else if (!windows) detail = '自动安装适用于 Windows，请参阅官方说明。';
       else if (cursorPartial) detail = '发现已有 Cursor CLI 安装目录。请按官方说明处理现有安装后重试。';
       else if (!installerAvailable) detail = '无法启动 Windows 安装工具，请参阅官方说明。';
@@ -199,7 +236,7 @@ function createEnvironment({ resources, env = process.env, platform = process.pl
       else if (id === 'cursor') detail = '安装时会检测 Git，缺少时会一并安装。';
       else if (!host.winget && tool.winget) detail = '必要时会先准备 Windows 程序包管理器。';
     }
-    return { id, label: tool.label, installed: Boolean(result), path: result?.path ?? null, version: result?.version ?? null,
+    return { id, label: tool.label, installed: Boolean(result), path: result?.path ?? null, version: tool.launcher ? null : result?.version ?? null,
       source: result ? (bundled ? 'bundled' : 'system') : null, helpUrl: tool.helpUrl, installMethod, installing,
       canInstall: !result && !active && installerAvailable, detail, progress: installing ? active.progress : null,
       ...(id === 'latex' ? { syncTeX } : {}) };
@@ -207,7 +244,7 @@ function createEnvironment({ resources, env = process.env, platform = process.pl
 
   async function detect() {
     const host = await context();
-    const npm = windows && (await findNpm(host, 20) ? { minimum: 20 } : await findNpm(host, 16) ? { minimum: 16 } : null);
+    const npm = windows && (await findNpm(host, 20) || await findNpm(host, TOOLS.get('codebuddy').node) || await findNpm(host));
     return { tools: Object.fromEntries(await Promise.all([...TOOLS.keys()].map(async id => [id, await describe(id, host, npm)]))) };
   }
 
@@ -248,6 +285,7 @@ function createEnvironment({ resources, env = process.env, platform = process.pl
 
   async function install(id) {
     const tool = getTool(id);
+    if (tool.launcher) return { ok: false, tool: id, message: '请按 WorkBuddy ACP 说明配置启动器。' };
     if (active) return { ok: false, tool: id, message: '另一个环境工具正在安装，请稍后重试。' };
     if (!windows) return { ok: false, tool: id, message: '请参阅官方安装说明。' };
     failures.delete(id);
@@ -270,6 +308,15 @@ function createEnvironment({ resources, env = process.env, platform = process.pl
         const npmHost = { ...host, env: { ...host.env, PATH: [path.dirname(npm.node), host.env.PATH].join(path.delimiter) } };
         ensureSuccess(await run(npm.node, [npm.npm, 'install', '--global', '--prefix', prefix,
           '--registry=https://registry.npmjs.org', '--no-audit', '--no-fund', '--ignore-scripts=false', tool.npm], options(npmHost)), `安装 ${tool.label}`);
+      } else if (tool.installer) {
+        if (!host.hasPowerShell) throw new Error('无法启动 Windows PowerShell，请使用官方安装说明。');
+        active.progress = `正在运行 ${tool.label} 官方安装器…`;
+        const script = `${POWERSHELL_UTF8}
+          $ErrorActionPreference = 'Stop';
+          $source = Invoke-RestMethod -Uri '${tool.installer}' -TimeoutSec 90;
+          if ($source -is [byte[]]) { $source = [Text.Encoding]::UTF8.GetString($source) }
+          & ([ScriptBlock]::Create($source))`;
+        ensureSuccess(await run(powershell, [...shellArgs, script], options(host)), `安装 ${tool.label}`);
       } else {
         if (!host.hasPowerShell) throw new Error('无法启动 Windows PowerShell，请使用官方安装说明。');
         const existing = await fs.lstat(cursorDirectory).catch(error => { if (error.code !== 'ENOENT') throw error; });

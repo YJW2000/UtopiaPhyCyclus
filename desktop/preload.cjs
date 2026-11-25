@@ -11,4 +11,5 @@ contextBridge.exposeInMainWorld('utopia', {
   detectEnvironment: () => ipcRenderer.invoke('utopia:detect-environment'),
   installEnvironmentTool: id => ipcRenderer.invoke('utopia:install-environment-tool', id),
   openEnvironmentHelp: id => ipcRenderer.invoke('utopia:open-environment-help', id),
+  tintWindowControls: color => ipcRenderer.invoke('utopia:tint-window-controls', color),
 });

@@ -24,6 +24,7 @@ class LocalAgent:
     login: str
     setup: str
     images: bool = True
+    alias: str | None = None
 
 
 LOCAL_AGENTS = {
@@ -33,13 +34,32 @@ LOCAL_AGENTS = {
     'cursor': LocalAgent('Cursor', 'cursor-agent', 'cursor-agent login', '使用 Cursor Agent CLI 的现有登录，支持纯文本任务。', images=False),
     'opencode': LocalAgent('OpenCode', 'opencode', 'opencode auth login', '使用 OpenCode 已连接的提供商和模型。图片需要支持视觉的模型。'),
     'gemini': LocalAgent('Gemini CLI', 'gemini', 'gemini', '先在终端启动 Gemini CLI 并完成登录，再回到题库。'),
+    'codebuddy': LocalAgent('CodeBuddy CLI', 'codebuddy', 'codebuddy', '首次启动时按提示登录腾讯账号，也可在 CodeBuddy CLI 中输入 /login。'),
+    'qoder': LocalAgent('Qoder CLI', 'qoder', 'qoder login', '使用本机已登录的 Qoder CLI。图片需使用支持视觉的模型。', alias='qodercli'),
+    'agy': LocalAgent('Antigravity CLI (agy)', 'agy', 'agy acp --login', '用本机 Antigravity CLI 登录 Google 账号后返回题库。'),
+    'workbuddy': LocalAgent('WorkBuddy', 'workbuddy', '', '沿用独立 WorkBuddy ACP 启动器的登录。图片需由该启动器和模型支持。'),
 }
 
 
 def _find_agent(agent_id, tool_path):
     if agent_id == 'codex':
         return _find_codex(tool_path)
-    return shutil.which(LOCAL_AGENTS[agent_id].binary, path=tool_path)
+    if agent_id == 'workbuddy':
+        from services.local_agent_workbuddy import find_workbuddy_launcher
+        return find_workbuddy_launcher(tool_path)
+    agent = LOCAL_AGENTS[agent_id]
+    return shutil.which(agent.binary, path=tool_path) or (shutil.which(agent.alias, path=tool_path) if agent.alias else None)
+
+
+def _login_command(agent, executable):
+    if agent.alias and executable and Path(executable).stem.lower() == agent.alias:
+        return agent.login.replace(agent.binary, agent.alias, 1)
+    return agent.login
+
+
+def _setup_help(agent, executable):
+    login = _login_command(agent, executable)
+    return f'请在终端运行 {login} 完成配置后重试。' if login else agent.setup
 
 
 def agent_status(tool_path):
@@ -47,7 +67,7 @@ def agent_status(tool_path):
     for agent_id, agent in LOCAL_AGENTS.items():
         executable = _find_agent(agent_id, tool_path)
         result.append(dict(id=agent_id, label=agent.label, installed=bool(executable), path=executable,
-                           images=agent.images, loginCommand=agent.login, setup=agent.setup, auth='unknown'))
+                           images=agent.images, loginCommand=_login_command(agent, executable), setup=agent.setup, auth='unknown'))
     return result
 
 
@@ -144,7 +164,7 @@ def _acp(provider, executable, directory, prompt, schema, images, env, timeout):
             'deny': ['Shell(*)', 'Read(**)', 'Write(**)', 'WebFetch(*)', 'Mcp(*:*)'],
         }}), encoding='utf-8')
         command = [executable, 'acp']
-    else:
+    elif provider == 'gemini':
         (directory / 'utopia-policy.toml').write_text(
             '[[rule]]\ntoolName = "*"\ndecision = "deny"\npriority = 999\n', encoding='ascii')
         gemini = directory / '.gemini'
@@ -155,6 +175,18 @@ def _acp(provider, executable, directory, prompt, schema, images, env, timeout):
         }), encoding='utf-8')
         command = [executable, '--acp', '--approval-mode', 'default', '--admin-policy', 'utopia-policy.toml',
                    '--allowed-mcp-server-names', 'utopia-disabled']
+    elif provider == 'codebuddy':
+        from services.codebuddy_agent import codebuddy_acp_command
+        command = codebuddy_acp_command(executable, directory, env)
+    elif provider == 'qoder':
+        from services.local_agent_qoder import qoder_acp_command
+        command = qoder_acp_command(executable, directory, env)
+    elif provider == 'agy':
+        from services.local_agent_agy import agy_acp_command
+        command = agy_acp_command(executable, directory, env)
+    elif provider == 'workbuddy':
+        from services.local_agent_workbuddy import workbuddy_acp_command
+        command = workbuddy_acp_command(executable, directory, env)
     task = _structured_prompt(prompt, schema)
     if images:
         task += '\n\n本次任务包含图片，若当前模型无法读取图片，请只返回 {"utopia_error":"image_unsupported"}。'
@@ -213,7 +245,7 @@ def run_agent_json(provider, prompt, schema, images, *, timeout=180):
         require_image_support(provider)
     executable = _find_agent(provider, tool_path)
     if not executable:
-        raise RuntimeError(f'未找到 {agent.label} CLI。请在设置中检查安装，在终端运行 {agent.login} 完成配置后重试。')
+        raise RuntimeError(f'未找到 {agent.label} 的可用启动器。请在设置中检查安装。{_setup_help(agent, executable)}')
 
     try:
         with TemporaryDirectory(prefix=f'utopia-{provider}-') as temp:
@@ -227,11 +259,11 @@ def run_agent_json(provider, prompt, schema, images, *, timeout=180):
     except subprocess.TimeoutExpired:
         raise RuntimeError(f'{agent.label} 在 {timeout} 秒内未完成，请稍后重试。') from None
     except OSError:
-        raise RuntimeError(f'{agent.label} 启动失败，请在终端检查 {agent.binary} --version。') from None
+        raise RuntimeError(f'{agent.label} 启动失败。{_setup_help(agent, executable)}') from None
     except AgentResponseError as error:
         detail = error.args[0].decode('utf-8', 'replace').lower()
-        if any(term in detail for term in ('unauthorized', '401', 'authentication', 'not logged', 'login required', 'sign in', 'api key')):
-            message = f'{agent.label} 登录或模型配置不可用。请在终端运行 {agent.login} 后重试。'
+        if any(term in detail for term in ('unauthorized', '401', 'authentication', 'not logged', 'login required', 'not authenticated', 'sign in', 'api key')):
+            message = f'{agent.label} 登录或模型配置不可用。{_setup_help(agent, executable)}'
         elif any(term in detail for term in ('usage limit', 'rate limit', 'quota', '429')):
             message = f'{agent.label} 的调用额度暂时受限，请稍后重试。'
         elif images and any(term in detail for term in ('vision', 'multimodal', 'image support', 'image input')):

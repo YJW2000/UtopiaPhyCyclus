@@ -100,6 +100,7 @@ export default function App() {
     setPrefs(p)
     for (const [k, v] of Object.entries(p.tokens))
       document.documentElement.style.setProperty(k, v)
+    void window.utopia.tintWindowControls(p.tokens['--mc-text']).catch(() => {})
     localStorage.setItem('desktop.theme', JSON.stringify(p.tokens))
   }
   function summaryLoad() {

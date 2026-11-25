@@ -135,7 +135,7 @@ def test_claude_sends_structured_stdin_without_real_tools(monkeypatch):
     assert local_agent.run_agent_json('claude', '含 & 的指令', SCHEMA, [b'pixels']) == {'reply': 'ok'}
 
 
-@pytest.mark.parametrize('provider', ['copilot', 'cursor', 'gemini', 'opencode'])
+@pytest.mark.parametrize('provider', ['copilot', 'cursor', 'gemini', 'opencode', 'codebuddy', 'qoder', 'agy'])
 def test_acp_agents_send_native_images_and_decline_tool_access(tmp_path, monkeypatch, provider):
     script = tmp_path / 'stub.py'
     script.write_text('''
@@ -198,12 +198,59 @@ sys.stdin.read()
             assert request['command'][1:] == ['acp']
             deny = json.loads((cwd / '.cursor/cli.json').read_text())['permissions']['deny']
             assert 'Write(**)' in deny and 'Shell(*)' in deny
+        elif provider == 'codebuddy':
+            assert '--tools=' in request['command'] and '--strict-mcp-config' in request['command']
+            assert json.loads((cwd / 'settings.json').read_text())['disableAllHooks']
+        elif provider == 'qoder':
+            assert request['command'][request['command'].index('--tools') + 1] == ''
+            assert request['command'][request['command'].index('--disallowed-tools') + 1] == '*'
+            assert json.loads((cwd / 'qoder-settings.json').read_text())['disableAllHooks']
+        elif provider == 'agy':
+            command = request['command']
+            assert '--include-default-customizations=false' in command
+            assert '--dangerously-skip-permissions' not in command
+            profile = Path(command[command.index('--gemini-dir') + 1])
+            assert profile.parent == cwd
+            policy = json.loads((profile / 'antigravity-cli/settings.json').read_text())
+            assert set(policy['permissions']['deny']) == {
+                'read_file(*)', 'write_file(*)', 'read_url(*)', 'execute_url(*)', 'command(*)', 'mcp(*)',
+            }
+            agent = (cwd / '.agents/agents/utopia-response.md').read_text()
+            assert all(rule in agent for rule in ('tools: []', 'inheritMcp: false', 'inheritCustomizations: false'))
         request['command'] = [sys.executable, str(script), provider]
         return real_run(args, cwd=cwd, input=json.dumps(request).encode(), env=env, **options)
 
     monkeypatch.setattr(local_agent, 'run', cli)
     images = [] if provider == 'cursor' else [b'pixels']
     assert local_agent.run_agent_json(provider, 'read the attachment', SCHEMA, images) == {'reply': 'ok'}
+
+
+def test_qoder_detects_native_alias_and_reports_matching_login_command(monkeypatch):
+    monkeypatch.setattr(local_agent.shutil, 'which',
+                        lambda binary, *, path: 'qodercli.exe' if binary == 'qodercli' else None)
+    monkeypatch.setattr(local_agent, '_find_codex', lambda path: None)
+    qoder = next(agent for agent in local_agent.agent_status('bin') if agent['id'] == 'qoder')
+    assert qoder['installed'] and qoder['path'] == 'qodercli.exe'
+    assert qoder['loginCommand'] == 'qodercli login'
+
+
+def test_codebuddy_npm_starts_node_without_a_batch_process(tmp_path):
+    from services.codebuddy_agent import codebuddy_acp_command
+
+    modules = tmp_path / 'node_modules'
+    binary_dir = modules / '.bin'
+    binary_dir.mkdir(parents=True)
+    node = binary_dir / 'node.exe'
+    node.touch()
+    entry = modules / '@tencent-ai/codebuddy-code/bin/codebuddy'
+    entry.parent.mkdir(parents=True)
+    entry.touch()
+    workspace = tmp_path / 'job'
+    workspace.mkdir()
+    command = codebuddy_acp_command(str(binary_dir / 'codebuddy.cmd'), workspace, {'PATH': ''})
+    assert command[:2] == [str(node), str(entry)]
+    assert '--acp' in command
+    assert '--setting-sources=project,local' in command
 
 
 def test_cursor_rejects_image_job_and_requires_valid_json(monkeypatch):

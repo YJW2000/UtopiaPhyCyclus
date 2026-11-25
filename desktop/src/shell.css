@@ -28,6 +28,35 @@
 body {
   margin: 0;
 }
+#root {
+  height: 100dvh;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+}
+.window-titlebar {
+  block-size: env(titlebar-area-height, 0px);
+  background: var(--mc-bg-base);
+  overflow: hidden;
+}
+.window-drag-area {
+  -webkit-app-region: drag;
+  app-region: drag;
+  margin-inline-start: env(titlebar-area-x, 0px);
+  inline-size: env(titlebar-area-width, 100%);
+  block-size: 100%;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding-inline: 11px;
+  color: var(--mc-text);
+  font-size: 12px;
+  user-select: none;
+}
+.window-drag-area img {
+  inline-size: 15px;
+  block-size: 15px;
+  border-radius: 3px;
+}
 button,
 input,
 textarea,
@@ -52,7 +81,7 @@ summary:focus-visible {
 }
 .app-shell {
   display: flex;
-  height: 100dvh;
+  min-height: 0;
   overflow: hidden;
   background: var(--mc-bg);
 }

@@ -66,10 +66,53 @@ test('reports Node prerequisites against the version required by each npm CLI', 
   const older = (await environment.detect()).tools;
   assert.doesNotMatch(older.codex.detail || '', /Node.js LTS/);
   assert.match(older.gemini.detail, /Node.js LTS/);
+  assert.match(older.codebuddy.detail, /Node.js LTS/);
+  await file(node, 'v18.20.8');
+  const compatible = (await environment.detect()).tools;
+  assert.doesNotMatch(compatible.codebuddy.detail || '', /Node.js LTS/);
+  assert.match(compatible.gemini.detail, /Node.js LTS/);
   await file(node, 'v24.0.0');
   const newer = (await environment.detect()).tools;
   assert.doesNotMatch(newer.codex.detail || '', /Node.js LTS/);
   assert.doesNotMatch(newer.gemini.detail || '', /Node.js LTS/);
+});
+
+test('installs and redetects Qoder and Antigravity using their official installers', windowsOnly, async t => {
+  const { env, environment, file, host, powershell, reply } = await fixture(t);
+  host.run = async (executable, args) => {
+    assert.equal(executable, powershell);
+    const script = args.at(-1);
+    if (script.includes("'https://qoder.com/install.ps1'")) {
+      await file(path.join(env.USERPROFILE, '.local', 'bin', 'qodercli.exe'), '1.1.95');
+    } else {
+      assert.match(script, /https:\/\/antigravity.google\/cli\/install.ps1/);
+      await file(path.join(env.LOCALAPPDATA, 'agy', 'bin', 'agy.exe'), '1.4.4');
+    }
+    return reply();
+  };
+  assert.equal((await environment.install('qoder')).ok, true);
+  assert.equal((await environment.install('agy')).ok, true);
+  const { tools } = await environment.detect();
+  assert.match(tools.qoder.path, /qodercli\.exe$/);
+  assert.match(tools.agy.path, /agy\.exe$/);
+  assert.equal(tools.qoder.canInstall, false);
+  assert.equal(tools.agy.canInstall, false);
+  assert.match(environment.helpUrl('workbuddy'), /^https:\/\/cloud.tencent.com\//);
+  assert.equal((await environment.install('workbuddy')).ok, false);
+});
+
+test('installs CodeBuddy through the official npm package', windowsOnly, async t => {
+  const { env, environment, file, host, reply } = await fixture(t);
+  const node = await file(path.join(env.PATH, 'node.exe'), 'v18.20.8');
+  await file(path.join(env.PATH, 'node_modules', 'npm', 'bin', 'npm-cli.js'));
+  host.run = async (executable, args) => {
+    assert.equal(executable, node);
+    assert.equal(args.at(-1), '@tencent-ai/codebuddy-code');
+    await file(path.join(env.APPDATA, 'npm', 'codebuddy.cmd'), '2.185.0');
+    return reply();
+  };
+  assert.equal((await environment.install('codebuddy')).ok, true);
+  assert.equal((await environment.detect()).tools.codebuddy.version, '2.185.0');
 });
 
 test('serializes installation and checks the updated registry PATH before reporting success', windowsOnly, async t => {

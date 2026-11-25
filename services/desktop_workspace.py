@@ -411,6 +411,7 @@ class DesktopWorkspace:
         page_count = document['pdfPageCount']
         source = import_pdf(original, resource_dir=self._directory(document['id']),
                             defaults=self._defaults(document), first_page=first, last_page=last, pages=pages,
+                            prompt_library=self.library,
                             pdf_lock=self.pdf_lock, on_progress=lambda page, total: job.progress(
                                 '正在识别图片' if document.get('inputKind') == 'image' else f'正在识别原卷第 {page} 页',
                                 page=page, total=total, pageCount=page_count))

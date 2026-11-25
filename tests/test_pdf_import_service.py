@@ -62,6 +62,10 @@ class PdfImportTests(unittest.TestCase):
         for call in agent.call_args_list:
             self.assertEqual(len(call.args[2]), 1)
             self.assertTrue(call.args[2][0].startswith(b'\x89PNG'))
+            self.assertIn('【内置技能：physics-image-to-latex】', call.args[0])
+            self.assertIn('【原有题库识别提示词】', call.args[0])
+            self.assertIn('印写分离', call.args[0])
+            self.assertIn('[[FIG:f1]]', call.args[0])
         self.assertIn('Continue question 10.', agent.call_args_list[1].args[0])
         self.assertIn('Consider this motion.', agent.call_args_list[1].args[0])
         questions = parse_tex_questions(source, 'paper.tex', {})

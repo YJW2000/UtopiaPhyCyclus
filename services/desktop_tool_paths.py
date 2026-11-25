@@ -44,8 +44,8 @@ def fresh_tool_path() -> str:
     home = Path.home()
     local = Path(os.environ.get('LOCALAPPDATA') or home / 'AppData/Local')
     roaming = Path(os.environ.get('APPDATA') or home / 'AppData/Roaming')
-    defaults = [home / '.local/bin', home / '.codex/bin', roaming / 'npm', local / 'cursor-agent',
-                local / 'Microsoft/WindowsApps', local / 'Microsoft/WinGet/Links']
+    defaults = [home / '.local/bin', home / '.codex/bin', roaming / 'npm', local / 'cursor-agent', local / 'agy/bin',
+                local / 'codebuddy/bin', local / 'Microsoft/WindowsApps', local / 'Microsoft/WinGet/Links']
     programs = [os.environ.get(name) for name in ('PROGRAMW6432', 'ProgramFiles', 'ProgramFiles(x86)')]
     for base in [*(Path(value) for value in programs if value), local / 'Programs']:
         defaults.extend(base / suffix for suffix in ('Git/cmd', 'Git/bin', 'MiKTeX/miktex/bin/x64',

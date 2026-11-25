@@ -23,6 +23,7 @@ declare global {
       detectEnvironment(): Promise<EnvironmentStatus>;
       installEnvironmentTool(id: EnvironmentToolId): Promise<EnvironmentInstallResult>;
       openEnvironmentHelp(id: EnvironmentToolId): Promise<void>;
+      tintWindowControls(color: string): Promise<void>;
     };
   }
 }

@@ -42,6 +42,8 @@ FILES = [
     'tools/clean_windows_guest.py', 'tools/clean_windows_guest.ps1',
     'services/agent_skills/plugins/draw_solenoid_tikz/SKILL.md',
     'services/agent_skills/plugins/draw_solenoid_tikz/assets/solenoid-patterns.tex',
+    'services/agent_skills/plugins/physics-image-to-latex/SKILL.md',
+    'services/agent_skills/plugins/physics-image-to-latex/references/sources.md',
 ]
 TREES = {
     'services': {'.py', '.mjs', '.json'},

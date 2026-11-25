@@ -1005,7 +1005,7 @@ def page_api_settings():
 
     st.caption(f"{env_state}：{env_path}")
     st.caption(f"{prompt_state}：{ocr_prompt_file}")
-    st.info("OCR 实际优先使用 ocr_prompt.txt。下方提示词框显示并保存的就是这个文件内容；.env 里的 AI_OCR_PROMPT 只作为文件不存在时的备用。", icon="ℹ️")
+    st.info("识别题目时会将内置物理识图技能与这里的提示词一起发送给模型。提示词优先读取 ocr_prompt.txt，文件不存在时读取 .env 的 AI_OCR_PROMPT。", icon="ℹ️")
 
     cur_api_key = config.get("AI_API_KEY", "")
     cur_base_url = config.get("AI_BASE_URL", AI_ENV_DEFAULTS["AI_BASE_URL"])
@@ -2748,17 +2748,14 @@ def ocr_image_to_latex(images=None, max_image_size: int = 1600, max_tokens: int 
         max_tokens: 本次 OCR 请求允许返回的最大 token 数。
     """
     # 动态加载 .env 配置，支持热更新
-    os.environ.update({k: str(v) for k, v in _read_root_ai_env_config().items() if k.startswith("AI_")})
+    config = _read_root_ai_env_config()
 
-    api_key = os.getenv("AI_API_KEY")
-    base_url = os.getenv("AI_BASE_URL", "https://api.openai.com/v1")
-    model_name = os.getenv("AI_MODEL_NAME", AI_ENV_DEFAULTS["AI_MODEL_NAME"])
+    api_key = config["AI_API_KEY"]
+    base_url = config["AI_BASE_URL"]
+    model_name = config["AI_MODEL_NAME"]
 
-    # 重新读取提示词文件 (支持热更新)
-    prompt = AI_OCR_PROMPT
-    if os.path.exists(ocr_prompt_file):
-        with open(ocr_prompt_file, "r", encoding="utf-8") as f:
-            prompt = f.read()
+    # Re-read the same file or fallback text shown in API settings.
+    custom_prompt, _ = _read_ocr_prompt_for_settings(config)
     prompt = (
         "你是 OCR 转写助手。你只需要把图片中的内容逐字逐符号转写成 LaTeX 源码。\n"
         "禁止解题、禁止推理、禁止补全缺失步骤、禁止生成答案与解析。\n"
@@ -2767,7 +2764,7 @@ def ocr_image_to_latex(images=None, max_image_size: int = 1600, max_tokens: int 
         "不要输出 Markdown 代码围栏或 latex/tex 语言标记；不要输出 documentclass、usepackage、"
         "usetikzlibrary、begin{document}、end{document} 等完整文档前导内容。\n"
         "TikZ 节点中的角度、上下标等数学内容必须放入 $...$，例如 {$60^\\circ$}。\n\n"
-        + (prompt or "")
+        + custom_prompt
     )
 
     if not api_key:

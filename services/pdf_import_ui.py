@@ -42,7 +42,7 @@ def _new_draft(project_dir, name, pdf, first, last, defaults, on_progress):
     resources.mkdir(parents=True)
     try:
         source = import_pdf(pdf, resource_dir=resources, first_page=first, last_page=last,
-                            defaults=defaults, on_progress=on_progress)
+                            defaults=defaults, on_progress=on_progress, prompt_library=project_dir)
         if not source or not source.strip():
             raise ValueError("所选页未生成题目，请核对原页并重试。")
     except Exception:

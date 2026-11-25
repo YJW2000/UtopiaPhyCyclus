@@ -10,6 +10,7 @@ import re
 
 from PIL import Image, ImageOps
 
+from services.physics_ocr_skill import build_ocr_prompt
 from utils.image_assets import PROJECT_ROOT, graphics_references, resolve_image, save_uploaded_image
 
 
@@ -54,7 +55,8 @@ def prepare_ocr_images(images, prompt: str, max_image_size: int = 1600):
     if max_image_size < 1:
         raise ValueError('识别图片尺寸必须大于零')
     originals = []
-    parts = [{'type': 'text', 'text': prompt + '\n\n' + OCR_CROP_INSTRUCTIONS}]
+    task = prompt + '\n\n' + OCR_CROP_INSTRUCTIONS
+    parts = [{'type': 'text', 'text': build_ocr_prompt(task)}]
     for index, image in enumerate(images, 1):
         oriented = ImageOps.exif_transpose(image)
         # Match the visible white page, including screenshots with transparency.

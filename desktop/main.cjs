@@ -21,6 +21,7 @@ const RENDERER_URL = !app.isPackaged && process.env.UTOPIA_DESKTOP_VITE_URL === 
   ? 'http://127.0.0.1:5173/' : 'utopia://app/';
 const APP_ICON = app.isPackaged
   ? path.join(RESOURCES, 'UtopiaPhyCyclus.ico') : path.join(SOURCE_ROOT, 'static', 'UtopiaPhyCyclus-desktop.ico');
+const WINDOW_CONTROLS = { color: '#00000000', symbolColor: '#26231E', height: 32 };
 const MIME_TYPES = new Map(Object.entries({
   '.pdf': 'application/pdf', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.png': 'image/png',
   '.webp': 'image/webp', '.bmp': 'image/bmp', '.gif': 'image/gif', '.tif': 'image/tiff', '.tiff': 'image/tiff',
@@ -573,6 +574,11 @@ function registerIpc() {
   handle('detect-environment', environment.detect);
   handle('install-environment-tool', environment.install);
   handle('open-environment-help', id => shell.openExternal(environment.helpUrl(id)));
+  handle('tint-window-controls', color => {
+    if (process.platform === 'win32' && typeof color === 'string' && /^#[a-f\d]{6}$/i.test(color)) {
+      window?.setTitleBarOverlay({ ...WINDOW_CONTROLS, symbolColor: color });
+    }
+  });
   handle('choose-library', () => {
     if (!selection) selection = chooseLibrary().finally(() => { selection = undefined; });
     return selection;
@@ -611,6 +617,7 @@ function openWindow() {
     minHeight: 600,
     show: false,
     backgroundColor: '#F7F4EC',
+    ...(process.platform === 'win32' ? { titleBarStyle: 'hidden', titleBarOverlay: WINDOW_CONTROLS } : {}),
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),
       contextIsolation: true,
@@ -629,7 +636,10 @@ function openWindow() {
   };
   window.webContents.on('will-frame-navigate', restrictNavigation);
   window.webContents.on('will-redirect', restrictNavigation);
-  return window.loadURL(RENDERER_URL);
+  const opened = window;
+  return opened.loadURL(RENDERER_URL).then(() => {
+    if (!opened.isDestroyed() && !opened.isVisible()) opened.show();
+  });
 }
 
 if (app.requestSingleInstanceLock()) {

@@ -1,4 +1,4 @@
-export type AgentId = 'codex' | 'claude' | 'copilot' | 'opencode' | 'gemini' | 'cursor'
+export type AgentId = 'codex' | 'claude' | 'copilot' | 'opencode' | 'gemini' | 'cursor' | 'codebuddy' | 'qoder' | 'agy' | 'workbuddy'
 export type ProviderId = AgentId | 'api'
 export type EnvironmentToolId = AgentId | 'git' | 'latex'
 

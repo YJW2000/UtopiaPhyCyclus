@@ -6,7 +6,7 @@ export const environmentLessons: GuideLesson[] = [
     title: '设置本机 Agent',
     summary: '图片识别、原卷重建和题目助手通过所选 Agent 调用模型。本机连接沿用该 CLI 自己的账户和模型。',
     steps: [
-      '打开「设置 → 模型连接」，点击「重新检测」。可以选择 Codex、Claude Code、GitHub Copilot、Cursor、OpenCode 或 Gemini CLI。',
+      '打开「设置 → 模型连接」，点击「重新检测」。可选择 Codex、Claude Code、GitHub Copilot、Cursor、OpenCode、Gemini CLI、CodeBuddy CLI、Qoder CLI、Antigravity CLI（agy）或 WorkBuddy。',
       '所需 Agent 显示「未检测到」时，点击该行的「一键安装」，按 Windows 提示完成安装。若安装失败，查看提示后选择「重试安装」或「安装说明」。',
       '显示「已检测到」后，在「默认连接」中选中它。按该行登录提示操作。若有「复制登录命令」，将命令粘贴到 Windows 终端，完成该 CLI 的登录或模型配置。',
       '做图片识别、PDF 原卷重建或带截图的改题时，选支持图片且已配置视觉模型的连接。Cursor 在本应用中可用于纯文本任务。',
@@ -18,6 +18,7 @@ export const environmentLessons: GuideLesson[] = [
     check: '设置中显示「当前使用」及所选 Agent，演示题聊天里收到题目助手回复。再用一张小题截图试一次，即可单独验证图片能力。',
     tips: [
       '「已检测到」表示应用找到了 CLI。若消息提示登录、模型配置或额度问题，请在对应 CLI 中处理后重新发送。',
+      '使用 WorkBuddy 时，请把用户环境变量 UTOPIA_WORKBUDDY_BIN 指向已完成登录的 WorkBuddy ACP 启动器，再点「重新检测」。也可以沿用 Papilot 的 PAPILOT_WORKBUDDY_BIN。WorkBuddy 的普通桌面快捷方式不能作为 ACP 启动器。',
       '已有自定义模型服务时，可以选择「自定义 API → 打开 API 设置」，填写地址、模型和密钥。图片功能取决于该模型的视觉能力。',
     ],
     action: { page: 'settings', label: '打开模型连接设置' },
