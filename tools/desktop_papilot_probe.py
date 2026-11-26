@@ -13,7 +13,7 @@ from urllib.request import urlopen
 import pymupdf
 import websockets
 
-from desktop_maintenance_probe import launch, native_close, wait_for
+from desktop_maintenance_probe import add_question, launch, native_close, source_files, wait_for
 from desktop_speed_probe import Page
 
 
@@ -57,7 +57,7 @@ async def click(page, selector):
 
 
 async def click_label(page, label):
-    button = f'[...document.querySelectorAll("button")].find(b => b.checkVisibility() && b.textContent.trim() === {json.dumps(label)})'
+    button = f'[...document.querySelectorAll("button")].find(b => b.checkVisibility() && !b.disabled && b.textContent.trim() === {json.dumps(label)})'
     await page.until(f'Boolean({button})', seconds=30)
     await page.js(f'({button}).click()')
 
@@ -125,15 +125,40 @@ async def resize_view(shell, project):
 
 async def probe(executable, development, root, screenshot=None):
     bank = root / 'bank'
-    (bank / 'chapters').mkdir(parents=True)
+    chapters = bank / 'chapters'
+    question_path = chapters / add_question(chapters, 1)
+    originals = source_files(bank)
+    runtime_log = root / 'profile/papilot/logs/backend.log'
 
     async def run(process, port):
         shell_url = await wait_for(process, lambda: desktop_target(port), seconds=120)
         async with websockets.connect(shell_url) as shell_socket:
             shell = Page(shell_socket)
+            await shell.until(f'{find("button[data-page=tex]")}?.checkVisibility()')
+            assert await shell.js('!document.querySelector(".app-nav [data-page=papilot]")')
+            assert not await shell.js(f'Boolean({find(SLOT)})')
+            assert not runtime_log.exists()
+            assert desktop_target(port, embedded=True) is None
+
+            await click(shell, 'button[data-page=tex]')
+            await click(shell, 'summary')
+            await shell.command('Emulation.setFocusEmulationEnabled', {'enabled': True})
+            await shell.js('document.querySelector("textarea.paste-tex").focus()')
+            await shell.command('Input.insertText', {'text': SOURCE})
+            await shell.until(f'{find("textarea.paste-tex")}?.value === {json.dumps(SOURCE)}')
+            await click_label(shell, '在工作台打开')
+            more_actions = 'button[aria-label="更多操作"]'
+            await shell.until(f'{find(".error-strip")} || {find(more_actions)}?.checkVisibility()', seconds=60)
+            assert not (error := await shell.js(f'{find(".error-strip")}?.textContent')), error
+            await click(shell, more_actions)
+            assert not await shell.js(f'Boolean({find(SLOT)})')
+            assert not runtime_log.exists()
+            assert desktop_target(port, embedded=True) is None
+
             started = perf_counter()
-            await click(shell, 'button[data-page=papilot]')
-            await shell.until(f'Boolean({find(SLOT)})')
+            await click_label(shell, '在项目工作台打开')
+            await shell.until(f'{find(SLOT)}?.checkVisibility()')
+            assert await shell.js('Boolean(document.querySelector("[data-page=tex][aria-current=page]"))')
             assert await shell.js(f'!{find(SLOT)}.querySelector("iframe")')
             await shell.until(f'{find(SLOT)}?.getAttribute("aria-busy") === "false"', seconds=135)
             error = await shell.js(f'{find(SLOT)}.querySelector("[role=alert]")?.textContent')
@@ -145,14 +170,6 @@ async def probe(executable, development, root, screenshot=None):
                 first_open_ms = round((perf_counter() - started) * 1000)
                 assert await project.js('window.top === window && !window.require && !window.utopia')
                 print(f'Embedded renderer ready in {first_open_ms} ms.', flush=True)
-                await click(shell, 'button[data-page=tex]')
-                await click(shell, 'summary')
-                await shell.js('document.querySelector("textarea.paste-tex").focus()')
-                await shell.command('Input.insertText', {'text': SOURCE})
-                await click_label(shell, '在工作台打开')
-                await click(shell, 'button[aria-label="更多操作"]')
-                await click_label(shell, '在项目工作台打开')
-                await shell.until(f'Boolean({find(SLOT)})')
                 state_read = '''fetch('/api/state').then(r => r.json()).then(s => ({
                     version: s.version,
                     projects: s.projects.filter(p => p.path?.split(/[/\\\\]/).includes('papilot-projects')).map(({id, path}) => ({id, path}))
@@ -163,7 +180,7 @@ async def probe(executable, development, root, screenshot=None):
                 assert len(projects) == 1, projects
                 folder = Path(projects[0]['path']).resolve(strict=True)
                 assert folder.is_relative_to(root), 'The opened project must be inside the disposable workspace.'
-                assert not list((bank / 'chapters').rglob('*.tex'))
+                assert source_files(bank) == originals
                 await click(project, '.manuscript-link')
                 project_id = projects[0]['id']
                 endpoint = json.dumps(f'/api/projects/{project_id}/manuscript')
@@ -183,24 +200,48 @@ async def probe(executable, development, root, screenshot=None):
                 await commit_tex_edit(project, folder)
                 print('PDF annotation and Git commit verified.', flush=True)
 
-            await click_label(shell, '返回当前文稿')
+            await click_label(shell, '题库文稿')
+            await shell.until(f'!{find(SLOT)}?.checkVisibility()')
             await click(shell, 'button[aria-label="更多操作"]')
             await click_label(shell, '从项目工作台导入改动')
             await click(shell, '[aria-label="查看 LaTeX 源码"]')
             source_field = find('textarea[aria-label="编辑 LaTeX 源码"]')
             await shell.until(f'{source_field}?.value.includes({json.dumps(REVISED)})', seconds=45)
-            assert not list((bank / 'chapters').rglob('*.tex'))
+            assert source_files(bank) == originals
             print('Git-reviewed source round-tripped to the Utopia draft.', flush=True)
 
-            await click(shell, 'button[data-page=papilot]')
+            await click_label(shell, '项目工作台')
             await shell.until(f'{find(SLOT)}?.getAttribute("aria-busy") === "false"')
             async with websockets.connect(embedded_url) as project_socket:
-                await resize_view(shell, Page(project_socket))
+                project = Page(project_socket)
+                await resize_view(shell, project)
+
+                await click(shell, 'button[data-page=browse]')
+                selected = find('.question-link[aria-current=true]')
+                await shell.until(f'{selected}?.checkVisibility()', seconds=60)
+                dock = find(f'.browse-workbench {SLOT}')
+                await shell.until(f'{dock}?.checkVisibility() && {dock}.getAttribute("aria-busy") === "false"', seconds=60)
+                assert await shell.js('Boolean(document.querySelector("[data-page=browse][aria-current=page]"))')
+                await project.until(f'document.title.includes({json.dumps(question_path.stem)})', seconds=45)
+                browse_projects = (await project.js(state_read))['projects']
+                (browse_project,) = (item for item in browse_projects if item['id'] != project_id)
+                browse_folder = Path(browse_project['path']).resolve(strict=True)
+                assert browse_folder.is_relative_to(root)
+                exported_source = (browse_folder.parent / 'original.tex').read_text(encoding='utf-8')
+                assert exported_source == question_path.read_text(encoding='utf-8')
+                assert source_files(bank) == originals
+                print('Browse automatically opened the selected bank question in its right-hand workbench.', flush=True)
         await wait_for(process, lambda: native_close(process.pid, title='乌托邦高中物理题库助手'))
-        return {'embedded': True, 'resizes': True, 'texCompiled': True, 'annotations': True,
+        return {'embedded': True, 'documentScoped': True, 'lazyStartup': True, 'resizes': True, 'browseProject': True,
+                'texCompiled': True, 'annotations': True,
                 'gitCommit': True, 'draftRoundTrip': True, 'papilotVersion': state['version'], 'firstOpenMs': first_open_ms}
 
-    return await launch(executable, development, root, bank, run, chromium_flags=RENDER_FLAGS)
+    try:
+        return await launch(executable, development, root, bank, run, chromium_flags=RENDER_FLAGS)
+    except Exception:
+        if runtime_log.is_file():
+            print(runtime_log.read_text(encoding='utf-8', errors='replace'))
+        raise
 
 
 if __name__ == '__main__':

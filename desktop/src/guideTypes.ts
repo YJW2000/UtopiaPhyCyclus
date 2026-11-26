@@ -1,4 +1,4 @@
-export type GuidePage = 'entry' | 'tex' | 'pdf' | 'browse' | 'search' | 'exam' | 'settings' | 'papilot'
+export type GuidePage = 'entry' | 'tex' | 'pdf' | 'browse' | 'search' | 'exam' | 'settings'
 
 export type GuideAction = { label: string } & ({ page: GuidePage } | { demo: true })
 

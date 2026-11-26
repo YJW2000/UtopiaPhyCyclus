@@ -1,13 +1,5 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
-let papilotShortcut;
-let pendingPapilotRoute;
-ipcRenderer.on('utopia:papilot-shortcut', (_event, route) => {
-  const target = route === 'settings' ? 'settings' : 'papilot';
-  if (papilotShortcut) papilotShortcut(target);
-  else pendingPapilotRoute = target;
-});
-
 contextBridge.exposeInMainWorld('utopia', {
   call: (method, params) => ipcRenderer.invoke('utopia:call', method, params),
   openFile: kind => ipcRenderer.invoke('utopia:open-file', kind),
@@ -25,12 +17,8 @@ contextBridge.exposeInMainWorld('utopia', {
   papilotOpenQuestion: (id, revision, openManuscript) =>
     ipcRenderer.invoke('utopia:papilot-open-question', id, revision, openManuscript),
   onPapilotShortcut: listener => {
-    papilotShortcut = listener;
-    if (pendingPapilotRoute) {
-      const route = pendingPapilotRoute;
-      pendingPapilotRoute = undefined;
-      queueMicrotask(() => { if (papilotShortcut === listener) listener(route); });
-    }
-    return () => { if (papilotShortcut === listener) papilotShortcut = undefined; };
+    const receive = () => listener();
+    ipcRenderer.on('utopia:papilot-shortcut', receive);
+    return () => ipcRenderer.off('utopia:papilot-shortcut', receive);
   },
 });

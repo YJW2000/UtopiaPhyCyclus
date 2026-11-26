@@ -26,14 +26,13 @@ const pages = {
   tex: ['📄', 'TeX录入'],
   pdf: ['📑', 'PDF录入'],
   browse: ['🔍', '全局浏览'],
-  papilot: ['🖋️', '项目工作台'],
   exam: ['🖨️', '组卷排版'],
   search: ['🔎', '题目查找'],
   intro: ['📘', '架构介绍'],
   settings: ['⚙️', '设置'],
 } as const
 type Page = keyof typeof pages
-type BrowseView = 'project' | 'draft'
+type DocumentView = 'project' | 'draft'
 type LibraryCheck = { integrity: string; total: number; missing: string[] }
 type MaintenanceCounts = { added: number; updated: number; missing: number; skipped: number }
 type MaintenanceRun = { finishedAt: string } & (
@@ -75,7 +74,7 @@ export default function App() {
   const [fileInfo, setFileInfo] = useState<{ path: string; document: EditorDocument }>()
   const [browseRevision, setBrowseRevision] = useState(0)
   const [browseMode, setBrowseMode] = useState(loadBrowseMode)
-  const [browseView, setBrowseView] = useState<BrowseView>('project')
+  const [documentView, setDocumentView] = useState<DocumentView>('draft')
   const [openProjectId, setOpenProjectId] = useState<string>()
   const workbenchId = useId()
   const [reviewProposalId, setReviewProposalId] = useState<string>()
@@ -163,10 +162,12 @@ export default function App() {
     browseAutoOpen.current = next === 'browse' && !doc?.questionPath && !workbenchQuestion
     if (next === 'browse') {
       setWorkbenchOpen(true)
-      if (page !== 'browse') setBrowseView('project')
+      if (page !== 'browse') setDocumentView('project')
       if (page === 'browse' && browseAutoOpen.current) setBrowseRevision(revision => revision + 1)
+    } else {
+      setOpenProjectId(undefined)
+      setDocumentView('draft')
     }
-    if (next !== 'browse') setOpenProjectId(undefined)
     setPage(next)
     setEditing(false)
     setReviewProposalId(undefined)
@@ -195,7 +196,7 @@ export default function App() {
     setWorkbenchQuestion(question)
     setWorkbenchOpen(docked)
     setOpenProjectId(undefined)
-    if (reviewId) setBrowseView('draft')
+    if (route !== 'browse' || reviewId) setDocumentView('draft')
     setEditing(!docked)
     setPage(route)
   }, [])
@@ -305,7 +306,6 @@ export default function App() {
     setFileInfo(undefined)
     void work('正在打开题目…', () => loadWorkspace({}, 'browse', documentId, proposalId, question))
   }
-  useEffect(() => window.utopia.onPapilotShortcut(navigate), [])
   const imageBusy = page === 'entry' && (imageIntakeBusy || Boolean(busy))
   const routeToken = routeGeneration.current
   const actionProps = { open, add, basket }
@@ -315,11 +315,15 @@ export default function App() {
   const rightVisible = !editing && (browseWorkbench || docking) && workbenchOpen
   const showEmptyWorkbench = browseWorkbench && !docking
   const showDockedEditor = rightVisible && docking
-  const browseDocked = browseWorkbench && docking
+  const documentVisible = editing || showDockedEditor
+  const showProjectControls = (browseWorkbench && docking) || Boolean(doc?.papilotProject)
   const canOpenProject = Boolean(doc?.source.trim())
-  const showBrowseProject = browseDocked && browseView === 'project' && canOpenProject
-  const projectReady = showBrowseProject && openProjectId === doc?.id
-  const requestProject = showDockedEditor && showBrowseProject && !projectReady && !busy
+  const showProject = documentVisible && showProjectControls && documentView === 'project' && canOpenProject
+  const projectReady = Boolean(doc && openProjectId === doc.id)
+  const requestProject = showProject && !projectReady && !busy
+  useEffect(() => window.utopia.onPapilotShortcut(() => {
+    if (documentVisible && projectReady) setDocumentView('project')
+  }), [documentVisible, projectReady])
   const remainingWidth = browseWorkbench ? MODULE_BROWSER_MIN : BROWSE_MIN
   const maximumDock = `min(${WORKBENCH_FRACTION * 100}%, calc(100% - ${remainingWidth}px))`
   const dockSize = `clamp(min(${WORKBENCH_MIN}px, ${maximumDock}), ${workbenchWidth}px, ${maximumDock})`
@@ -397,11 +401,8 @@ export default function App() {
           </div>
         )}
         <div className={'workspace-body' + (rightVisible ? ' workspace-with-dock' : '')}>
-          {!editing && page === 'papilot' && <Suspense fallback={<p>正在载入项目工作台…</p>}>
-            <PapilotWorkspace />
-          </Suspense>}
           {!editing && page === 'stats' && <Statistics />}
-          {!editing && page !== 'papilot' && page !== 'stats' && <>
+          {!editing && page !== 'stats' && <>
             <div ref={mainScroll} className="main-scroll">
               <div className="page-content">
                 {(page === 'browse' || page === 'search') && (
@@ -682,29 +683,29 @@ export default function App() {
         {doc && (
           <div
             id={showEmptyWorkbench ? undefined : workbenchId}
-            className={'editor-mount' + (showDockedEditor ? ' browse-workbench' : '') + (browseDocked ? ' browse-project-dock' : '')}
+            className={'editor-mount' + (showDockedEditor ? ' browse-workbench' : '') + (showProjectControls ? ' document-with-project' : '')}
             role={showDockedEditor ? 'region' : undefined}
             aria-label={showDockedEditor ? '题目工作台' : undefined}
-            style={{ display: editing || showDockedEditor ? 'flex' : 'none', width: showDockedEditor ? dockSize : undefined }}
+            style={{ display: documentVisible ? 'flex' : 'none', width: showDockedEditor ? dockSize : undefined }}
           >
-            {browseDocked && <div className="browse-project-controls" role="group" aria-label="工作台视图">
-              <button type="button" aria-pressed={!showBrowseProject} onClick={() => setBrowseView('draft')}>
+            {showProjectControls && <div className="document-view-controls" role="group" aria-label="工作台视图">
+              <button type="button" aria-pressed={!showProject} onClick={() => setDocumentView('draft')}>
                 题库文稿
               </button>
-              <button type="button" disabled={!canOpenProject} aria-pressed={showBrowseProject} onClick={() => {
-                if (showBrowseProject) return
+              <button type="button" disabled={!canOpenProject} aria-pressed={showProject} onClick={() => {
+                if (showProject) return
                 setOpenProjectId(undefined)
-                setBrowseView('project')
+                setDocumentView('project')
               }}>
                 项目工作台
               </button>
             </div>}
-            {rightVisible && showBrowseProject && (projectReady ? (
-              <Suspense fallback={<p className="browse-project-loading" role="status">正在载入项目工作台…</p>}>
+            {showProject && (projectReady ? (
+              <Suspense fallback={<p className="document-project-loading" role="status">正在载入项目工作台…</p>}>
                 <PapilotWorkspace />
               </Suspense>
-            ) : <p className="browse-project-loading" role="status">正在打开题目项目…</p>)}
-            <div className="editor-mount" hidden={showBrowseProject} style={{ display: showBrowseProject ? 'none' : 'flex' }}>
+            ) : <p className="document-project-loading" role="status">正在打开题目项目…</p>)}
+            <div className="editor-mount" hidden={showProject} style={{ display: showProject ? 'none' : 'flex' }}>
               <Suspense fallback={<p>正在载入编辑器…</p>}>
                 <Editor
                   key={doc.id}
@@ -715,25 +716,20 @@ export default function App() {
                   docked={docking && !editing}
                   onExpand={rightVisible ? () => setEditing(true) : undefined}
                   onEditFileInfo={questionPath && (workbenchQuestion || page === 'browse') ? (document) => setFileInfo({ path: questionPath, document }) : undefined}
-                  active={editing || (showDockedEditor && !showBrowseProject)}
+                  active={documentVisible && !showProject}
                   requestProject={requestProject}
                   openProjectManuscript={page === 'browse'}
                   onOpenPapilot={(automatic) => {
                     if (routeToken !== routeGeneration.current) return
-                    if (page !== 'browse') {
-                      navigate('papilot')
-                      return
-                    }
                     setOpenProjectId(doc.id)
                     if (!automatic) {
-                      setBrowseView('project')
-                      setWorkbenchOpen(true)
-                      setEditing(false)
+                      setDocumentView('project')
+                      if (!editing) setWorkbenchOpen(true)
                     }
                   }}
                   onProjectOpenFailed={(message) => {
                     if (routeToken !== routeGeneration.current) return
-                    setBrowseView('draft')
+                    setDocumentView('draft')
                     setError(message)
                   }}
                   reviewProposalId={reviewProposalId}

@@ -35,7 +35,7 @@ declare global {
       papilotBounds(bounds: PapilotBounds): Promise<void>;
       papilotHide(): Promise<void>;
       papilotOpenQuestion(id: string, revision?: number, openManuscript?: boolean): Promise<EditorDocument>;
-      onPapilotShortcut(listener: (route: 'settings' | 'papilot') => void): () => void;
+      onPapilotShortcut(listener: () => void): () => void;
     };
   }
 }

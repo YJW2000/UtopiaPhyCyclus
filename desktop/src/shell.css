@@ -219,10 +219,10 @@ summary:focus-visible {
   color: var(--mc-muted);
   margin: 0;
 }
-.browse-project-dock {
+.document-with-project {
   flex-direction: column;
 }
-.editor-mount > .browse-project-controls {
+.editor-mount > .document-view-controls {
   flex: 0 0 auto;
   display: flex;
   flex-wrap: wrap;
@@ -231,7 +231,7 @@ summary:focus-visible {
   border-bottom: 1px solid var(--mc-border);
   background: var(--mc-surface);
 }
-.browse-project-controls button {
+.document-view-controls button {
   padding: 4px 10px;
   border: 1px solid transparent;
   border-radius: 8px;
@@ -239,16 +239,16 @@ summary:focus-visible {
   color: var(--mc-muted);
   font: inherit;
 }
-.browse-project-controls button[aria-pressed='true'] {
+.document-view-controls button[aria-pressed='true'] {
   border-color: var(--mc-border);
   background: var(--mc-accent-soft);
   color: var(--mc-text);
   font-weight: 600;
 }
-.browse-project-controls button:disabled {
+.document-view-controls button:disabled {
   opacity: 0.5;
 }
-.browse-project-loading {
+.document-project-loading {
   display: grid;
   place-items: center;
   margin: 0;
