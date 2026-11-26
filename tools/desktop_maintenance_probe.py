@@ -52,6 +52,25 @@ def report(state, phase):
     return result
 
 
+def park_test_window(process_id):
+    # Keep the isolated GUI available to Chromium without intercepting the user's clicks.
+    user32 = ctypes.windll.user32
+    callback = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+    user32.SetWindowPos.argtypes = (wintypes.HWND, wintypes.HWND, ctypes.c_int, ctypes.c_int,
+                                    ctypes.c_int, ctypes.c_int, wintypes.UINT)
+    left = user32.GetSystemMetrics(76) - 1800
+
+    @callback
+    def park(window, _):
+        pid = wintypes.DWORD()
+        user32.GetWindowThreadProcessId(window, ctypes.byref(pid))
+        if pid.value == process_id and user32.IsWindowVisible(window):
+            user32.SetWindowPos(window, None, left, 0, 0, 0, 0x0015)  # Keep size, order and activation.
+        return True
+
+    user32.EnumWindows(park, 0)
+
+
 def native_close(process_id, *, title=None):
     """Post the title-bar Close command to this test process's visible window."""
     user32 = ctypes.WinDLL('user32', use_last_error=True)

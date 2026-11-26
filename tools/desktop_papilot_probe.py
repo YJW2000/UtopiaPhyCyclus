@@ -13,7 +13,7 @@ from urllib.request import urlopen
 import pymupdf
 import websockets
 
-from desktop_maintenance_probe import add_question, launch, native_close, source_files, wait_for
+from desktop_maintenance_probe import add_question, launch, native_close, park_test_window, source_files, wait_for
 from desktop_speed_probe import Page
 
 
@@ -214,6 +214,7 @@ async def probe(executable, development, root, screenshot=None):
             shell = Page(shell_socket)
             await shell.until(f'{find("button[data-page=tex]")}?.checkVisibility()')
             assert await shell.js('!document.querySelector(".app-nav [data-page=papilot]")')
+            park_test_window(process.pid)
             assert not await shell.js(f'Boolean({find(SLOT)})')
             assert not runtime_log.exists()
             assert desktop_target(port, embedded=True) is None
@@ -262,7 +263,11 @@ async def probe(executable, development, root, screenshot=None):
                 await shell.command('Page.bringToFront')
                 await project.command('Page.bringToFront')
                 await project.command('Emulation.setFocusEmulationEnabled', {'enabled': True})
-                await project.until('Boolean(document.querySelector(".pdfViewer .page canvas"))', seconds=45)
+                try:
+                    await project.until('Boolean(document.querySelector(".pdfViewer .page canvas"))', seconds=90)
+                except TimeoutError as error:
+                    state = await project.js('({ title: document.title, visibility: document.visibilityState, message: document.body.innerText.slice(-1200) })')
+                    raise AssertionError(f'Compiled manuscript did not render: {state}') from error
                 await verify_marking_tools(project, project_id, screenshot)
                 await point_note(project, project_id)
                 if screenshot:

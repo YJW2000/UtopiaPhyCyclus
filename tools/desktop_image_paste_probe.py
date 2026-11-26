@@ -9,6 +9,7 @@ import argparse
 import asyncio
 import base64
 import ctypes
+from ctypes import wintypes
 import json
 import os
 from pathlib import Path
@@ -18,13 +19,15 @@ import socket
 import subprocess
 import sys
 from tempfile import TemporaryDirectory
+from urllib.parse import quote
+from urllib.request import urlopen
 
 import pymupdf
 import websockets
 
 from desktop_speed_probe import Page, ROOT, target
-from desktop_papilot_probe import RENDER_FLAGS, compiled_pdf_text, desktop_target
-from desktop_maintenance_probe import wait_for
+from desktop_papilot_probe import RENDER_FLAGS, desktop_target, point_note
+from desktop_maintenance_probe import park_test_window, wait_for
 
 
 PASTE = '粘贴图片'
@@ -75,12 +78,14 @@ class CodexFixture {
         var first = Path.Combine(fixture, "first.png");
         if (!File.Exists(first)) {
             File.Copy(args[image + 1], first);
-            var deadline = DateTime.UtcNow.AddSeconds(40);
-            while (!File.Exists(Path.Combine(fixture, "release")) && DateTime.UtcNow < deadline) {
-                Thread.Sleep(20);
+            if (!File.Exists(Path.Combine(fixture, "direct"))) {
+                var deadline = DateTime.UtcNow.AddSeconds(40);
+                while (!File.Exists(Path.Combine(fixture, "release")) && DateTime.UtcNow < deadline) {
+                    Thread.Sleep(20);
+                }
+                Console.Error.WriteLine("Intentional fixture failure");
+                return 1;
             }
-            Console.Error.WriteLine("Intentional fixture failure");
-            return 1;
         }
         File.Copy(args[image + 1], Path.Combine(fixture, "retry.png"));
         File.Copy(Path.Combine(fixture, "recognition.json"), args[output + 1], true);
@@ -216,6 +221,19 @@ def check_original_pdf(document, screenshot):
         assert embedded.samples == screenshot.samples, 'The original screenshot pixels changed during import.'
 
 
+def check_manuscript_pdf(origin, project_id, key, crop):
+    url = f'{origin}/api/projects/{quote(project_id)}/manuscript.pdf?key={quote(key)}'
+    with urlopen(url, timeout=10) as response, pymupdf.open(stream=response.read(), filetype='pdf') as pdf:
+        assert len(pdf) == 1 and '水平恒力' in pdf[0].get_text()
+        images = pdf[0].get_images(full=True)
+        assert images, 'The revision PDF lost the cropped illustration.'
+        for image in images:
+            embedded = pymupdf.Pixmap(pdf, image[0])
+            if (embedded.width, embedded.height, embedded.samples) == (crop.width, crop.height, crop.samples):
+                return
+        raise AssertionError('The revision PDF does not contain the original cropped pixels.')
+
+
 def make_launcher(directory):
     launcher = directory / 'launcher'
     launcher.mkdir()
@@ -298,6 +316,8 @@ async def run(args, root):
     release = codex.with_name('release')
     preview_only = codex.with_name('preview-only')
     preview_only.touch()
+    if args.direct:
+        codex.with_name('direct').touch()
     with socket.socket() as sock:
         sock.bind(('127.0.0.1', 0))
         port = sock.getsockname()[1]
@@ -329,12 +349,13 @@ async def run(args, root):
                 if process.poll() is not None:
                     raise RuntimeError(f'Electron exited before startup with code {process.returncode}.')
                 await asyncio.sleep(.1)
-        async with websockets.connect(url, max_size=12_000_000) as ws:
+        async with websockets.connect(url, max_size=12_000_000, ping_interval=None) as ws:
             page = IntakePage(ws)
             await page.command('Page.bringToFront')
             await page.command('Emulation.setFocusEmulationEnabled', {'enabled': True})
             await page.command('Emulation.setDeviceMetricsOverride', {'width': 1400, 'height': 920, 'deviceScaleFactor': 1, 'mobile': False})
             await page.until("Boolean(document.querySelector('button[data-page=entry]') && window.utopia)")
+            park_test_window(process.pid)
             await page.js("window.utopia.call('ui.save', {provider:'cursor'})")
             await page.route('settings')
             await page.until("Boolean(document.querySelector('.settings-agent-list input'))", seconds=45)
@@ -401,22 +422,28 @@ async def run(args, root):
             async with asyncio.timeout(30):
                 while not first_image.exists():
                     await asyncio.sleep(.05)
-            await page.until("document.querySelector('.intake [role=status]')?.textContent.includes('正在识别图片')")
-            assert not await page.js(WORKSPACE), 'Workbench opened before image recognition completed.'
-            release.touch()
-
-            await page.until(f"{intake_error}?.textContent.includes('本地 Codex 调用失败')")
-            assert await page.js(f'document.querySelector({json.dumps(IMAGE)})?.checkVisibility()')
-            assert not await page.js(WORKSPACE), 'Failed recognition opened the workbench.'
-            failed = await page.raw_document()
-            assert failed['source'] == '' and len(await page.get_docs()) == previous_draft_count + 1, failed
-            await page.click(RETRY)
+            if not args.direct:
+                await page.until("document.querySelector('.intake [role=status]')?.textContent.includes('正在识别图片')")
+                assert not await page.js(WORKSPACE), 'Workbench opened before image recognition completed.'
+                release.touch()
+                await page.until(f"{intake_error}?.textContent.includes('本地 Codex 调用失败')")
+                assert await page.js(f'document.querySelector({json.dumps(IMAGE)})?.checkVisibility()')
+                assert not await page.js(WORKSPACE), 'Failed recognition opened the workbench.'
+                failed = await page.raw_document()
+                assert failed['source'] == '' and len(await page.get_docs()) == previous_draft_count + 1, failed
+                await page.click(RETRY)
 
             await page.until(f'{WORKSPACE} || Boolean({intake_error})', seconds=150)
             assert await page.js(WORKSPACE), await page.js(f'{intake_error}?.textContent')
             recognized = await page.raw_document()
-            assert recognized['id'] == failed['id'] and recognized['title'] == recognition_name
-            assert recognized['previewCurrent'] and Path(recognized['previewPath']).is_file(), recognized
+            assert recognized['title'] == recognition_name
+            if not args.direct:
+                assert recognized['id'] == failed['id']
+            if not recognized['previewCurrent']:
+                await page.click('编译日志')
+                log = await page.js("document.querySelector('.wb-log')?.textContent")
+                raise AssertionError(f'Image reconstruction did not produce a current PDF: {log}')
+            assert Path(recognized['previewPath']).is_file()
             assert OCR_SEED in recognized['source'] and len(await page.get_docs()) == previous_draft_count + 1
             check_original_pdf(recognized, screenshot)
             crop = re.search(r'\\includegraphics\[[^\n]*?\]\{([^}]+)\}', recognized['source'])
@@ -432,23 +459,24 @@ async def run(args, root):
             assert recognized['recognitionAgent'] == 'codex'
             await page.until("document.querySelector('.papilot-workspace')?.getAttribute('aria-busy') === 'false'", seconds=135)
             embedded_url = await wait_for(process, lambda: desktop_target(port, embedded=True), seconds=45)
-            async with websockets.connect(embedded_url) as project_socket:
+            async with websockets.connect(embedded_url, ping_interval=None) as project_socket:
                 project = Page(project_socket)
                 await project.command('Page.bringToFront')
                 await project.command('Emulation.setFocusEmulationEnabled', {'enabled': True})
-                state = "fetch('/api/state').then(r => r.json()).then(s => s.projects.map(({id, path}) => ({id, path})))"
-                await project.until(f'{state}.then(items => items.some(p => p.path?.includes({json.dumps(recognized["id"])})))', seconds=150)
-                projects = await project.js(state)
+                await project.until(f'document.title.includes({json.dumps(recognition_name)})', seconds=150)
+                projects = await project.js("fetch('/api/state').then(r => r.json()).then(s => s.projects.map(({id, path}) => ({id, path})))")
                 active, = (item for item in projects if item['path'] and Path(item['path']).parent.name == recognized['id'])
                 await project.until('Boolean(document.querySelector(".pdfViewer .page canvas"))', seconds=150)
                 endpoint = json.dumps(f"/api/projects/{active['id']}/manuscript")
                 ready = f'fetch({endpoint}).then(r => r.json())'
                 await project.until(f'{ready}.then(s => s.build?.status === "ready")', seconds=90)
                 build_key = await project.js(f'{ready}.then(s => s.build.key)')
-                contents = await asyncio.to_thread(compiled_pdf_text, await project.js('location.origin'), active['id'], build_key)
-                assert '水平恒力' in contents, contents
-            print('PASS recognition failure retains the screenshot and retries the same draft', flush=True)
+                await asyncio.to_thread(check_manuscript_pdf, await project.js('location.origin'), active['id'], build_key, saved_crop)
+                await point_note(project, active['id'])
+            print('PASS first paste automatically opens the recognized document' if args.direct else
+                  'PASS recognition failure retains the screenshot and retries the same draft', flush=True)
             print('PASS automatic vision Agent fallback preserves source crops, compiles LaTeX, and opens the PDF in the embedded revision view', flush=True)
+            print('PASS the revision PDF contains the original cropped pixels and saves an inline note', flush=True)
 
             await page.click('LaTeX 源码')
             await page.until(f'document.querySelector({json.dumps(SOURCE)})?.checkVisibility()')
@@ -479,6 +507,9 @@ async def run(args, root):
             await page.command('Page.close')
     except BaseException:
         print(console.read_text(encoding='utf-8', errors='replace'), file=sys.stderr)
+        runtime_log = profile / 'papilot/logs/backend.log'
+        if runtime_log.is_file():
+            print(runtime_log.read_text(encoding='utf-8', errors='replace')[-4000:], file=sys.stderr)
         raise
     finally:
         release.touch()
@@ -498,6 +529,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--exe', type=Path, required=True, help='Stock Electron executable or built desktop application.')
     parser.add_argument('--resources', type=Path, help='Use staged or installed runtime resources for a stock Electron test.')
+    parser.add_argument('--direct', action='store_true', help='Verify a successful first paste without retrying OCR.')
     parser.add_argument('--packaged', action='store_true', help='Run an unpacked or installed build directly and exercise renderer paste.')
     parser.add_argument('--screenshot', type=Path, help='Write a screenshot of the clean image intake page after the probe passes.')
     args = parser.parse_args()

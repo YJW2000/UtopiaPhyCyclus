@@ -93,6 +93,40 @@ def configure_wsl_bridge(source: Path) -> None:
             "      env.PAPILOT_TAILSCALE_LOGIN = options.sharing.owner;\n    }")
 
 
+def configure_windows_tex_cache(source: Path) -> None:
+    replace = source_replacements(source)
+    engine = 'engine/src/core/build.ts'
+    replace(engine, 'export class Builder {', '''// TeX Live's Windows image driver still uses MAX_PATH. Keep the actual
+// cache in Git state, but give the compiler and SyncTeX the same short path.
+function windowsTexCache(cache: string) {
+  const local = process.env.LOCALAPPDATA;
+  if (process.platform !== "win32" || !local) return cache;
+  const parent = path.join(local, "UtopiaPhyCyclus", "tex");
+  const alias = path.join(parent, hash(path.resolve(cache).toLowerCase()).slice(0, 24));
+  if (alias.length >= cache.length) return cache;
+  fs.mkdirSync(cache, { recursive: true });
+  fs.mkdirSync(parent, { recursive: true });
+  try {
+    fs.symlinkSync(path.resolve(cache), alias, "junction");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "EEXIST") {
+      console.warn("Could not create a short path for the TeX cache:", alias, error);
+      return cache;
+    }
+  }
+  if (!fs.lstatSync(alias).isSymbolicLink() ||
+      fs.realpathSync.native(alias).toLowerCase() !== fs.realpathSync.native(cache).toLowerCase()) {
+    throw new Error(`Unexpected TeX cache junction target: ${alias}`);
+  }
+  return alias;
+}
+export class Builder {''')
+    replace(engine, 'this.cache = path.join(project.state, "cache/builds");',
+            'this.cache = windowsTexCache(path.join(project.state, "cache/builds"));')
+    replace(engine, 'context = hash(JSON.stringify([signature(p), version,',
+            'context = hash(JSON.stringify([signature(p), version, ...(process.platform === "win32" ? ["utopia-tex-path-v1"] : []),')
+
+
 def configure_workspace(source: Path) -> None:
     replace = source_replacements(source)
     chrome = 'src/web/desktop-chrome.tsx'
@@ -162,6 +196,7 @@ def stage_papilot(destination: Path, checkout: Path | None = None) -> None:
         source = scratch / 'source'
         export_source(source, checkout, scratch)
         configure_wsl_bridge(source)
+        configure_windows_tex_cache(source)
         configure_workspace(source)
         package = json.loads((source / 'package.json').read_text(encoding='utf-8'))
         if package['name'] != 'papilot' or package['license'] != 'MIT':
