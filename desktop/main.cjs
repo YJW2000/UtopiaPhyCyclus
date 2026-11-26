@@ -495,6 +495,7 @@ function registerIpc() {
   handle('papilot-show', papilot.show);
   handle('papilot-bounds', papilot.resize);
   handle('papilot-hide', papilot.hide);
+  handle('papilot-quick-notes', papilot.quickNotes);
   let projectSelection = 0;
   handle('papilot-open-question', async (id, revision, openManuscript) => {
     const selection = ++projectSelection;

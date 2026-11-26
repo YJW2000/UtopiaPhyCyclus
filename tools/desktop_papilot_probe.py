@@ -30,6 +30,8 @@ SOURCE = r'''
 ORIGINAL = '题库项目验收'
 REVISED = '编译和版本管理验收'
 NOTE = '校核电流和单位'
+STAMP_NAME = '检查单位'
+STAMP_TEXT = '逐项核对所选推导中的物理量和单位。'
 COMMIT = '验证 Papilot 版本记录'
 SLOT = '.papilot-workspace'
 # An occluded QA window still needs to draw PDF pages and observe resize events.
@@ -103,6 +105,22 @@ async def mark_text(page, shortcut, word):
     for step in range(1, 6):
         await page.command('Input.dispatchMouseEvent', {'type': 'mouseMoved', 'button': 'left', 'buttons': 1, 'x': x + (end - x) * step / 5, 'y': y})
     await page.command('Input.dispatchMouseEvent', {'type': 'mouseReleased', 'button': 'left', 'clickCount': 1, 'x': end, 'y': y})
+
+
+async def set_magic_default(shell, screenshot):
+    await click(shell, 'button[data-page=settings]')
+    await click(shell, '.magic-pen-settings button[aria-label="编辑 润色"]')
+    for selector, value in [('input', STAMP_NAME), ('textarea', STAMP_TEXT)]:
+        field = find('.magic-pen-settings-form ' + selector)
+        await shell.js(f'{field}.focus(); {field}.select()')
+        await shell.command('Input.insertText', {'text': value})
+        await shell.until(f'{field}.value === {json.dumps(value)}')
+    await click(shell, '.magic-pen-settings-form [type=submit]')
+    row = find('.magic-pen-settings-list li:first-child')
+    await shell.until(f'{row}?.textContent.includes({json.dumps(STAMP_TEXT)})')
+    if screenshot:
+        await shell.js(f'{find(".magic-pen-settings")}.scrollIntoView({{block:"start"}})')
+        await shell.screen(screenshot.with_stem(screenshot.stem + '-settings'))
 
 
 async def verify_marking_tools(page, project, screenshot=None):
@@ -265,6 +283,22 @@ async def probe(executable, development, root, screenshot=None):
                 project = Page(project_socket)
                 await resize_view(shell, project)
 
+                await set_magic_default(shell, screenshot)
+                await click(shell, 'button[data-page=tex]')
+                await click(shell, 'button.draft-link')
+                await shell.until(f'{find(SLOT)}?.getAttribute("aria-busy") === "false"', seconds=75)
+                await project.until("document.querySelector('.textLayer')?.textContent.includes('explanation')", seconds=90)
+                await mark_text(project, 'Q', 'explanation')
+                slot = f'.stamp-slot[aria-label="{STAMP_NAME}"]'
+                await project.until(f'{find(slot)}?.checkVisibility()')
+                await project.js(f'{find(slot)}.focus()')
+                await project.until(f'{find(".stamp-caption")}?.textContent === {json.dumps(STAMP_TEXT)}')
+                if screenshot:
+                    await project.screen(screenshot.with_stem(screenshot.stem + '-custom-wheel'))
+                await click(project, slot)
+                await project.until(f'fetch({endpoint}).then(r => r.json()).then(s => s.annotations.some(n => n.stamp === {json.dumps(STAMP_NAME)} && n.comment === {json.dumps(STAMP_TEXT)} && n.quote.includes("explanation")))')
+                print('Saved a custom sentence in desktop Settings and applied it from the existing PDF wheel.', flush=True)
+
                 await click(shell, 'button[data-page=browse]')
                 selected = find('.question-link[aria-current=true]')
                 await shell.until(f'{selected}?.checkVisibility()', seconds=60)
@@ -285,8 +319,22 @@ async def probe(executable, development, root, screenshot=None):
                 'texCompiled': True, 'annotations': True,
                 'gitCommit': True, 'draftRoundTrip': True, 'papilotVersion': state['version'], 'firstOpenMs': first_open_ms}
 
+    async def check_restart(process, port):
+        url = await wait_for(process, lambda: desktop_target(port), seconds=120)
+        async with websockets.connect(url) as socket:
+            shell = Page(socket)
+            await click(shell, 'button[data-page=settings]')
+            row = find('.magic-pen-settings-list li:first-child')
+            await shell.until(f'{row}?.textContent.includes({json.dumps(STAMP_TEXT)})', seconds=90)
+            assert desktop_target(port, embedded=True) is None
+            await click_label(shell, '恢复内置语句')
+            await shell.until(f'{row}?.querySelector("strong").textContent === "润色"')
+        await wait_for(process, lambda: native_close(process.pid, title='乌托邦高中物理题库助手'))
+
     try:
-        return await launch(executable, development, root, bank, run, chromium_flags=RENDER_FLAGS)
+        result = await launch(executable, development, root, bank, run, chromium_flags=RENDER_FLAGS, shutdown_timeout=100)
+        await launch(executable, development, root, bank, check_restart, chromium_flags=RENDER_FLAGS, shutdown_timeout=100)
+        return {**result, 'customWheelInstruction': True, 'persistedAfterRestart': True}
     except Exception:
         if runtime_log.is_file():
             print(runtime_log.read_text(encoding='utf-8', errors='replace'))

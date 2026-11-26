@@ -54,6 +54,8 @@ contextBridge.exposeInMainWorld('papilotDesktop', {
 // Give the embedded workspace the app's initial warm appearance. Subsequent
 // changes in the upstream appearance editor use its normal persistent state.
 if (process.isMainFrame && /^http:\/\/127\.0\.0\.1:\d+$/.test(location.origin)) {
+  // Papilot refreshes the active wheel's quick notes on window focus.
+  subscribe('quick-notes-changed', () => window.dispatchEvent(new Event('focus')));
   try {
     // The question bank already provides document navigation beside the PDF.
     if (!localStorage.getItem('utopia:document-layout')) {

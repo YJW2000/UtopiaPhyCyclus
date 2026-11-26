@@ -14,6 +14,7 @@ contextBridge.exposeInMainWorld('utopia', {
   papilotShow: bounds => ipcRenderer.invoke('utopia:papilot-show', bounds),
   papilotBounds: bounds => ipcRenderer.invoke('utopia:papilot-bounds', bounds),
   papilotHide: () => ipcRenderer.invoke('utopia:papilot-hide'),
+  papilotQuickNotes: notes => ipcRenderer.invoke('utopia:papilot-quick-notes', notes),
   papilotOpenQuestion: (id, revision, openManuscript) =>
     ipcRenderer.invoke('utopia:papilot-open-question', id, revision, openManuscript),
   onPapilotShortcut: listener => {

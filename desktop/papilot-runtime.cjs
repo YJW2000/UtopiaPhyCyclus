@@ -7,7 +7,7 @@ const path = require('node:path');
 const { setTimeout: delay } = require('node:timers/promises');
 const { pathToFileURL } = require('node:url');
 
-const READY_TIMEOUT = 120_000;
+const READY_TIMEOUT = 180_000;
 const SHUTDOWN_TIMEOUT = 4_000;
 const LOG_LIMIT = 5 * 1024 * 1024;
 
@@ -302,6 +302,12 @@ function createPapilotRuntime({ resources, profile, resolveEnvironment = async (
     let origin;
     if (selected.kind === 'wsl') origin = await launchWsl(record, inherited, port, bundle);
     else {
+      // A new embedded profile opens the selected question. Papilot treats an
+      // empty seed marker as the user's choice to omit its standalone demo.
+      if (!existsSync(path.join(data, 'papilot.sqlite')) && !existsSync(path.join(data, 'example-paper'))) {
+        await fs.writeFile(path.join(data, 'desktop-demo.json'), '{}\n', { flag: 'wx', mode: 0o600 })
+          .catch(error => { if (error.code !== 'EEXIST') throw error; });
+      }
       const instance = randomUUID();
       const env = buildEnvironment({ inherited, node, root, data, resources, port, instance });
       const output = await fs.open(log, 'a', 0o600);

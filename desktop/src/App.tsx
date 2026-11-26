@@ -6,6 +6,7 @@ import ContextChat from './ContextChat'
 import FileInfoDialog from './FileInfoDialog'
 import type { QuestionFileInfo } from './FileInfoDialog'
 import ImageIntake from './ImageIntake'
+import MagicPenSettings from './MagicPenSettings'
 import PaneDivider from './PaneDivider'
 import SettingsConnections from './SettingsConnections'
 import type { EditorHandle, ProjectDocumentAction } from './Editor'
@@ -576,6 +577,7 @@ export default function App() {
                         </select>
                       </label>
                     </section>
+                    <MagicPenSettings />
                     <SettingsConnections
                       provider={prefs?.provider}
                       saveProvider={async (provider) => {

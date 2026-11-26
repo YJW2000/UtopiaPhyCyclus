@@ -95,7 +95,7 @@ async def wait_for(process, check, *, seconds=20):
     return result
 
 
-async def launch(exe, development, root, bank, callback, *, chromium_flags=()):
+async def launch(exe, development, root, bank, callback, *, chromium_flags=(), shutdown_timeout=18):
     with socket.socket() as sock:
         sock.bind(('127.0.0.1', 0))
         port = sock.getsockname()[1]
@@ -110,7 +110,7 @@ async def launch(exe, development, root, bank, callback, *, chromium_flags=()):
                                    creationflags=subprocess.CREATE_NO_WINDOW)
     try:
         result = await callback(process, port)
-        assert await asyncio.to_thread(process.wait, 18) == 0
+        assert await asyncio.to_thread(process.wait, shutdown_timeout) == 0
         return result
     except BaseException:
         if process.poll() is None:

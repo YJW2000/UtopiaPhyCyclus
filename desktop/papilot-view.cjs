@@ -73,6 +73,7 @@ function createPapilotView({ runtime, resources, getWindow }) {
   function hide() {
     requested = false;
     if (attached && !attached.isDestroyed() && view) attached.contentView.removeChildView(view);
+    if (view && !view.webContents.isDestroyed()) view.webContents.setBackgroundThrottling(true);
     attached = undefined;
   }
 
@@ -108,6 +109,7 @@ function createPapilotView({ runtime, resources, getWindow }) {
     const child = new WebContentsView({ webPreferences: {
       preload: path.join(__dirname, 'papilot-preload.cjs'),
       partition: 'persist:utopia-papilot',
+      backgroundThrottling: false,
       sandbox: true, nodeIntegration: false, contextIsolation: true, navigateOnDragDrop: false,
     } });
     child.setBackgroundColor('#faf8f3');
@@ -170,6 +172,9 @@ function createPapilotView({ runtime, resources, getWindow }) {
       const parent = getWindow();
       if (!parent || parent.isDestroyed() || target.webContents.isDestroyed()) return;
       if (attached !== parent) {
+        // A child view can be considered hidden by Chromium even with valid
+        // bounds. Papilot waits for visibility before it reads its first state.
+        target.webContents.setBackgroundThrottling(false);
         parent.contentView.addChildView(target);
         attached = parent;
       }
@@ -186,6 +191,29 @@ function createPapilotView({ runtime, resources, getWindow }) {
       pendingTask = undefined;
     })().finally(() => { showJob = undefined; });
     return showJob;
+  }
+
+  async function quickNotes(notes) {
+    const started = await runtime.start();
+    const endpoint = new URL('/api/quick-notes', started.origin);
+    const options = { redirect: 'error', signal: AbortSignal.timeout(15_000) };
+    if (notes !== undefined) {
+      // The upstream API issues the write token in its local state response.
+      const state = await fetch(new URL('/api/state', started.origin), options);
+      if (!state.ok) throw new Error('无法连接魔法笔设置，请重试。');
+      const { csrf } = await state.json();
+      if (!csrf) throw new Error('魔法笔设置连接已过期，请重试。');
+      options.method = 'POST';
+      options.headers = { 'Content-Type': 'application/json', 'X-Papilot-Token': csrf };
+      options.body = JSON.stringify({ quickNotes: notes });
+    }
+    const response = await fetch(endpoint, options);
+    if (!response.ok) throw new Error(notes === undefined ? '读取魔法笔默认语句失败。' : '保存失败，请检查语句名称和内容后重试。');
+    const result = await response.json();
+    if (notes !== undefined && view && !view.webContents.isDestroyed() && loadedRuntime === started) {
+      view.webContents.send('papilot:quick-notes-changed');
+    }
+    return result.quickNotes;
   }
 
   async function requestFolder(folder, openManuscript = false, isCurrent = () => true) {
@@ -304,7 +332,7 @@ function createPapilotView({ runtime, resources, getWindow }) {
     return runtime.stop();
   }
 
-  return { register, show, resize: bounds => { latestBounds = checkedBounds(bounds); resize(); }, hide, openLink, requestFolder, close };
+  return { register, show, resize: bounds => { latestBounds = checkedBounds(bounds); resize(); }, hide, openLink, quickNotes, requestFolder, close };
 }
 
 module.exports = { createPapilotView };

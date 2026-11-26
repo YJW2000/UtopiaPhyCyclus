@@ -4,6 +4,7 @@ import type {
   EnvironmentToolId,
 } from './settingsContract';
 import type { EditorDocument } from './editorContract';
+import type { QuickNote } from './MagicPenSettings';
 
 export interface PapilotBounds {
   x: number;
@@ -35,6 +36,7 @@ declare global {
       papilotBounds(bounds: PapilotBounds): Promise<void>;
       papilotHide(): Promise<void>;
       papilotOpenQuestion(id: string, revision?: number, openManuscript?: boolean): Promise<EditorDocument>;
+      papilotQuickNotes(notes?: QuickNote[] | null): Promise<QuickNote[] | null>;
       onPapilotShortcut(listener: () => void): () => void;
     };
   }

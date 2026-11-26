@@ -50,11 +50,16 @@ test('one native writer per desktop session, private profile and stable port', a
   const [first, concurrent] = await Promise.all([runtime.start(), runtime.start()]);
   assert.equal(first, concurrent);
   assert.equal(first.data, path.join(profile, 'papilot'));
+  const demo = path.join(first.data, 'desktop-demo.json');
+  assert.deepEqual(JSON.parse(await fs.readFile(demo, 'utf8')), {});
   const response = await fetch(`${first.origin}/api/health`).then(result => result.json());
   assert.equal(response.data, first.data);
   await runtime.stop();
   assert.equal(runtime.current(), null);
+  const existingDemo = JSON.stringify({ id: 'existing-demo' });
+  await fs.writeFile(demo, existingDemo);
   const restarted = await runtime.start();
+  assert.equal(await fs.readFile(demo, 'utf8'), existingDemo);
   assert.equal(restarted.origin, first.origin);
   assert.notEqual((await fetch(`${restarted.origin}/api/health`).then(result => result.json())).desktopInstance, response.desktopInstance);
 });
