@@ -86,13 +86,13 @@ export const lessonScreenshots: Record<string, Partial<Record<number, GuideScree
   'papilot-project': {
     1: {
       src: papilotTransfer,
-      title: '从当前文稿的更多操作菜单进入 Papilot',
-      alt: '题目工作台右上角已展开更多操作菜单，其中有在 Papilot 工作台打开。',
+      title: '从当前文稿的更多操作菜单进入项目工作台',
+      alt: '题目工作台右上角已展开更多操作菜单，可进入项目工作台。',
     },
     2: {
       src: papilot,
-      title: '在 Papilot 演示稿件中标记 PDF，右侧新任务列出待发送的批注',
-      alt: 'Papilot 稿件页中央是演示 PDF 和批注标记，右侧新任务中有一条待发送批注。',
+      title: '在项目工作台标记 PDF，右侧新任务列出待发送的批注',
+      alt: '稿件页中央是演示 PDF 和批注标记，右侧新任务中有一条待发送批注。',
     },
   },
   'save-question': {

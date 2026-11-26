@@ -14,6 +14,7 @@ from threading import RLock
 from uuid import uuid4
 
 from services.desktop_jobs import DesktopJobs
+from services.desktop_library import exam_question_files, exam_question_source
 from services.desktop_model import selected_provider
 from services.desktop_revision import (
     changed_ranges, chat_revision, decode_attachments, offsets, rebase_selections, utf16_length,
@@ -25,7 +26,7 @@ from services.pdf_import_service import import_pdf, inspect_pdf
 from services.pdf_selection_edit import locate_pdf_selection
 from services.question_solution_service import fill_missing_solution, has_missing_solution
 from services.tex_compile_service import compile_tex_preview
-from services.tex_import_service import decode_tex, parse_tex_questions, replace_parsed_problem_header
+from services.tex_import_service import _mask_comments, decode_tex, parse_tex_questions, replace_parsed_problem_header
 from utils.core_config import CHAPTERS_DIR, SUBJECTS
 from utils.image_assets import copy_graphics, graphics_references, package_question_images, resolve_image
 
@@ -107,6 +108,7 @@ class DesktopWorkspace:
             'workspace.resume': self.resume,
             'workspace.create': self.create,
             'workspace.save': self.save,
+            'workspace.append_questions': self.append_questions,
             'workspace.import_pdf': self.import_document,
             'workspace.reconstruct': self.reconstruct,
             'workspace.compile': self.compile,
@@ -338,6 +340,16 @@ class DesktopWorkspace:
                 self._link_question(document, tex_path, original_bytes)
                 if source != original_source:
                     document.pop('_questionDraftHash')
+            exam = params.get('exam')
+            if exam is not None:
+                if (not tex_path or tex_path.parent.parent != self.state / 'papers' or pdf_path
+                        or not re.fullmatch(r'[0-9a-f]{32}', tex_path.parent.name)
+                        or not isinstance(exam, dict) or type(exam.get('answers')) is not bool):
+                    raise ValueError('组卷草稿无效，请从组卷服务打开。')
+                files = exam_question_files(self.library / 'chapters', exam.get('paths'))
+                if not files:
+                    raise ValueError('请先选入题目。')
+                document['exam'] = {'paths': list(files), 'answers': exam['answers']}
             if preview_path:
                 preview = directory / 'demo-preview.pdf'
                 shutil.copyfile(preview_path, preview)
@@ -422,6 +434,36 @@ class DesktopWorkspace:
                 if type(page) is not int or not 1 <= page <= document.get('pdfPageCount', 0):
                     raise ValueError('原卷页码无效。')
                 document['originalPage'] = page
+            self._write(document)
+            return self._public(document)
+
+    def append_questions(self, params):
+        with self.lock:
+            document = self._read(params.get('id'))
+            self._check_revision(document, params)
+            exam = document.get('exam')
+            if exam is None:
+                raise ValueError('只可向组卷工作稿添加题库题目。')
+            files = exam_question_files(self.library / 'chapters', params.get('paths'), exam['paths'])
+            if not files:
+                return self._public(document)
+
+            source = document['source']
+            masked = _mask_comments(source)
+            opening = re.search(r'\\begin\s*\{document\}', masked)
+            position = len(source)
+            if opening:
+                closing = re.compile(r'\\end\s*\{document\}').search(masked, opening.end())
+                if not closing:
+                    raise ValueError('请先补全当前工作稿的 \\end{document}，再添加题目。')
+                position = closing.start()
+
+            body = exam_question_source(files.values(), self.library, self._directory(document['id']),
+                                        document['title'], exam['answers'], first_number=len(exam['paths']) + 1)
+            insertion = '\n\n' + body + '\n\n' if source else body
+            updated = _source({'source': source[:position] + insertion + source[position:]})
+            self._replace_source(document, updated, [(position, position, insertion)])
+            exam['paths'].extend(files)
             self._write(document)
             return self._public(document)
 
@@ -621,7 +663,7 @@ class DesktopWorkspace:
             document = self._read(params.get('id'))
             self._check_revision(document, params)
             if not document['source'].strip():
-                raise ValueError('请先识别原卷或录入 LaTeX，再打开 Papilot 项目工作台。')
+                raise ValueError('请先识别原卷或录入 LaTeX，再打开项目工作台。')
             ident = document['id']
             root = self.state / 'papilot-projects' / ident
             resources = [self._directory(ident), self.library]
@@ -642,13 +684,13 @@ class DesktopWorkspace:
             document = self._read(params.get('id'))
             self._check_revision(document, params)
             if not document.get('papilotProject'):
-                raise ValueError('请先在 Papilot 工作台打开这份题目。')
+                raise ValueError('请先在项目工作台打开这份题目。')
             root = self.state / 'papilot-projects' / document['id']
             source = _source({'source': read_question_project(root)})
             if source == document['source']:
                 return self._public(document)
             if document.get('_papilotImportedHash') != _sha(document['source']):
-                raise ValueError('题库草稿和 Papilot 项目都可能已修改。请先核对两个版本，避免覆盖题库草稿。')
+                raise ValueError('题库草稿和项目工作台中的源码可能都已修改。请先核对两个版本，避免覆盖题库草稿。')
             self._replace_source(document, source)
             document['_papilotImportedHash'] = _sha(source)
             self._write(document)

@@ -15,7 +15,6 @@ contextBridge.exposeInMainWorld('utopia', {
   saveFile: (kind, suggestedName) => ipcRenderer.invoke('utopia:save-file', kind, suggestedName),
   chooseLibrary: () => ipcRenderer.invoke('utopia:choose-library'),
   asset: path => ipcRenderer.invoke('utopia:asset', path),
-  legacy: route => ipcRenderer.invoke('utopia:legacy', route),
   detectEnvironment: () => ipcRenderer.invoke('utopia:detect-environment'),
   installEnvironmentTool: id => ipcRenderer.invoke('utopia:install-environment-tool', id),
   openEnvironmentHelp: id => ipcRenderer.invoke('utopia:open-environment-help', id),
@@ -23,7 +22,8 @@ contextBridge.exposeInMainWorld('utopia', {
   papilotShow: bounds => ipcRenderer.invoke('utopia:papilot-show', bounds),
   papilotBounds: bounds => ipcRenderer.invoke('utopia:papilot-bounds', bounds),
   papilotHide: () => ipcRenderer.invoke('utopia:papilot-hide'),
-  papilotOpenQuestion: (id, revision) => ipcRenderer.invoke('utopia:papilot-open-question', id, revision),
+  papilotOpenQuestion: (id, revision, openManuscript) =>
+    ipcRenderer.invoke('utopia:papilot-open-question', id, revision, openManuscript),
   onPapilotShortcut: listener => {
     papilotShortcut = listener;
     if (pendingPapilotRoute) {

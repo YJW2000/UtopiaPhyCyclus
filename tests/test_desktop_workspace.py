@@ -146,6 +146,75 @@ def _batch_question(workspace, number, stem, complete=False):
     return path.relative_to(workspace.library / 'chapters').as_posix(), path, source
 
 
+def test_append_exam_questions_preserves_edits_images_and_student_version(workspace, monkeypatch):
+    first, first_file, first_source = _batch_question(workspace, 1, '第一题。', complete=True)
+    second, second_file, second_source = _batch_question(workspace, 2, '第二题。', complete=True)
+    for path, source, color in ((first_file, first_source, 'blue'), (second_file, second_source, 'red')):
+        directory = path.parent / path.stem
+        directory.mkdir()
+        Image.new('RGB', (12, 12), color).save(directory / '示意图.png')
+        image = '\\includegraphics{' + path.stem + '/示意图.png}'
+        source = source.replace(r'\end{problem}', image + r'\end{problem}')
+        path.write_text(source, encoding='utf-8')
+
+    assemble = desktop_library.create_library_handlers(workspace.library, workspace.state)['library.assemble']
+    paper = workspace.create(assemble({'paths': [first.replace('/', '\\'), first], 'answers': False}))
+    ident = paper['id']
+    assert paper['exam'] == {'paths': [first], 'answers': False}
+    edited = workspace.save({'id': ident, 'source': paper['source'].replace('第一题', '手动修改第一题')})
+    monkeypatch.setattr(desktop_workspace, 'compile_tex_preview', lambda *args, **kwargs: {
+        'ok': True, 'pdf': b'%PDF-1.4', 'log': 'mock compile',
+    })
+    assert wait_task(workspace.jobs.get, workspace.compile({'id': ident}))['status'] == 'succeeded'
+    assert workspace.open({'id': ident})['previewCurrent']
+
+    with pytest.raises(ValueError, match='新版本'):
+        workspace.append_questions({'id': ident, 'paths': [second], 'revision': paper['revision']})
+    appended = workspace.append_questions({'id': ident, 'paths': [first, second, second], 'revision': edited['revision']})
+    assert appended['revision'] == edited['revision'] + 1
+    assert appended['source'].startswith(edited['source'])
+    assert appended['source'].count('第二题。') == 1
+    assert r'\begin{answer}' not in appended['source'] and r'\begin{solutions}' not in appended['source']
+    assert appended['exam'] == {'paths': [first, second], 'answers': False}
+    assert not appended['previewCurrent']
+
+    directory = Path(appended['sourcePath']).parent
+    images = [directory / ref['path'] for ref in graphics_references(appended['source'])]
+    assert images[0] != images[1]
+    pixels = []
+    for image in images:
+        with Image.open(image) as loaded:
+            pixels.append(loaded.getpixel((0, 0)))
+    assert pixels == [(0, 0, 255), (255, 0, 0)]
+
+    repeated = workspace.append_questions({'id': ident, 'paths': [second], 'revision': appended['revision']})
+    assert repeated == workspace.open({'id': ident}) == appended
+
+
+def test_append_exam_questions_inside_full_document_and_reject_other_drafts(workspace):
+    first, _, _ = _batch_question(workspace, 1, '第一题。')
+    second, _, _ = _batch_question(workspace, 2, '第二题。', complete=True)
+    plain = workspace.create({'source': '普通草稿。'})
+    with pytest.raises(ValueError, match='组卷工作稿'):
+        workspace.append_questions({'id': plain['id'], 'paths': [second]})
+
+    assemble = desktop_library.create_library_handlers(workspace.library, workspace.state)['library.assemble']
+    paper = workspace.create(assemble({'paths': [first], 'answers': True}))
+    prefix = '\\documentclass{UtopiaPhyCyclus_book}\n\\begin{document}\n' + paper['source']
+    footer = '\\end{document}\n% 注释'
+    source = prefix + '\n% \\end{document} 示例\n' + footer
+    updated = workspace.save({'id': paper['id'], 'source': source})
+    request = {'id': paper['id'], 'revision': updated['revision']}
+    with pytest.raises(ValueError, match='无效'):
+        workspace.append_questions({**request, 'paths': [second, '未收录.tex']})
+    assert workspace.open(request) == updated
+    appended = workspace.append_questions({**request, 'paths': [second]})
+    assert appended['source'].startswith(prefix + '\n% \\end{document} 示例\n')
+    assert appended['source'].endswith(footer)
+    assert '第二题。' in appended['source'] and r'\begin{answer}' in appended['source']
+    assert appended['source'].index('第二题。') < appended['source'].rindex(r'\end{document}')
+
+
 def test_fill_solution_batch_preserves_order_and_reuses_pending_result(workspace, monkeypatch):
     okay, okay_path, original = _batch_question(workspace, 1, '速度是多少？')
     complete, _, _ = _batch_question(workspace, 2, '完整题。', complete=True)

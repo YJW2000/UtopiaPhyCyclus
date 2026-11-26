@@ -3,6 +3,19 @@ from subprocess import CompletedProcess
 from services import tex_compile_service
 
 
+def test_preview_rejects_empty_compiler_output(tmp_path, monkeypatch):
+    def run(command, *, cwd, **_):
+        (cwd / command[-1]).with_suffix('.pdf').touch()
+        return CompletedProcess(command, 0, b'', b'')
+
+    monkeypatch.setattr(tex_compile_service, 'find_desktop_tool', lambda _: 'xelatex')
+    monkeypatch.setattr(tex_compile_service, 'run', run)
+    result = tex_compile_service.compile_tex_preview('题干', str(tmp_path), {})
+
+    assert not result['ok'] and 'pdf' not in result
+    assert 'PDF 为空' in result['error']
+
+
 def test_preview_rejects_pdf_when_compiler_silently_drops_glyphs(tmp_path, monkeypatch):
     def run(command, *, cwd, **_):
         output = next(arg.split('=', 1)[1] for arg in command if arg.startswith('-output-directory='))

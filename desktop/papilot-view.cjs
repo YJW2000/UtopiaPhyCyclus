@@ -31,6 +31,7 @@ function createPapilotView({ runtime, resources, getWindow }) {
   let latestBounds;
   let showJob;
   let pendingFolder;
+  let folderSequence = 0;
   let pendingTemplate;
   let pendingTask;
   let readyForFolder = false;
@@ -40,7 +41,7 @@ function createPapilotView({ runtime, resources, getWindow }) {
 
   function checkedBounds(bounds) {
     if (!bounds || ['x', 'y', 'width', 'height'].some(key => !Number.isFinite(bounds[key]))) {
-      throw new Error('Papilot 工作台的显示区域无效。');
+      throw new Error('项目工作台的显示区域无效。');
     }
     return bounds;
   }
@@ -174,12 +175,15 @@ function createPapilotView({ runtime, resources, getWindow }) {
     return showJob;
   }
 
-  async function requestFolder(folder) {
+  async function requestFolder(folder, openManuscript = false, isCurrent = () => true) {
+    if (!isCurrent()) return;
     const projectPath = await runtime.projectPath(folder);
+    if (!isCurrent()) return;
+    const request = { folder: projectPath, openManuscript, sequence: ++folderSequence };
     if (readyForFolder && runtime.current()?.origin === origin && view && !view.webContents.isDestroyed() && originOf(view.webContents.getURL()) === origin) {
-      view.webContents.send('papilot:open-folder', projectPath);
+      view.webContents.send('papilot:open-folder', request);
     } else {
-      pendingFolder = projectPath;
+      pendingFolder = request;
     }
   }
 
@@ -222,7 +226,7 @@ function createPapilotView({ runtime, resources, getWindow }) {
   function register() {
     function handle(name, fn) {
       ipcMain.handle(`papilot:${name}`, (event, ...args) => {
-        if (!authorized(event)) throw new Error('此页面不能使用 Papilot 桌面服务。');
+        if (!authorized(event)) throw new Error('此页面不能使用项目工作台服务。');
         return fn(...args);
       });
     }

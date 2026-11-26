@@ -1,10 +1,10 @@
 # 📚 乌托邦高中物理题库助手
 
-UtopiaPhyCyclus（乌托邦高中物理题库助手）面向高中物理教师和教研团队，支持 LaTeX 题目录入、检索、编校和组卷。Windows 桌面版集成 PDF 审阅与 Papilot 工作台，也可通过 Streamlit 在浏览器中使用经典界面。
+UtopiaPhyCyclus（乌托邦高中物理题库助手）面向高中物理教师和教研团队，支持 LaTeX 题目录入、检索、编校和组卷。Windows 桌面版集成 PDF 审阅与项目工作台，也可通过 Streamlit 在浏览器中使用经典界面。
 
 本项目基于 **JinLingxi（槿灵兮）** 的 [MathCyclus 数学题库助手](https://github.com/JinLingxi/MathCyclus---Lingxi-Question-Bank-Assistant) 改造，物理版由 [YJW2000](https://github.com/YJW2000) 维护。原作 MIT 许可及署名见 [LICENSE](LICENSE) 和 [NOTICE.md](NOTICE.md)。
 
-- **Windows x64 桌面预览版** [下载 v1.2.0-desktop.11 安装器](https://github.com/YJW2000/UtopiaPhyCyclus/releases/download/v1.2.0-desktop.11/UtopiaPhyCyclus-Desktop-Preview-1.2.0-desktop.11-windows-x64.exe) · [发行说明与校验值](https://github.com/YJW2000/UtopiaPhyCyclus/releases/tag/v1.2.0-desktop.11)
+- **Windows x64 桌面预览版** [下载 v1.2.0-desktop.12 安装器](https://github.com/YJW2000/UtopiaPhyCyclus/releases/download/v1.2.0-desktop.12/UtopiaPhyCyclus-Desktop-Preview-1.2.0-desktop.12-windows-x64.exe) · [发行说明与校验值](https://github.com/YJW2000/UtopiaPhyCyclus/releases/tag/v1.2.0-desktop.12)
 - **Windows x64 经典便携版** [下载 v1.2.0 ZIP](https://github.com/YJW2000/UtopiaPhyCyclus/releases/download/v1.2.0/UtopiaPhyCyclus-1.2.0-windows-x64.zip)，完整解压后双击 `UtopiaPhyCyclus.exe`。
 
 桌面版安装后，在「设置 → 本地题库」中选择原来包含 `chapters` 的目录即可继续使用已有题库。「架构介绍」提供截图教程和「规范指南」，「TeX 录入」可打开演示题。更多说明见[安装与重新构建](docs/发行与安装.md)和[更新记录](CHANGELOG.md)。
@@ -52,11 +52,11 @@ UtopiaPhyCyclus（乌托邦高中物理题库助手）面向高中物理教师�
 - 支持按知识板块、题量与目标难度分布进行抽样。
 - 支持自然语言组卷需求润色，辅助形成命题意图。
 
-### 工作台与 Papilot
+### 项目工作台
 
-- 「全局浏览」可按知识板块、试卷或录入顺序查看题目，也可从列表打开题目，编辑 LaTeX 源码并预览 PDF。
+- 「全局浏览」可按知识板块、试卷或录入顺序查看题目。左侧选题后，右侧项目工作台打开该题的 PDF，可直接预览和批注。切换到「题库文稿」可编辑题库草稿的 LaTeX。
 - 桌面版内置 Papilot 0.14.1，支持多文件 LaTeX 项目、PDF 批注、Agent 改动审阅及 Git 版本管理。
-- 题目可通过「更多操作 → 在 Papilot 工作台打开」进入项目。审阅后用「从 Papilot 导入改动」将源码和依赖同步回题库草稿，核对排版后再保存。[Papilot 工作台教程](docs/Papilot%20工作台.md)
+- 其他录入页面的题目可通过「更多操作 → 在项目工作台打开」进入项目。审阅后回到题目工作台，用「从项目工作台导入改动」同步源码和依赖，核对排版后再保存。[项目工作台教程](docs/Papilot%20工作台.md)
 
 ### PDF 录入与框选修改
 
@@ -125,7 +125,7 @@ Harness v2 在「LLM 生成 + 编译重试」之上补齐了**确定性校验与
    ```
 3. 如需使用 AI 功能，先登录本机 Agent。桌面版可在「设置 → 模型连接」选择默认 Agent。单独运行 Streamlit 版时，使用 `codex login` 登录本机 Codex。
 4. 如需使用 TikZ 几何图预览，请安装完整的 **$\LaTeX$ 编译环境**（例如 TeX Live），并确认 `xelatex` 已加入系统环境变量。项目会通过 `PyMuPDF` 将编译结果转为 PNG 预览。
-5. 首次启动会建立 `utils/question_index.sqlite3`，并保留迁移所用的旧 CSV。日常保存使用单题增量更新。桌面版与一键启动器在启动和正常退出时自动检查索引，同步在外部新增或修改的题目。需要移除已删除或移动题目的旧索引条目时，可在设置中打开题库工具箱，选择“一键重建/同步题库索引”，也可运行以下命令：
+5. 首次启动会建立 `utils/question_index.sqlite3`，并保留迁移所用的旧 CSV。日常保存使用单题增量更新。桌面版与一键启动器在启动和正常退出时自动检查索引，同步在外部新增或修改的题目。需要彻底重建题库索引时，在题库根目录运行以下命令：
 
    ```bash
    python utils/init_sqlite_index.py
@@ -156,11 +156,12 @@ streamlit run utopia_phycyclus_app.py
 ```text
 ├── chapters/              # 存放按学科板块和年份分类的 LaTeX 题库源文件 (.tex)
 ├── fig/                   # README 与文档配图
+├── desktop/               # Electron / React 桌面工作台
 ├── utils/                 # 系统核心工具库 (配置、文件读写、TikZ 渲染、CSV 索引管理)
 ├── Test Paper Group/      # LaTeX 试卷/讲义/练习模板
 ├── ocr_prompt.txt         # AI OCR 与排版约束的系统提示词（热重载）
 ├── UtopiaPhyCyclus_book.cls    # LaTeX 自定义文档类
-├── utopia_phycyclus_app.py   # Streamlit 主程序入口 (包含 UI 布局与核心逻辑)
+├── utopia_phycyclus_app.py   # 独立运行的经典 Streamlit 版入口
 ├── 启动乌托邦高中物理题库助手.py             # 守护进程与服务启动脚本
 ├── 启动乌托邦高中物理题库助手.bat            # Windows 一键启动脚本
 ├── requirements.txt       # Python 依赖清单

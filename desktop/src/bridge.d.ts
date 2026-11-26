@@ -27,7 +27,6 @@ declare global {
       saveFile(kind: 'tex' | 'pdf', suggestedName?: string): Promise<string | null>;
       chooseLibrary(): Promise<string | null>;
       asset(path: string): Promise<string>;
-      legacy(route: string): Promise<string>;
       detectEnvironment(): Promise<EnvironmentStatus>;
       installEnvironmentTool(id: EnvironmentToolId): Promise<EnvironmentInstallResult>;
       openEnvironmentHelp(id: EnvironmentToolId): Promise<void>;
@@ -35,7 +34,7 @@ declare global {
       papilotShow(bounds: PapilotBounds): Promise<void>;
       papilotBounds(bounds: PapilotBounds): Promise<void>;
       papilotHide(): Promise<void>;
-      papilotOpenQuestion(id: string, revision?: number): Promise<EditorDocument>;
+      papilotOpenQuestion(id: string, revision?: number, openManuscript?: boolean): Promise<EditorDocument>;
       onPapilotShortcut(listener: (route: 'settings' | 'papilot') => void): () => void;
     };
   }

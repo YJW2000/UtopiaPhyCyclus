@@ -1,8 +1,10 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import type { FormEvent, KeyboardEvent, PointerEvent } from 'react'
+import { useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react'
+import type { FormEvent, KeyboardEvent, PointerEvent, Ref } from 'react'
 import { EditorChat, EditorModal } from './EditorChat'
 import { EditorPdf } from './EditorPdf'
 import type { PdfAnnotationAction, PdfFit, PdfNavigation, PdfPosition, PdfTool, PdfViewState } from './EditorPdf'
+import ExamQuestions from './ExamQuestions'
+import type { Question } from './Bank'
 import PaneDivider from './PaneDivider'
 import { WorkbenchBookmarks, WorkbenchFind, WorkbenchIcon, WorkbenchRail, WorkbenchToolbar } from './WorkbenchToolbar'
 import type { WorkbenchAction } from './WorkbenchToolbar'
@@ -18,13 +20,23 @@ type View = 'preview' | 'source' | 'original' | 'compare'
 type Sheet = 'library' | 'recognize'
 type Utility = 'find' | 'bookmarks' | 'notes'
 
+export interface EditorHandle {
+  saveDraft(): Promise<EditorDocument>
+}
+
 interface Props {
+  ref?: Ref<EditorHandle>
   document: EditorDocument
+  examBasket?: Question[]
   initialCompileError?: string
   docked?: boolean
   onExpand?: () => void
   onEditFileInfo?: (document: EditorDocument) => void
-  onOpenPapilot?: () => void
+  active?: boolean
+  requestProject?: boolean
+  openProjectManuscript?: boolean
+  onOpenPapilot?: (automatic: boolean) => void
+  onProjectOpenFailed?: (message: string) => void
   reviewProposalId?: string
   onChange: (document: EditorDocument) => void
   onQuestionSaved?: (document: EditorDocument) => void
@@ -89,10 +101,11 @@ function dockLayout(layout: Layout, document: EditorDocument): Layout {
 function initialLayout(document: EditorDocument, layoutKey: string, docked: boolean): Layout {
   const position = (page = 1): PdfPosition => ({ page, offset: 0, zoom: 1 })
   const imageSource = document.inputKind === 'image' && Boolean(document.source.trim())
+  const exam = Boolean(document.exam)
   const layout: Layout = parseStored<Layout>(layoutKey) ?? {
-    mode: imageSource ? 'review' : 'split',
-    view: imageSource ? 'source' : document.pdfPath && !document.source ? 'original' : 'preview',
-    pair: imageSource && document.previewPath ? 'preview' : undefined, sync: false, chatWidth: 385, documentWidth: 50,
+    mode: exam || imageSource ? 'review' : 'split',
+    view: exam || imageSource ? 'source' : document.pdfPath && !document.source ? 'original' : 'preview',
+    pair: exam || (imageSource && document.previewPath) ? 'preview' : undefined, sync: false, chatWidth: 385, documentWidth: 50,
     pdf: { preview: position(), original: position(document.originalPage), before: position(), after: position() }, sourceScroll: 0, compareText: false,
   }
   return docked ? dockLayout(layout, document) : layout
@@ -104,7 +117,11 @@ export default function Editor(props: Props) {
 
 export { Editor }
 
-function Workbench({ document, initialCompileError, docked = false, onExpand, onEditFileInfo, onOpenPapilot, reviewProposalId, onChange, onQuestionSaved, onClose }: Props) {
+function Workbench({
+  ref, document, examBasket = [], initialCompileError, docked = false, onExpand, onEditFileInfo,
+  active = true, requestProject, openProjectManuscript, onOpenPapilot, onProjectOpenFailed,
+  reviewProposalId, onChange, onQuestionSaved, onClose,
+}: Props) {
   const draftKey = `utopia-workbench-draft-${document.id}`
   const layoutKey = `utopia-workbench-${docked ? 'dock-layout' : 'layout'}-${document.id}`
   const bookmarkKey = `utopia-workbench-bookmarks-${document.id}`
@@ -156,6 +173,7 @@ function Workbench({ document, initialCompileError, docked = false, onExpand, on
   const [chapters, setChapters] = useState<string[]>([])
   const [sourceRange, setSourceRange] = useState({ start: 0, end: 0 })
   const [renaming, setRenaming] = useState(false)
+  const [selectExamQuestions, setSelectExamQuestions] = useState(false)
   const sourceArea = useRef<HTMLTextAreaElement>(null)
   const chatPane = useRef<HTMLElement>(null)
   const lineNumbers = useRef<HTMLDivElement>(null)
@@ -278,6 +296,8 @@ function Workbench({ document, initialCompileError, docked = false, onExpand, on
     return request
   }
 
+  useImperativeHandle(ref, () => ({ saveDraft: persist }))
+
   useEffect(() => {
     if (!changed) return
     const timer = setTimeout(() => { void persist().catch(() => {}) }, 550)
@@ -294,10 +314,10 @@ function Workbench({ document, initialCompileError, docked = false, onExpand, on
   }, [document.id, prompt, attachments])
 
   useEffect(() => {
-    if (!initialCompileError && (!document.previewPath || (docked && document.previewCurrent === false)) && document.source.trim()) {
+    if (active && !initialCompileError && (!preview.path || ((docked || document.exam) && preview.source !== latestDraft.current.source)) && latestDraft.current.source.trim()) {
       void compileCurrent()
     }
-  }, [document.id])
+  }, [document.id, active])
 
   useEffect(() => {
     if (docked && !wasDocked.current) setLayout(previous => dockLayout(previous, latestRecord.current))
@@ -305,6 +325,7 @@ function Workbench({ document, initialCompileError, docked = false, onExpand, on
   }, [docked])
 
   useEffect(() => {
+    if (!active) return
     const key = (event: globalThis.KeyboardEvent) => {
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 's') {
         event.preventDefault()
@@ -313,7 +334,7 @@ function Workbench({ document, initialCompileError, docked = false, onExpand, on
     }
     window.addEventListener('keydown', key)
     return () => window.removeEventListener('keydown', key)
-  }, [document.id])
+  }, [document.id, active])
 
   async function runTask<T>(method: string, params: Record<string, unknown>, signal = lifecycle.current?.signal, onProgress?: (progress: string) => void) {
     const job = await editorCall<{ taskId: string }>(method, { id: document.id, ...params })
@@ -881,39 +902,62 @@ function Workbench({ document, initialCompileError, docked = false, onExpand, on
     catch { /* Keep the editor open with its failed save visible. */ }
   }
 
+  async function appendExamQuestions(paths: string[]) {
+    const saved = await persist()
+    const next = await editorCall<EditorDocument>('workspace.append_questions', { id: saved.id, paths, revision: saved.revision })
+    accept(next, true)
+    setSelectExamQuestions(false)
+    changePair('source')
+    void compileCurrent(next.source)
+  }
+
   async function editFileInfo() {
     try { onEditFileInfo?.(await persist()) }
     catch { /* The save status already shows the error. */ }
   }
 
-  async function transferPapilot(open: boolean) {
+  async function transferPapilot(open: boolean, automatic = false) {
     if (papilotBusy) return
     setPapilotBusy(true)
     setNotice('')
     try {
       const saved = await persist()
+      if (lifecycle.current?.signal.aborted) return
       const next = open
-        ? await window.utopia.papilotOpenQuestion(saved.id, saved.revision)
+        ? await window.utopia.papilotOpenQuestion(saved.id, saved.revision, openProjectManuscript)
         : await editorCall<EditorDocument>('workspace.papilot_import', { id: saved.id, revision: saved.revision })
+      if (lifecycle.current?.signal.aborted) return
       if (open) {
         accept(next)
-        onOpenPapilot?.()
+        onOpenPapilot?.(automatic)
       } else {
         const sourceChanged = next.source !== saved.source
         accept(next, sourceChanged)
-        setNotice(sourceChanged ? '已将 Papilot 项目的改动导入题库草稿。' : 'Papilot 项目没有新的源码改动。')
+        setNotice(sourceChanged ? '已将项目工作台的改动导入题库草稿。' : '项目工作台没有新的源码改动。')
         if (sourceChanged) void compileCurrent(next.source)
       }
-    } catch (error) { setNotice(errorMessage(error)) }
+    } catch (error) {
+      const message = errorMessage(error)
+      if (automatic) onProjectOpenFailed?.(message)
+      else setNotice(message)
+    }
     finally { setPapilotBusy(false) }
   }
+
+  useEffect(() => {
+    if (requestProject && !papilotBusy) void transferPapilot(true, true)
+  }, [requestProject, papilotBusy])
 
   const pdfReady = Boolean(pdfView?.pageCount) && layout.mode !== 'chat'
   const buildUtilityAction = (id: Utility, label: string, icon: WorkbenchAction['icon']): WorkbenchAction => ({
     id, label, icon, pressed: utility === id, disabled: !pdfReady && (id !== 'notes' || !draft.selections.length),
     onClick: () => setUtility(value => value === id ? undefined : id),
   })
-  const toolbarActions = [buildUtilityAction('notes', '查看批注和标记', 'note')]
+  const toolbarActions: WorkbenchAction[] = [buildUtilityAction('notes', '查看批注和标记', 'note')]
+  if (record.exam) toolbarActions.unshift({
+    id: 'exam-add', label: '添加题目', icon: 'plus', text: true, disabled: compiling || Boolean(pending) || proposalBusy,
+    onClick: () => setSelectExamQuestions(true),
+  })
   const pdfActions: WorkbenchAction[] = pdfTools.map(([id, label, icon]) => ({
     id, label, icon, disabled: !pdfReady, pressed: !locateMode && tool === id, onClick: () => choosePdfTool(id),
   }))
@@ -936,10 +980,11 @@ function Workbench({ document, initialCompileError, docked = false, onExpand, on
       onClick: () => setLayout(previous => ({ ...previous, sync: !previous.sync })),
     }] : []),
   ]
+  const titleLabel = record.exam ? '试卷名称' : '题目标题'
   const fileActions: WorkbenchAction[] = [
-    { id: 'rename', label: '编辑题目标题', onClick: () => setRenaming(true) },
-    ...(onOpenPapilot ? [{ id: 'papilot', label: '在 Papilot 工作台打开', disabled: papilotBusy || !draft.source.trim(), onClick: () => void transferPapilot(true) }] : []),
-    ...(record.papilotProject ? [{ id: 'papilot-import', label: '从 Papilot 导入改动', disabled: papilotBusy, onClick: () => void transferPapilot(false) }] : []),
+    { id: 'rename', label: `编辑${titleLabel}`, onClick: () => setRenaming(true) },
+    ...(onOpenPapilot ? [{ id: 'papilot', label: '在项目工作台打开', disabled: papilotBusy || !draft.source.trim(), onClick: () => void transferPapilot(true) }] : []),
+    ...(record.papilotProject ? [{ id: 'papilot-import', label: '从项目工作台导入改动', disabled: papilotBusy, onClick: () => void transferPapilot(false) }] : []),
     ...(onEditFileInfo ? [{ id: 'file-info', label: '修改文件信息', onClick: () => void editFileInfo() }] : []),
     { id: 'save', label: savingQuestion ? '正在保存…' : record.questionPath ? '保存原题' : '另存入库', icon: 'save',
       disabled: librarySaveDisabled || Boolean(record.questionPath && pending), onClick: () => { if (record.questionPath) void saveQuestion(); else openSheet('library') } },
@@ -956,6 +1001,11 @@ function Workbench({ document, initialCompileError, docked = false, onExpand, on
   if (record.pdfPath && !draft.source.trim()) {
     toolbarActions.unshift({ id: 'recognize', label: reconstructing ? '正在识别…' : recognitionLabel, icon: 'refresh', disabled: reconstructing, onClick: startRecognition })
   }
+  let toolbarStatus = saveState || (changed ? '保存中…' : undefined)
+  if (!toolbarStatus && record.exam) {
+    if (compiling) toolbarStatus = '正在编译 PDF…'
+    else if (preview.path && preview.source !== draft.source) toolbarStatus = '预览待更新'
+  }
 
   return <div className={`wb-workbench wb-mode-${layout.mode}${docked ? ' wb-docked' : ''}`}>
     <WorkbenchToolbar title={`${draft.title} · ${saveState || (changed ? '保存中…' : '工作稿已保存')}`} view={layout.view === 'compare' ? 'changes' : activePdf ? 'pdf' : 'source'}
@@ -965,7 +1015,7 @@ function Workbench({ document, initialCompileError, docked = false, onExpand, on
         zoom: layout.pdf[activePdf].zoom, fit: layout.pdfFit?.[activePdf] ?? (layout.pdf[activePdf].zoom === 1 ? 'width' : 'custom'),
         onPage: page => jumpToPage(activePdf, page), onZoom: zoom => changeZoom(activePdf, zoom),
       } : undefined}
-      status={saveState || (changed ? '保存中…' : undefined)} actions={toolbarActions} fileActions={fileActions} layoutActions={layoutActions}
+      status={toolbarStatus} actions={toolbarActions} fileActions={fileActions} layoutActions={layoutActions}
       compile={{ id: 'compile', label: compiling ? '正在编译…' : '编译 PDF', disabled: compiling || !draft.source.trim(), onClick: () => void compileCurrent() }}
       chat={{ id: 'chat', label: layout.mode === 'review' ? '展开题目助手' : '收起题目助手', pressed: layout.mode !== 'review', onClick: () => {
         if (layout.mode === 'review') focusChat()
@@ -986,7 +1036,7 @@ function Workbench({ document, initialCompileError, docked = false, onExpand, on
         ]}
         bookmarks={[
           buildUtilityAction('bookmarks', '页面书签', 'bookmarks'),
-          { id: 'close', label: docked ? '关闭题目详情' : '返回', icon: docked ? 'close' : 'back', onClick: () => void close() },
+          { id: 'close', label: record.exam ? '返回组卷排版' : docked ? '关闭题目详情' : '返回', icon: docked ? 'close' : 'back', onClick: () => void close() },
         ]} />
       <main className="wb-document" hidden={layout.mode === 'chat'}>
         {utility === 'find' && activePdf && <div className="wb-document-utility wb-document-find">
@@ -1033,7 +1083,8 @@ function Workbench({ document, initialCompileError, docked = false, onExpand, on
           onStop={() => void stopChat()} onApply={item => void updateProposal('apply', item)} onDismiss={item => void updateProposal('dismiss', item)} onCompare={compareProposal} />
       </aside>
     </div>
-    {renaming && <EditorModal title="编辑题目标题" onClose={() => setRenaming(false)}>
+    {selectExamQuestions && record.exam && <ExamQuestions paths={record.exam.paths} basket={examBasket} onAdd={appendExamQuestions} onClose={() => setSelectExamQuestions(false)} />}
+    {renaming && <EditorModal title={`编辑${titleLabel}`} onClose={() => setRenaming(false)}>
       <form className="wb-form" onSubmit={event => {
         event.preventDefault()
         const title = String(new FormData(event.currentTarget).get('title') ?? '').trim()
@@ -1042,7 +1093,7 @@ function Workbench({ document, initialCompileError, docked = false, onExpand, on
         setRenaming(false)
         void persist().catch(() => {})
       }}>
-        <label>题目标题<input name="title" defaultValue={draft.title} required autoFocus /></label>
+        <label>{titleLabel}<input name="title" defaultValue={draft.title} required autoFocus /></label>
         <div className="wb-form-actions"><button type="button" className="wb-btn" onClick={() => setRenaming(false)}>取消</button><button type="submit" className="wb-btn wb-primary">保存标题</button></div>
       </form>
     </EditorModal>}

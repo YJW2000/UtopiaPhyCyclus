@@ -64,14 +64,19 @@ def export_source(source: Path, checkout: Path | None, scratch: Path) -> None:
         package.extractall(source)
 
 
-def configure_wsl_bridge(source: Path) -> None:
+def source_replacements(source: Path):
     def replace(relative: str, old: str, new: str) -> None:
         file = source / relative
         content = file.read_text(encoding='utf-8')
         if content.count(old) != 1:
-            raise ValueError(f'The pinned Papilot WSL integration changed: {relative}')
+            raise ValueError(f'The pinned Papilot integration changed: {relative}')
         file.write_text(content.replace(old, new), encoding='utf-8', newline='\n')
 
+    return replace
+
+
+def configure_wsl_bridge(source: Path) -> None:
+    replace = source_replacements(source)
     for file in ('desktop/wsl-runtime.mjs', 'desktop/environment-check.ts'):
         replace(file, '.local/share/papilot-desktop', '.local/share/utopia-phycyclus/papilot')
     replace('desktop/wsl.ts', 'nodeMajor: string; port: number; log: string',
@@ -86,6 +91,49 @@ def configure_wsl_bridge(source: Path) -> None:
             "env.NODE_USE_ENV_PROXY = '1';\n    env.PAPILOT_DESKTOP_PACKAGE_UPDATES = '1';\n"
             "    if (options.sharing) {\n      env.PAPILOT_PUBLIC_ORIGIN = options.sharing.origin;\n"
             "      env.PAPILOT_TAILSCALE_LOGIN = options.sharing.owner;\n    }")
+
+
+def configure_workspace(source: Path) -> None:
+    replace = source_replacements(source)
+    chrome = 'src/web/desktop-chrome.tsx'
+    replace(chrome, '      onOpenFolder?(listener: (folder: string) => void): () => void;',
+            '      workspaceName?: string;\n'
+            '      onOpenFolder?(listener: (folder: string, openManuscript?: boolean) => void | Promise<void>): () => void;')
+    main = 'src/web/main.tsx'
+    replace(main, "import '../../engine/src/web/legacy-storage.ts';",
+            "import '../../engine/src/web/legacy-storage.ts';\n"
+            "const workspaceName = window.papilotDesktop?.workspaceName || 'Papilot';")
+    replace(main, 'async function openFolder(folder?: string, main?: string)',
+            'async function openFolder(folder?: string, main?: string, openManuscript = false)')
+    replace(main, '      const path = folder ?? await chooseDirectory();',
+            '      if (openManuscript && manuscriptNavigationGuard.current && !await manuscriptNavigationGuard.current.save()) return;\n'
+            '      const path = folder ?? await chooseDirectory();')
+    replace(main, "      setMainChoice(null); setProjectId(opened.project.id); setSelected(''); setSidebar(false);",
+            "      setMainChoice(null); setProjectId(opened.project.id); setSelected(''); setSidebar(false);\n"
+            "      if (openManuscript) {\n"
+            "        setPage('manuscript'); setManuscriptView(mobile ? 'pdf' : 'task');\n"
+            "        setRegion(false); setActiveNote(''); setReturnedPlace('');\n"
+            "      }")
+    replace(main, '  useEffect(() => window.papilotDesktop?.onOpenFolder?.(folder => void openFolderRef.current(folder)), []);',
+            '  const desktopFolderReady = Boolean(state);\n'
+            '  useEffect(() => {\n'
+            '    if (!desktopFolderReady) return;\n'
+            '    return window.papilotDesktop?.onOpenFolder?.((folder, openManuscript) => openFolderRef.current(folder, undefined, openManuscript));\n'
+            '  }, [desktopFolderReady]);')
+    title_line = next(line for line in (source / main).read_text(encoding='utf-8').splitlines()
+                      if 'useEffect(() => { document.title = isPlayground' in line)
+    replace(main, title_line, title_line.replace(' · Papilot`', ' · ${workspaceName}`').replace(": 'Papilot');", ': workspaceName);'))
+    replace(main, 'className="brand-home" aria-label="Papilot"', 'className="brand-home" aria-label={workspaceName}')
+    replace(main, 'className="brand-mark"/><span>Papilot</span>', 'className="brand-mark"/><span>{workspaceName}</span>')
+    replace(main, "gitOpen ? t('Version Management') : 'Papilot'", "gitOpen ? t('Version Management') : workspaceName")
+    versions = 'src/web/update-notice.tsx'
+    replace(versions, '  const currentVersion = <span className="brand-version" title={t(\'Papilot {version}\', { version })}>',
+            '  const workspaceName = window.papilotDesktop?.workspaceName;\n'
+            '  const versionTitle = workspaceName ? `${workspaceName} v${versionLabel(version)}` : t(\'Papilot {version}\', { version });\n'
+            '  const currentVersion = <span className="brand-version" title={versionTitle}>')
+    replace(versions, "const description = `${t('Papilot {version}', { version: versionLabel(version) })}",
+            "const description = `${workspaceName ? versionTitle : t('Papilot {version}', { version: versionLabel(version) })}")
+    replace(versions, '<h3>Papilot</h3>', "<h3>{window.papilotDesktop?.workspaceName || 'Papilot'}</h3>")
 
 
 def stage_papilot(destination: Path, checkout: Path | None = None) -> None:
@@ -114,6 +162,7 @@ def stage_papilot(destination: Path, checkout: Path | None = None) -> None:
         source = scratch / 'source'
         export_source(source, checkout, scratch)
         configure_wsl_bridge(source)
+        configure_workspace(source)
         package = json.loads((source / 'package.json').read_text(encoding='utf-8'))
         if package['name'] != 'papilot' or package['license'] != 'MIT':
             raise RuntimeError('The pinned source does not contain the expected Papilot MIT package.')

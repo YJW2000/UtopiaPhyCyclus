@@ -1,4 +1,4 @@
-"""Start an isolated Python desktop service or the embedded classic pages."""
+"""Start the Python desktop service or maintain the question index."""
 from __future__ import annotations
 
 import contextlib
@@ -51,16 +51,10 @@ def main() -> None:
         # Indexing needs neither the portable TeX tree nor agent environment discovery.
         print(json.dumps(maintain_library(Path(os.environ['UTOPIA_DESKTOP_LIBRARY']))))
         return
-    configure_runtime()
-    if mode == 'rpc':
-        runpy.run_module('services.desktop_rpc', run_name='__main__')
-    elif mode == 'legacy':
-        from streamlit.web import cli
-
-        sys.argv = ['streamlit', 'run', str(ROOT / 'desktop_legacy.py'), *sys.argv[1:]]
-        raise SystemExit(cli.main())
-    else:
+    if mode != 'rpc':
         raise ValueError(f'Unknown desktop service: {mode}')
+    configure_runtime()
+    runpy.run_module('services.desktop_rpc', run_name='__main__')
 
 
 if __name__ == '__main__':

@@ -4,7 +4,7 @@ from __future__ import annotations
 import base64
 import json
 import math
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 import re
 import shutil
 from threading import Lock
@@ -14,8 +14,10 @@ from services.desktop_model import read_settings, selected_provider
 from services.desktop_tool_paths import fresh_tool_path
 from services.file_service import atomic_write_text
 from services.local_agent import LOCAL_AGENTS, agent_status, run_agent_json
+from services.tex_import_service import _mask_comments, parse_tex_questions, read_tex
 from utils import question_index
 from utils.core_config import PAPER_TYPES, SUBJECTS
+from utils.image_assets import copy_graphics
 from utils.theme_palettes import SKINS, normalize_skin, theme_tokens
 
 
@@ -34,6 +36,45 @@ _ENTRY_TIME = 'COALESCE(NULLIF("初次录入的时间", \'\'), "最后修改时�
 _MODULE = """COALESCE(NULLIF(TRIM(SUBSTR("知识板块", 1,
     INSTR(REPLACE("知识板块", ',', '，') || '，', '，') - 1)), ''), '未分类')"""
 _SAMPLE_ROOT = Path(__file__).resolve().parents[1] / 'desktop' / 'sample'
+_ANSWER_BLOCK = re.compile(r'\\begin\s*\{(answer|solutions?)\}.*?\\end\s*\{\1\}', re.S)
+
+
+def exam_question_files(chapters, paths, included=()):
+    if not isinstance(paths, list):
+        raise ValueError('请选择有效的题目。')
+    chapters = chapters.resolve()
+    seen = {(chapters / name).resolve() for name in included}
+    files = {}
+    for name in paths:
+        if not isinstance(name, str) or not name or '\x00' in name or PureWindowsPath(name).anchor:
+            raise ValueError('题目路径必须位于当前题库。')
+        path = (chapters / name.replace('\\', '/')).resolve()
+        if not path.is_relative_to(chapters):
+            raise ValueError('题目路径必须位于当前题库。')
+        if path in seen:
+            continue
+        if path.suffix.lower() != '.tex' or not path.is_file():
+            raise ValueError('题目已移动或文件路径无效。')
+        seen.add(path)
+        files[path.relative_to(chapters).as_posix()] = path
+    return files
+
+
+def exam_question_source(paths, library, destination, title, answers, *, first_number=1):
+    bodies = []
+    for index, path in enumerate(paths, first_number):
+        source = read_tex(path)
+        masked = _mask_comments(source)
+        if not answers:
+            for block in reversed(list(_ANSWER_BLOCK.finditer(masked))):
+                source = source[:block.start()] + source[block.end():]
+            masked = _mask_comments(source)
+        source = copy_graphics(source, destination / 'images', library, path.parent)
+        if r'\begin{document}' in masked or r'\begin{problem}' not in masked:
+            defaults = dict(year='待填写', paper_type='M', paper=title, number=str(index), subject=path.parent.name)
+            source = '\n\n'.join(question.content for question in parse_tex_questions(source, path.name, defaults))
+        bodies.append(source.strip())
+    return '\n\n'.join(bodies)
 
 
 def _paper_key(year, paper_type, paper):
@@ -100,6 +141,9 @@ def create_library_handlers(library: Path, state_dir: Path):
         modules = [dict(name=name, count=module_counts.get(name, 0)) for name in module_names]
         return dict(total=sum(subjects.values()), subjects=subjects, modules=modules, types=types, years=years,
                     papers=len(paper_groups), paperGroups=paper_groups, recent=recent)
+
+    def statistics(_):
+        return question_index.statistics(csv_path=csv)
 
     def search(p):
         query = str(p.get('query', '')).strip()
@@ -169,23 +213,23 @@ def create_library_handlers(library: Path, state_dir: Path):
         return path
 
     def assemble(p):
-        from services.tex_import_service import decode_tex
-        from utils.image_assets import copy_graphics
-        paths = [question_path(s) for s in dict.fromkeys(p.get('paths', []))]
-        if not paths:
+        files = exam_question_files(chapters, p.get('paths', []))
+        if not files:
             raise ValueError('请先选入题目。')
-        folder = state / 'papers' / uuid.uuid4().hex
-        folder.mkdir(parents=True)
-        bodies = []
-        for path in paths:
-            source = copy_graphics(decode_tex(path.read_bytes()), folder / 'images', library, path.parent)
-            if not p.get('answers', True):
-                source = re.sub(r'\\begin\{(answer|solutions?)\}.*?\\end\{\1\}', '', source, flags=re.S)
-            bodies.append(source.strip())
+        answers = bool(p.get('answers', True))
         name = re.sub(r'[^\w\u4e00-\u9fff .-]', '', str(p.get('title', '练习卷'))).strip(' .')[:64] or '练习卷'
-        output = folder / (name + '.tex')
-        atomic_write_text(str(output), '\n\n'.join(bodies))
-        return {'path': str(output), 'title': name}
+        papers = state / 'papers'
+        folder = papers / uuid.uuid4().hex
+        folder.mkdir(parents=True)
+        output = folder / (('_' if Path(name).is_reserved() else '') + name + '.tex')
+        try:
+            body = exam_question_source(files.values(), library, folder, name, answers)
+            atomic_write_text(str(output), body)
+        except BaseException:
+            if folder.resolve().parent == papers.resolve():
+                shutil.rmtree(folder, ignore_errors=True)
+            raise
+        return {'path': str(output), 'title': name, 'exam': {'paths': list(files), 'answers': answers}}
 
     def demo(_):
         folder = state / 'demo'
@@ -244,6 +288,7 @@ def create_library_handlers(library: Path, state_dir: Path):
                 'codex': agents[0]['installed'], 'xelatex': bool(shutil.which('xelatex', path=tool_path)),
                 'synctex': bool(shutil.which('synctex', path=tool_path))}
 
-    return {'library.summary':summary, 'library.search':search, 'library.assemble':assemble, 'library.demo':demo,
+    return {'library.summary':summary, 'library.statistics':statistics, 'library.search':search,
+            'library.assemble':assemble, 'library.demo':demo,
             'library.imageInput':image_input,'library.check':check, 'context.chat':chat,
             'ui.load':lambda _: appearance(), 'ui.save':preferences,'ui.providers':provider_status}

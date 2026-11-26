@@ -10,23 +10,41 @@
 .browse-modes {
   display: flex;
   flex-wrap: wrap;
-  gap: 7px 10px;
-  margin-bottom: 12px;
+  flex: 0 0 auto;
+  gap: 6px;
+  padding: 7px 18px;
+  background: var(--mc-surface);
+  border-bottom: 1px solid var(--mc-border);
 }
 
 .browse-modes label {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
-  font-size: 12px;
+  gap: 6px;
+  min-height: 30px;
+  padding: 3px 10px;
+  border: 1px solid var(--mc-border);
+  border-radius: 8px;
+  font-size: 13px;
   white-space: nowrap;
   cursor: pointer;
 }
 
-.page-content .browse-modes input {
+.browse-modes label:hover {
+  border-color: var(--mc-accent);
+}
+
+.browse-modes label:has(input:checked) {
+  background: var(--mc-action-bg);
+  border-color: var(--mc-action-bg);
+  color: var(--mc-action-text);
+  font-weight: 600;
+}
+
+.browse-modes input {
   margin: 0;
   padding: 0;
-  accent-color: var(--mc-action-bg);
+  accent-color: var(--mc-action-text);
 }
 
 .module-browser .mc-card {

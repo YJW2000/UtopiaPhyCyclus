@@ -1,6 +1,6 @@
 import { lazy, Suspense, useCallback, useEffect, useId, useRef, useState } from 'react'
 import logo from '../../static/sidebar.webp'
-import { Browse, emptySummary, Paper, Statistics } from './Bank'
+import { Browse, BrowseModeSelector, emptySummary, loadBrowseMode, Paper, Statistics } from './Bank'
 import type { Question, Summary } from './Bank'
 import ContextChat from './ContextChat'
 import FileInfoDialog from './FileInfoDialog'
@@ -8,6 +8,7 @@ import type { QuestionFileInfo } from './FileInfoDialog'
 import ImageIntake from './ImageIntake'
 import PaneDivider from './PaneDivider'
 import SettingsConnections from './SettingsConnections'
+import type { EditorHandle } from './Editor'
 import type { EditorDocument } from './editorContract'
 import { useSolutionBatch } from './useSolutionBatch'
 import type { BatchResultRow } from './useSolutionBatch'
@@ -25,14 +26,14 @@ const pages = {
   tex: ['📄', 'TeX录入'],
   pdf: ['📑', 'PDF录入'],
   browse: ['🔍', '全局浏览'],
-  papilot: ['🖋️', 'Papilot 工作台'],
+  papilot: ['🖋️', '项目工作台'],
   exam: ['🖨️', '组卷排版'],
   search: ['🔎', '题目查找'],
   intro: ['📘', '架构介绍'],
   settings: ['⚙️', '设置'],
 } as const
 type Page = keyof typeof pages
-type LegacyPage = Exclude<Page, 'settings'> | 'manual' | 'tools' | 'tags'
+type BrowseView = 'project' | 'draft'
 type LibraryCheck = { integrity: string; total: number; missing: string[] }
 type MaintenanceCounts = { added: number; updated: number; missing: number; skipped: number }
 type MaintenanceRun = { finishedAt: string } & (
@@ -73,6 +74,9 @@ export default function App() {
   })
   const [fileInfo, setFileInfo] = useState<{ path: string; document: EditorDocument }>()
   const [browseRevision, setBrowseRevision] = useState(0)
+  const [browseMode, setBrowseMode] = useState(loadBrowseMode)
+  const [browseView, setBrowseView] = useState<BrowseView>('project')
+  const [openProjectId, setOpenProjectId] = useState<string>()
   const workbenchId = useId()
   const [reviewProposalId, setReviewProposalId] = useState<string>()
   const solutionBatch = useSolutionBatch()
@@ -84,14 +88,15 @@ export default function App() {
   const [query, setQuery] = useState(''),
     [rows, setRows] = useState<Question[]>([]),
     [basket, setBasket] = useState<Question[]>([])
-  const [legacy, setLegacy] = useState(''),
-    [pendingLegacyPage, setPendingLegacyPage] = useState<LegacyPage | null>(null),
-    [check, setCheck] = useState<LibraryCheck>()
-  const legacyPending = pendingLegacyPage !== null
+  const [paperDraftId, setPaperDraftId] = useState<string | null>(null)
+  const [paperTitle, setPaperTitle] = useState('高中物理练习卷')
+  const [paperAnswers, setPaperAnswers] = useState(true)
+  const [check, setCheck] = useState<LibraryCheck>()
   const [maintenance, setMaintenance] = useState<MaintenanceStatus>(),
     [maintenanceError, setMaintenanceError] = useState('')
   const routeGeneration = useRef(0)
   const browseAutoOpen = useRef(false)
+  const editorRef = useRef<EditorHandle>(null)
   const mainScroll = useRef<HTMLDivElement>(null)
   const [paste, setPaste] = useState(''),
     [recentLoading, setRecentLoading] = useState(false)
@@ -120,6 +125,7 @@ export default function App() {
     void call('ui.load')
       .then((p: Prefs) => {
         theme(p)
+        setPaperDraftId(localStorage.getItem('paper-draft:' + p.library))
         try {
           setBasket(
             JSON.parse(localStorage.getItem('paper:' + p.library) || '[]')
@@ -138,7 +144,7 @@ export default function App() {
     const timer = setTimeout(() => localStorage.setItem('browse.workbench.width', String(workbenchWidth)), 150)
     return () => clearTimeout(timer)
   }, [workbenchWidth])
-  const showingSettings = page === 'settings' && !editing && !legacy
+  const showingSettings = page === 'settings' && !editing
   useEffect(() => {
     if (!showingSettings) return
     let active = true
@@ -157,13 +163,13 @@ export default function App() {
     browseAutoOpen.current = next === 'browse' && !doc?.questionPath && !workbenchQuestion
     if (next === 'browse') {
       setWorkbenchOpen(true)
+      if (page !== 'browse') setBrowseView('project')
       if (page === 'browse' && browseAutoOpen.current) setBrowseRevision(revision => revision + 1)
     }
+    if (next !== 'browse') setOpenProjectId(undefined)
     setPage(next)
     setEditing(false)
     setReviewProposalId(undefined)
-    setLegacy('')
-    setPendingLegacyPage(null)
     setBusy('')
     setError('')
     mainScroll.current?.scrollTo(0, 0)
@@ -188,14 +194,17 @@ export default function App() {
     setReviewProposalId(reviewId)
     setWorkbenchQuestion(question)
     setWorkbenchOpen(docked)
+    setOpenProjectId(undefined)
+    if (reviewId) setBrowseView('draft')
     setEditing(!docked)
     setPage(route)
-    setLegacy('')
   }, [])
   const loadWorkspace = useCallback(async (params: object, route: Page, id?: string, reviewId?: string, question?: Question) => {
     performance.clearMarks('document-open')
     performance.mark('document-open')
     const token = routeGeneration.current
+    if (route === 'browse') await editorRef.current?.saveDraft()
+    if (token !== routeGeneration.current) return
     const result = await call<EditorDocument>(
       id ? 'workspace.open' : 'workspace.create',
       id ? { id } : params
@@ -240,8 +249,36 @@ export default function App() {
   function add(row: Question) {
     if (!basket.some((r) => r.path === row.path)) changeBasket([...basket, row])
   }
+  function openPaper(newPaper = false) {
+    const id = newPaper ? null : paperDraftId
+    if (!prefs || (!id && (!basket.length || !paperTitle.trim()))) return
+    void work(id ? '正在打开试卷工作台…' : '正在生成试卷…', async () => {
+      const token = routeGeneration.current
+      performance.clearMarks('document-open')
+      performance.mark('document-open')
+      if (doc?.exam && doc.id !== id) await editorRef.current?.saveDraft()
+      if (token !== routeGeneration.current) return
+      let next: EditorDocument
+      if (id) {
+        next = await call<EditorDocument>('workspace.open', { id })
+      } else {
+        const result = await call<object>('library.assemble', {
+          title: paperTitle, answers: paperAnswers, paths: basket.map(row => row.path),
+        })
+        if (token !== routeGeneration.current) return
+        next = await call<EditorDocument>('workspace.create', result)
+        localStorage.setItem('paper-draft:' + prefs.library, next.id)
+        setPaperDraftId(next.id)
+      }
+      if (token === routeGeneration.current) showWorkspace(next, 'exam')
+    })
+  }
   function open(row: Question) {
     browseAutoOpen.current = false
+    if (doc?.questionPath === row.path && workbenchQuestion?.path === row.path && !busy) {
+      setWorkbenchOpen(true)
+      return
+    }
     routeGeneration.current++
     setFileInfo(undefined)
     void work('正在打开题目…', () => loadWorkspace({ questionPath: row.path }, page, undefined,
@@ -268,34 +305,21 @@ export default function App() {
     setFileInfo(undefined)
     void work('正在打开题目…', () => loadWorkspace({}, 'browse', documentId, proposalId, question))
   }
-  function openLegacy(route: LegacyPage) {
-    browseAutoOpen.current = false
-    const token = ++routeGeneration.current
-    setBusy('')
-    setPendingLegacyPage(route)
-    setError('')
-    window.utopia
-      .legacy(route)
-      .then((url) => {
-        if (routeGeneration.current === token) setLegacy(url)
-      })
-      .catch((e) => {
-        if (routeGeneration.current === token) setError(errorText(e))
-      })
-      .finally(() => {
-        if (routeGeneration.current === token) setPendingLegacyPage(null)
-      })
-  }
   useEffect(() => window.utopia.onPapilotShortcut(navigate), [])
   const imageBusy = page === 'entry' && (imageIntakeBusy || Boolean(busy))
   const routeToken = routeGeneration.current
   const actionProps = { open, add, basket }
-  const browseWorkbench = page === 'browse' && !legacy && !editing
+  const browseWorkbench = page === 'browse' && !editing
   const questionPath = workbenchQuestion?.path ?? doc?.questionPath
-  const docking = !legacy && Boolean(page === 'browse' ? questionPath : page === 'search' && workbenchQuestion)
+  const docking = Boolean(page === 'browse' ? questionPath : page === 'search' && workbenchQuestion)
   const rightVisible = !editing && (browseWorkbench || docking) && workbenchOpen
   const showEmptyWorkbench = browseWorkbench && !docking
   const showDockedEditor = rightVisible && docking
+  const browseDocked = browseWorkbench && docking
+  const canOpenProject = Boolean(doc?.source.trim())
+  const showBrowseProject = browseDocked && browseView === 'project' && canOpenProject
+  const projectReady = showBrowseProject && openProjectId === doc?.id
+  const requestProject = showDockedEditor && showBrowseProject && !projectReady && !busy
   const remainingWidth = browseWorkbench ? MODULE_BROWSER_MIN : BROWSE_MIN
   const maximumDock = `min(${WORKBENCH_FRACTION * 100}%, calc(100% - ${remainingWidth}px))`
   const dockSize = `clamp(min(${WORKBENCH_MIN}px, ${maximumDock}), ${workbenchWidth}px, ${maximumDock})`
@@ -343,14 +367,10 @@ export default function App() {
               高中物理题库 <b> / </b> {pages[page][1]}
             </span>
             <div>
-              {doc && page !== 'stats' && !browseWorkbench && (
+              {doc && page !== 'stats' && page !== 'exam' && !browseWorkbench && (
                 <button
                   disabled={imageBusy}
-                  onClick={() => {
-                    if (page === 'browse' && (doc.questionPath || workbenchQuestion)) setWorkbenchOpen(true)
-                    else setEditing(true)
-                    setLegacy('')
-                  }}
+                  onClick={() => setEditing(true)}
                 >
                   返回当前文稿
                 </button>
@@ -358,6 +378,11 @@ export default function App() {
             </div>
           </header>
         )}
+        {browseWorkbench && <BrowseModeSelector mode={browseMode} onChange={mode => {
+          setBrowseMode(mode)
+          localStorage.setItem('browse.mode', mode)
+          mainScroll.current?.scrollTo(0, 0)
+        }} />}
         {error && (
           <div className="error-strip" role="alert">
             {error}
@@ -372,286 +397,229 @@ export default function App() {
           </div>
         )}
         <div className={'workspace-body' + (rightVisible ? ' workspace-with-dock' : '')}>
-          {!editing && page === 'papilot' && <Suspense fallback={<p>正在载入 Papilot 工作台…</p>}>
+          {!editing && page === 'papilot' && <Suspense fallback={<p>正在载入项目工作台…</p>}>
             <PapilotWorkspace />
           </Suspense>}
           {!editing && page === 'stats' && <Statistics />}
           {!editing && page !== 'papilot' && page !== 'stats' && <>
-            <div ref={mainScroll} className={'main-scroll' + (legacy ? ' embedded' : '')}>
-              {legacy ? (
-                <>
-                  <div className="advanced-bar">
-                    <span>{pages[page][1]}</span>
-                    <button
-                      onClick={() => {
-                        if (page === 'browse') navigate('browse')
-                        else setLegacy('')
-                        void summaryLoad()
-                      }}
-                    >
-                      返回工作台
-                    </button>
-                  </div>
-                  <iframe
-                    title={pages[page][1]}
-                    src={legacy}
-                    allow="microphone; clipboard-read"
+            <div ref={mainScroll} className="main-scroll">
+              <div className="page-content">
+                {(page === 'browse' || page === 'search') && (
+                  <Browse
+                    key={page}
+                    {...actionProps}
+                    {...{ summary, query, setQuery, browseMode }}
+                    search={page === 'search'}
+                    onRows={page === 'browse' ? showBrowseRows : setRows}
+                    revision={browseRevision}
+                    previewPath={docking ? questionPath : undefined}
+                    batch={page === 'browse' ? { ...solutionBatch, openResult: openBatchResult } : undefined}
                   />
-                </>
-              ) : (
-                <div className="page-content">
-                  {(page === 'browse' || page === 'search') && (
-                    <Browse
-                      key={page}
-                      {...actionProps}
-                      {...{ summary, query, setQuery }}
-                      search={page === 'search'}
-                      onRows={page === 'browse' ? showBrowseRows : setRows}
-                      revision={browseRevision}
-                      previewPath={docking ? questionPath : undefined}
-                      batch={page === 'browse' ? { ...solutionBatch, openResult: openBatchResult } : undefined}
-                    />
-                  )}
-                  {page === 'exam' && (
-                    <Paper
-                      basket={basket}
-                      setBasket={changeBasket}
-                      browse={() => navigate('browse')}
-                      assemble={(title, answers) =>
-                        void work('正在组卷…', async () => {
-                          const r = await call('library.assemble', {
-                            title,
-                            answers,
-                            paths: basket.map((r) => r.path),
-                          })
-                          openWorkspace(r, 'exam')
-                        })
-                      }
-                    />
-                  )}
-                  {['tex', 'pdf', 'entry'].includes(page) && (
-                    <>
-                      <div className="page-head">
-                        <h1>{pages[page].join(' ')}</h1>
-                        <button disabled={imageBusy} onClick={demo}>打开演示题 ↗</button>
-                      </div>
-                      {page === 'entry' ? (
-                        <ImageIntake key={routeToken}
-                          disabled={Boolean(busy) || legacyPending}
-                          onBusyChange={setImageIntakeBusy}
-                          onSettings={() => navigate('settings')}
-                          onOpen={(document, compileError) => {
-                            if (routeToken !== routeGeneration.current) return
-                            performance.clearMarks('document-open')
-                            performance.mark('document-open')
-                            showWorkspace(document, 'entry', undefined, undefined, compileError)
-                          }} />
-                      ) : (
-                        <section className="mc-card intake">
-                          <span aria-hidden="true">{pages[page][0]}</span>
-                          <h2>{page === 'pdf' ? '打开原始 PDF' : '打开 LaTeX 文稿'}</h2>
-                          <p>{page === 'pdf' ? '先阅读原卷，再选择页码重建可编辑题目。' : '载入文稿后，可在排版页上框选并修改。'}</p>
-                          <button className="primary" onClick={() => void choose(page === 'pdf' ? 'pdf' : 'tex')}>
-                            {page === 'pdf' ? '选择 PDF 文件' : '选择 TeX 文件'}
-                          </button>
-                        </section>
+                )}
+                {page === 'exam' && (
+                  <Paper
+                    basket={basket}
+                    setBasket={changeBasket}
+                    browse={() => navigate('browse')}
+                    title={paperTitle}
+                    setTitle={setPaperTitle}
+                    answers={paperAnswers}
+                    setAnswers={setPaperAnswers}
+                    hasDraft={Boolean(paperDraftId)}
+                    busy={Boolean(busy) || !prefs}
+                    openPaper={openPaper}
+                  />
+                )}
+                {['tex', 'pdf', 'entry'].includes(page) && (
+                  <>
+                    <div className="page-head">
+                      <h1>{pages[page].join(' ')}</h1>
+                      <button disabled={imageBusy} onClick={demo}>打开演示题 ↗</button>
+                    </div>
+                    {page === 'entry' ? (
+                      <ImageIntake key={routeToken}
+                        disabled={Boolean(busy)}
+                        onBusyChange={setImageIntakeBusy}
+                        onSettings={() => navigate('settings')}
+                        onOpen={(document, compileError) => {
+                          if (routeToken !== routeGeneration.current) return
+                          performance.clearMarks('document-open')
+                          performance.mark('document-open')
+                          showWorkspace(document, 'entry', undefined, undefined, compileError)
+                        }} />
+                    ) : (
+                      <section className="mc-card intake">
+                        <span aria-hidden="true">{pages[page][0]}</span>
+                        <h2>{page === 'pdf' ? '打开原始 PDF' : '打开 LaTeX 文稿'}</h2>
+                        <p>{page === 'pdf' ? '先阅读原卷，再选择页码重建可编辑题目。' : '载入文稿后，可在排版页上框选并修改。'}</p>
+                        <button className="primary" onClick={() => void choose(page === 'pdf' ? 'pdf' : 'tex')}>
+                          {page === 'pdf' ? '选择 PDF 文件' : '选择 TeX 文件'}
+                        </button>
+                      </section>
+                    )}
+                    {page === 'tex' && (
+                      <details className="mc-card">
+                        <summary>粘贴 TeX 或新建文稿</summary>
+                        <textarea
+                          className="paste-tex"
+                          aria-label="LaTeX 源码"
+                          value={paste}
+                          onChange={(e) => setPaste(e.target.value)}
+                        />
+                        <button
+                          onClick={() =>
+                            openWorkspace(
+                              { source: paste, title: '未命名文稿' },
+                              'tex'
+                            )
+                          }
+                        >
+                          在工作台打开
+                        </button>
+                      </details>
+                    )}
+                    <section className="mc-card">
+                      <h2>最近文稿</h2>
+                      {recent.map((r) => (
+                        <button
+                          key={r.id}
+                          className="draft-link"
+                          disabled={imageBusy}
+                          onClick={() =>
+                            openWorkspace({}, r.inputKind === 'image' ? 'entry' : r.pdfPath ? 'pdf' : 'tex', r.id)
+                          }
+                        >
+                          <span>
+                            {r.inputKind === 'image' ? pages.entry[0] : r.pdfPath ? '📑' : '📄'}　{r.title}
+                          </span>
+                          <small>继续编辑 →</small>
+                        </button>
+                      ))}
+                      {!recent.length && (
+                        <p>
+                          {recentLoading
+                            ? '正在读取…'
+                            : '打开过的文稿会保存在这里，可继续编辑。'}
+                        </p>
                       )}
-                      {page === 'tex' && (
-                        <details className="mc-card">
-                          <summary>粘贴 TeX 或新建文稿</summary>
-                          <textarea
-                            className="paste-tex"
-                            aria-label="LaTeX 源码"
-                            value={paste}
-                            onChange={(e) => setPaste(e.target.value)}
-                          />
+                    </section>
+                  </>
+                )}
+                {page === 'settings' && (
+                  <>
+                    <h1>⚙️ 设置</h1>
+                    <section className="mc-card">
+                      <h2>🎨 界面外观</h2>
+                      <div className="skin-grid">
+                        {Object.entries(prefs?.skins || {}).map(([id, s]) => (
                           <button
+                            key={id}
+                            aria-pressed={prefs?.skin === id}
                             onClick={() =>
-                              openWorkspace(
-                                { source: paste, title: '未命名文稿' },
-                                'tex'
+                              void work('正在应用皮肤…', async () =>
+                                theme(await call('ui.save', { skin: id }))
                               )
                             }
                           >
-                            在工作台打开
-                          </button>
-                        </details>
-                      )}
-                      <section className="mc-card">
-                        <h2>最近文稿</h2>
-                        {recent.map((r) => (
-                          <button
-                            key={r.id}
-                            className="draft-link"
-                            disabled={imageBusy}
-                            onClick={() =>
-                              openWorkspace({}, r.inputKind === 'image' ? 'entry' : r.pdfPath ? 'pdf' : 'tex', r.id)
-                            }
-                          >
-                            <span>
-                              {r.inputKind === 'image' ? pages.entry[0] : r.pdfPath ? '📑' : '📄'}　{r.title}
-                            </span>
-                            <small>继续编辑 →</small>
+                            <i style={{ background: s.accent }} />
+                            {s.name}
                           </button>
                         ))}
-                        {!recent.length && (
-                          <p>
-                            {recentLoading
-                              ? '正在读取…'
-                              : '打开过的文稿会保存在这里，可继续编辑。'}
-                          </p>
-                        )}
-                      </section>
-                    </>
-                  )}
-                  {page === 'settings' && (
-                    <>
-                      <h1>⚙️ 设置</h1>
-                      <section className="mc-card">
-                        <h2>🎨 界面外观</h2>
-                        <div className="skin-grid">
-                          {Object.entries(prefs?.skins || {}).map(([id, s]) => (
-                            <button
-                              key={id}
-                              aria-pressed={prefs?.skin === id}
-                              onClick={() =>
-                                void work('正在应用皮肤…', async () =>
-                                  theme(await call('ui.save', { skin: id }))
-                                )
-                              }
-                            >
-                              <i style={{ background: s.accent }} />
-                              {s.name}
-                            </button>
+                      </div>
+                      <label>
+                        外观模式　
+                        <select
+                          aria-label="外观模式"
+                          value={prefs?.mode || 'light'}
+                          onChange={(e) =>
+                            void work('正在切换模式…', async () =>
+                              theme(
+                                await call('ui.save', {
+                                  mode: e.target.value,
+                                })
+                              )
+                            )
+                          }
+                        >
+                          <option value="light">浅色</option>
+                          <option value="dark">深色</option>
+                        </select>
+                      </label>
+                    </section>
+                    <SettingsConnections
+                      provider={prefs?.provider}
+                      saveProvider={async (provider) => {
+                        const saved = await call<Prefs>('ui.save', { provider })
+                        setPrefs((current) => current && { ...current, provider: saved.provider })
+                      }}
+                    />
+                    <section className="mc-card">
+                      <h2>本地题库</h2>
+                      <p className="filepath">{prefs?.library}</p>
+                      <div className="settings-row-actions">
+                        <button
+                          disabled={Boolean(busy)}
+                          onClick={() =>
+                            void work('正在打开题库…', async () => {
+                              if (await window.utopia.chooseLibrary())
+                                location.reload()
+                            })
+                          }
+                        >
+                          选择题库文件夹
+                        </button>
+                        <button
+                          disabled={Boolean(busy)}
+                          onClick={() =>
+                            void work('正在校验…', async () =>
+                              setCheck(await call<LibraryCheck>('library.check'))
+                            )
+                          }
+                        >
+                          检查题库
+                        </button>
+                      </div>
+                      {check && (
+                        <p role="status">
+                          索引 {check.integrity} · 已检查 {check.total} 题 · 缺少 {check.missing.length} 个文件
+                        </p>
+                      )}
+                      {check && check.missing.length > 0 && (
+                        <pre>{check.missing.join('\n')}</pre>
+                      )}
+                      <h3>自动维护记录</h3>
+                      {maintenanceError ? (
+                        <p role="status">读取失败。{maintenanceError}</p>
+                      ) : maintenance ? (
+                        <ul>
+                          {([
+                            ['启动时', maintenance.startup],
+                            ['上次退出时', maintenance.shutdown],
+                          ] as const).map(([label, run]) => (
+                            <li key={label}>
+                              {label} · {run ? (
+                                <>
+                                  <time dateTime={run.finishedAt}>
+                                    {new Date(run.finishedAt).toLocaleString('zh-CN', { hour12: false })}
+                                  </time>
+                                  {run.ok
+                                    ? ` · 完成 · 新增 ${run.result.added} · 更新 ${run.result.updated} · 缺失 ${run.result.missing} · 跳过 ${run.result.skipped}`
+                                    : ` · 失败${run.error ? ` · ${run.error}` : ''}`}
+                                </>
+                              ) : '暂无记录'}
+                            </li>
                           ))}
-                        </div>
-                        <label>
-                          外观模式　
-                          <select
-                            aria-label="外观模式"
-                            value={prefs?.mode || 'light'}
-                            onChange={(e) =>
-                              void work('正在切换模式…', async () =>
-                                theme(
-                                  await call('ui.save', {
-                                    mode: e.target.value,
-                                  })
-                                )
-                              )
-                            }
-                          >
-                            <option value="light">浅色</option>
-                            <option value="dark">深色</option>
-                          </select>
-                        </label>
-                      </section>
-                      <SettingsConnections
-                        provider={prefs?.provider}
-                        saveProvider={async (provider) => {
-                          const saved = await call<Prefs>('ui.save', { provider })
-                          setPrefs((current) => current && { ...current, provider: saved.provider })
-                        }}
-                      />
-                      <section className="mc-card">
-                        <h2>本地题库</h2>
-                        <p className="filepath">{prefs?.library}</p>
-                        <div className="settings-row-actions">
-                          <button
-                            disabled={Boolean(busy) || legacyPending}
-                            onClick={() =>
-                              void work('正在打开题库…', async () => {
-                                if (await window.utopia.chooseLibrary())
-                                  location.reload()
-                              })
-                            }
-                          >
-                            选择题库文件夹
-                          </button>
-                          <button
-                            disabled={Boolean(busy) || legacyPending}
-                            onClick={() =>
-                              void work('正在校验…', async () =>
-                                setCheck(await call<LibraryCheck>('library.check'))
-                              )
-                            }
-                          >
-                            检查题库
-                          </button>
-                          <button disabled={Boolean(busy) || legacyPending} onClick={() => openLegacy('tags')}>
-                            管理题目标签
-                          </button>
-                          <button disabled={Boolean(busy) || legacyPending} onClick={() => openLegacy('tools')}>
-                            打开题库工具箱
-                          </button>
-                        </div>
-                        {check && (
-                          <p role="status">
-                            索引 {check.integrity} · 已检查 {check.total} 题 · 缺少 {check.missing.length} 个文件
-                          </p>
-                        )}
-                        {check && check.missing.length > 0 && (
-                          <pre>{check.missing.join('\n')}</pre>
-                        )}
-                        <h3>自动维护记录</h3>
-                        {maintenanceError ? (
-                          <p role="status">读取失败。{maintenanceError}</p>
-                        ) : maintenance ? (
-                          <ul>
-                            {([
-                              ['启动时', maintenance.startup],
-                              ['上次退出时', maintenance.shutdown],
-                            ] as const).map(([label, run]) => (
-                              <li key={label}>
-                                {label} · {run ? (
-                                  <>
-                                    <time dateTime={run.finishedAt}>
-                                      {new Date(run.finishedAt).toLocaleString('zh-CN', { hour12: false })}
-                                    </time>
-                                    {run.ok
-                                      ? ` · 完成 · 新增 ${run.result.added} · 更新 ${run.result.updated} · 缺失 ${run.result.missing} · 跳过 ${run.result.skipped}`
-                                      : ` · 失败${run.error ? ` · ${run.error}` : ''}`}
-                                  </>
-                                ) : '暂无记录'}
-                              </li>
-                            ))}
-                          </ul>
-                        ) : <p role="status">正在读取…</p>}
-                      </section>
-                    </>
-                  )}
-                  {page === 'intro' && (
-                    <Suspense fallback={<p role="status">正在载入教程…</p>}>
-                      <ArchitectureGuide
-                        navigate={navigate}
-                        demo={demo}
-                        openClassic={openLegacy}
-                        pendingClassicPage={pendingLegacyPage === 'intro' || pendingLegacyPage === 'manual' ? pendingLegacyPage : null}
-                      />
-                    </Suspense>
-                  )}
-                  {page !== 'settings' && page !== 'intro' && (
-                    <button
-                      className="advanced-link"
-                      disabled={legacyPending || imageBusy}
-                      onClick={() => openLegacy(page)}
-                    >
-                      {legacyPending
-                        ? '正在打开…'
-                        : (
-                            {
-                              exam: '打开完整组卷与导出工具',
-                              entry: '批量识别与同卷录入',
-                              tex: '批量 TeX 录入',
-                              pdf: '逐题审阅与批量入库',
-                              browse: '打开完整题库管理',
-                              search: '打开高级检索',
-                            }
-                          )[page]}{' '}
-                      ↗
-                    </button>
-                  )}
-                </div>
-              )}
+                        </ul>
+                      ) : <p role="status">正在读取…</p>}
+                    </section>
+                  </>
+                )}
+                {page === 'intro' && (
+                  <Suspense fallback={<p role="status">正在载入教程…</p>}>
+                    <ArchitectureGuide navigate={navigate} demo={demo} />
+                  </Suspense>
+                )}
+              </div>
             </div>
             {browseWorkbench || docking ? (
               <PaneDivider
@@ -707,41 +675,86 @@ export default function App() {
           >
             <div>
               <h2>题目工作台</h2>
-              <p>从左侧选择一道题，查看 PDF 和 LaTeX 源码。</p>
+              <p>从左侧选择一道题，在右侧预览和修正。</p>
             </div>
           </section>
         )}
         {doc && (
           <div
             id={showEmptyWorkbench ? undefined : workbenchId}
-            className={'editor-mount' + (showDockedEditor ? ' browse-workbench' : '')}
+            className={'editor-mount' + (showDockedEditor ? ' browse-workbench' : '') + (browseDocked ? ' browse-project-dock' : '')}
             role={showDockedEditor ? 'region' : undefined}
             aria-label={showDockedEditor ? '题目工作台' : undefined}
             style={{ display: editing || showDockedEditor ? 'flex' : 'none', width: showDockedEditor ? dockSize : undefined }}
           >
-            <Suspense fallback={<p>正在载入编辑器…</p>}>
-              <Editor
-                key={doc.id}
-                document={doc}
-                initialCompileError={initialCompileError}
-                docked={docking && !editing}
-                onExpand={rightVisible ? () => setEditing(true) : undefined}
-                onEditFileInfo={questionPath && (workbenchQuestion || page === 'browse') ? (document) => setFileInfo({ path: questionPath, document }) : undefined}
-                onOpenPapilot={() => navigate('papilot')}
-                reviewProposalId={reviewProposalId}
-                onChange={next => {
-                  setDoc(next)
-                  solutionBatch.trackReview(next)
-                }}
-                onQuestionSaved={next => solutionBatch.trackReview(next, true)}
-                onClose={() => {
-                  if (!editing) setWorkbenchOpen(false)
-                  setEditing(false)
-                  setReviewProposalId(undefined)
-                  void summaryLoad()
-                }}
-              />
-            </Suspense>
+            {browseDocked && <div className="browse-project-controls" role="group" aria-label="工作台视图">
+              <button type="button" aria-pressed={!showBrowseProject} onClick={() => setBrowseView('draft')}>
+                题库文稿
+              </button>
+              <button type="button" disabled={!canOpenProject} aria-pressed={showBrowseProject} onClick={() => {
+                if (showBrowseProject) return
+                setOpenProjectId(undefined)
+                setBrowseView('project')
+              }}>
+                项目工作台
+              </button>
+            </div>}
+            {rightVisible && showBrowseProject && (projectReady ? (
+              <Suspense fallback={<p className="browse-project-loading" role="status">正在载入项目工作台…</p>}>
+                <PapilotWorkspace />
+              </Suspense>
+            ) : <p className="browse-project-loading" role="status">正在打开题目项目…</p>)}
+            <div className="editor-mount" hidden={showBrowseProject} style={{ display: showBrowseProject ? 'none' : 'flex' }}>
+              <Suspense fallback={<p>正在载入编辑器…</p>}>
+                <Editor
+                  key={doc.id}
+                  ref={editorRef}
+                  document={doc}
+                  examBasket={basket}
+                  initialCompileError={initialCompileError}
+                  docked={docking && !editing}
+                  onExpand={rightVisible ? () => setEditing(true) : undefined}
+                  onEditFileInfo={questionPath && (workbenchQuestion || page === 'browse') ? (document) => setFileInfo({ path: questionPath, document }) : undefined}
+                  active={editing || (showDockedEditor && !showBrowseProject)}
+                  requestProject={requestProject}
+                  openProjectManuscript={page === 'browse'}
+                  onOpenPapilot={(automatic) => {
+                    if (routeToken !== routeGeneration.current) return
+                    if (page !== 'browse') {
+                      navigate('papilot')
+                      return
+                    }
+                    setOpenProjectId(doc.id)
+                    if (!automatic) {
+                      setBrowseView('project')
+                      setWorkbenchOpen(true)
+                      setEditing(false)
+                    }
+                  }}
+                  onProjectOpenFailed={(message) => {
+                    if (routeToken !== routeGeneration.current) return
+                    setBrowseView('draft')
+                    setError(message)
+                  }}
+                  reviewProposalId={reviewProposalId}
+                  onChange={next => {
+                    setDoc(current => current?.id === next.id ? next : current)
+                    solutionBatch.trackReview(next)
+                  }}
+                  onQuestionSaved={next => solutionBatch.trackReview(next, true)}
+                  onClose={() => {
+                    if (doc.exam && page !== 'exam') {
+                      navigate('exam')
+                      return
+                    }
+                    if (!editing) setWorkbenchOpen(false)
+                    setEditing(false)
+                    setReviewProposalId(undefined)
+                    void summaryLoad()
+                  }}
+                />
+              </Suspense>
+            </div>
           </div>
         )}
         </div>

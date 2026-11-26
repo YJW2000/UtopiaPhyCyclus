@@ -195,6 +195,19 @@
 .wb-form-actions { justify-content: flex-end; }
 .wb-form-error { max-width: 68vw; margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--mc-accent, #a64732); font-size: 12px; }
 
+.wb-exam-questions { display: grid; gap: 10px; width: min(590px, 76vw); }
+.wb-exam-search, .wb-exam-pages, .wb-exam-footer { display: flex; align-items: center; gap: 8px; }
+.wb-exam-search input { flex: 1; padding: 7px 8px; border: 1px solid var(--mc-border); border-radius: 6px; background: var(--mc-input); }
+.wb-exam-basket { justify-self: start; }
+.wb-exam-results { overflow: auto; max-height: 42vh; border-block: 1px solid var(--mc-border); }
+.wb-exam-results > p { padding: 10px; margin: 0; }
+.wb-exam-question { display: flex; align-items: flex-start; gap: 8px; padding: 9px 4px; cursor: pointer; }
+.wb-exam-question + .wb-exam-question { border-top: 1px solid var(--mc-border); }
+.wb-exam-question > span { display: grid; flex: 1; min-width: 0; gap: 4px; overflow-wrap: anywhere; }
+.wb-exam-question small, .wb-exam-footer > span, .wb-exam-pages > span { color: var(--mc-muted); }
+.wb-exam-pages, .wb-exam-footer { justify-content: flex-end; }
+.wb-exam-footer > span { margin-inline-end: auto; }
+
 .wb-docked .wb-empty { min-height: 0; }
 
 @container editor-workbench (width < 640px) {

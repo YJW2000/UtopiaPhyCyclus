@@ -359,7 +359,10 @@ def compile_tex_preview(source: str, project_dir: str, defaults: dict,
             pdf = directory / 'preview.pdf'
             if not pdf.exists():
                 return dict(ok=False, error='编译器未生成 PDF。', log=output[-24000:])
-            return dict(ok=True, pdf=pdf.read_bytes(), log=output[-24000:], engine=engine,
+            pdf_bytes = pdf.read_bytes()
+            if not pdf_bytes:
+                return dict(ok=False, error='编译生成的 PDF 为空，请检查编译日志和可用磁盘空间。', log=output[-24000:])
+            return dict(ok=True, pdf=pdf_bytes, log=output[-24000:], engine=engine,
                         source_map=build_source_map(source if editor_source is None else editor_source,
                                                     original_document, directory / 'preview.synctex.gz'))
     except subprocess.TimeoutExpired as exc:

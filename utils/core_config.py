@@ -2,7 +2,7 @@ import os
 from dotenv import load_dotenv
 
 # ================= 配置与常量 =================
-BASE_DIR = os.getenv('UTOPIA_LEGACY_ROOT') or os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 # Only read this application's configuration, never a parent directory's .env.
 load_dotenv(os.path.join(BASE_DIR, ".env"))
 _library = os.getenv('UTOPIA_DESKTOP_LIBRARY') or BASE_DIR

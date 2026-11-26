@@ -151,7 +151,7 @@ async def probe(executable, development, root, screenshot=None):
                 await shell.command('Input.insertText', {'text': SOURCE})
                 await click_label(shell, '在工作台打开')
                 await click(shell, 'button[aria-label="更多操作"]')
-                await click_label(shell, '在 Papilot 工作台打开')
+                await click_label(shell, '在项目工作台打开')
                 await shell.until(f'Boolean({find(SLOT)})')
                 state_read = '''fetch('/api/state').then(r => r.json()).then(s => ({
                     version: s.version,
@@ -185,7 +185,7 @@ async def probe(executable, development, root, screenshot=None):
 
             await click_label(shell, '返回当前文稿')
             await click(shell, 'button[aria-label="更多操作"]')
-            await click_label(shell, '从 Papilot 导入改动')
+            await click_label(shell, '从项目工作台导入改动')
             await click(shell, '[aria-label="查看 LaTeX 源码"]')
             source_field = find('textarea[aria-label="编辑 LaTeX 源码"]')
             await shell.until(f'{source_field}?.value.includes({json.dumps(REVISED)})', seconds=45)

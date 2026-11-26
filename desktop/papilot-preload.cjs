@@ -8,6 +8,7 @@ function subscribe(channel, listener) {
 
 contextBridge.exposeInMainWorld('papilotDesktop', {
   platform: process.platform,
+  workspaceName: '项目工作台',
   minimize: () => ipcRenderer.invoke('papilot:window', 'minimize'),
   maximize: () => ipcRenderer.invoke('papilot:window', 'maximize'),
   close: () => ipcRenderer.invoke('papilot:window', 'close'),
@@ -21,10 +22,30 @@ contextBridge.exposeInMainWorld('papilotDesktop', {
   onNewPaper: listener => subscribe('new-paper', listener),
   onOpenSettings: listener => subscribe('open-settings', listener),
   onOpenFolder: listener => {
-    const accept = folder => { if (typeof folder === 'string') listener(folder); };
-    const dispose = subscribe('open-folder', accept);
-    void ipcRenderer.invoke('papilot:take-folder').then(accept, () => {});
-    return dispose;
+    let active = true;
+    let opening = false;
+    let pending;
+    let latestSequence = 0;
+    const accept = async request => {
+      if (!active || typeof request?.folder !== 'string' || request.sequence <= latestSequence) return;
+      latestSequence = request.sequence;
+      pending = request;
+      if (opening) return;
+      opening = true;
+      try {
+        while (active && pending) {
+          const { folder, openManuscript } = pending;
+          pending = undefined;
+          await listener(folder, openManuscript);
+        }
+      } finally {
+        opening = false;
+      }
+    };
+    const receive = request => { void accept(request).catch(() => {}); };
+    const dispose = subscribe('open-folder', receive);
+    void ipcRenderer.invoke('papilot:take-folder').then(receive, () => {});
+    return () => { active = false; dispose(); };
   },
   typelessStatus: () => Promise.resolve({ status: 'unavailable' }),
   typelessShortcut: () => Promise.resolve({ status: 'unavailable' }),

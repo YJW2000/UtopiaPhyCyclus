@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import type { BatchResultRow, useSolutionBatch } from './useSolutionBatch'
 import './browse-modules.css'
+import './statistics.css'
 
 export interface Question {
   id: string
@@ -67,9 +68,25 @@ const browseModes = [
   { value: 'paper', label: '按试卷浏览' },
   { value: 'entry', label: '按录入顺序浏览' },
 ] as const
-type BrowseMode = typeof browseModes[number]['value']
+export type BrowseMode = typeof browseModes[number]['value']
 type SearchResult = { rows: Question[]; total: number; page: number; pages: number }
 const emptyResults: SearchResult = { rows: [], total: 0, page: 1, pages: 1 }
+
+export function loadBrowseMode(): BrowseMode {
+  const saved = localStorage.getItem('browse.mode')
+  return browseModes.find(({ value }) => value === saved)?.value ?? 'module'
+}
+
+export function BrowseModeSelector({ mode, onChange }: { mode: BrowseMode; onChange: (mode: BrowseMode) => void }) {
+  return <div className="browse-modes" role="radiogroup" aria-label="浏览方式">
+    {browseModes.map(({ value, label }) => (
+      <label key={value}>
+        <input type="radio" name="browse-mode" value={value} checked={mode === value} onChange={() => onChange(value)} />
+        {label}
+      </label>
+    ))}
+  </div>
+}
 
 function groupQuestionsByModule(rows: Question[]) {
   const groups = new Map<string, Question[]>()
@@ -125,35 +142,157 @@ export function QuestionList({
     </div>
   )
 }
+type Counts = Record<string, number>
+
+interface LibraryStatistics {
+  total_questions: number
+  total_tikz: number
+  total_difficulty: number
+  difficulty_count: number
+  today_new_questions: number
+  today_mod_questions: number
+  today_new_tikz: number
+  today_mod_tikz: number
+  tag_counts: Counts
+  subject_counts: Counts
+  type_counts: Counts
+  difficulty_dist: Counts
+  daily_activity: Counts
+  hourly_activity_by_day: Record<string, Counts>
+}
+
+const numberFormat = new Intl.NumberFormat('zh-CN')
+const dateFormat = new Intl.DateTimeFormat('sv-SE')
+
+function StatisticsDistribution({ title, counts }: { title: string; counts: Counts }) {
+  const rows = Object.entries(counts).sort(([, first], [, second]) => second - first)
+  const maximum = Math.max(1, rows[0]?.[1] ?? 0)
+  return (
+    <section className="mc-card">
+      <h2>{title}</h2>
+      {rows.length ? <ul className="statistics-distribution">
+        {rows.map(([label, count]) => (
+          <li key={label}>
+            <span>{label}</span>
+            <span className="statistics-track" aria-hidden="true">
+              <span style={{ width: `${100 * count / maximum}%` }} />
+            </span>
+            <strong>{numberFormat.format(count)}</strong>
+          </li>
+        ))}
+      </ul> : <p>暂无数据</p>}
+    </section>
+  )
+}
+
+function StatisticsActivity({ daily, hourly }: { daily: Counts; hourly: Record<string, Counts> }) {
+  const days = useMemo(() => {
+    const date = new Date()
+    date.setDate(date.getDate() - 364)
+    return Array.from({ length: 365 }, (_, index) => {
+      const day = { date: dateFormat.format(date), weekday: date.getDay(), index }
+      date.setDate(date.getDate() + 1)
+      return day
+    })
+  }, [])
+  const today = days[days.length - 1].date
+  const [selectedDay, setSelectedDay] = useState(today)
+  const dateOptions = [...new Set([...days.slice(-7).map(day => day.date), ...Object.keys(daily)])].sort().reverse()
+  const dayCounts = days.map(day => daily[day.date] ?? 0)
+  const dailyTotal = dayCounts.reduce((total, count) => total + count, 0)
+  const dailyMaximum = Math.max(1, ...dayCounts)
+  const hours = Array.from({ length: 24 }, (_, hour) => String(hour).padStart(2, '0'))
+  const hourCounts = hours.map(hour => hourly[selectedDay]?.[hour] ?? 0)
+  const hourMaximum = Math.max(1, ...hourCounts)
+
+  return (
+    <section className="mc-card statistics-activity">
+      <h2>录入与修改活动</h2>
+      <p>最近 365 天 · {numberFormat.format(dailyTotal)} 次活动</p>
+      <div className="statistics-calendar" role="img" aria-label={`从 ${days[0].date} 到 ${today} 的每日活动热力图`}>
+        {days.map(({ date, weekday, index }) => {
+          const count = dayCounts[index]
+          return <span key={date} title={`${date} · ${numberFormat.format(count)} 次`} style={{
+            gridRow: weekday + 1,
+            gridColumn: Math.floor((days[0].weekday + index) / 7) + 1,
+            background: count ? `color-mix(in srgb, var(--mc-action-bg) ${35 + 65 * count / dailyMaximum}%, var(--mc-surface))` : undefined,
+          }} />
+        })}
+      </div>
+      <div className="statistics-chart-labels" aria-hidden="true"><span>{days[0].date}</span><span>{today}</span></div>
+      <label className="statistics-hour-select">
+        分时活动
+        <select value={selectedDay} onChange={event => setSelectedDay(event.target.value)}>
+          {dateOptions.map(date => <option key={date}>{date}</option>)}
+        </select>
+      </label>
+      <p>{numberFormat.format(daily[selectedDay] ?? 0)} 次活动</p>
+      <ul className="statistics-hourly" aria-label={`${selectedDay} 的每小时活动`}>
+        {hours.map((hour, index) => {
+          const count = hourCounts[index]
+          return <li key={hour} title={`${hour}:00 · ${numberFormat.format(count)} 次`}>
+            <span aria-hidden="true" style={{ height: `${100 * count / hourMaximum}%` }} />
+            <span className="statistics-sr-only">{hour}:00 · {numberFormat.format(count)} 次</span>
+          </li>
+        })}
+      </ul>
+      <div className="statistics-chart-labels" aria-hidden="true"><span>00:00</span><span>12:00</span><span>23:00</span></div>
+    </section>
+  )
+}
+
 export function Statistics() {
-  const [url, setUrl] = useState('')
+  const [stats, setStats] = useState<LibraryStatistics>()
   const [failed, setFailed] = useState(false)
   const [attempt, setAttempt] = useState(0)
 
   useEffect(() => {
     let active = true
-    void window.utopia.legacy('stats').then((url) => {
-      if (active) setUrl(url)
+    void window.utopia.call<LibraryStatistics>('library.statistics').then((result) => {
+      if (active) setStats(result)
     }).catch(() => {
       if (active) setFailed(true)
     })
     return () => { active = false }
   }, [attempt])
 
+  const metrics = stats && [
+    ['题库总题目数', numberFormat.format(stats.total_questions)],
+    ['含 TikZ 的题目', numberFormat.format(stats.total_tikz)],
+    ['今日新增题目', numberFormat.format(stats.today_new_questions)],
+    ['今日修改题目', numberFormat.format(stats.today_mod_questions)],
+    ['今日新增含 TikZ 的题目', numberFormat.format(stats.today_new_tikz)],
+    ['今日修改含 TikZ 的题目', numberFormat.format(stats.today_mod_tikz)],
+    ['平均难度星级', stats.difficulty_count ? `${(stats.total_difficulty / stats.difficulty_count).toFixed(1)} ★` : '暂无'],
+    ['热门标签', Object.entries(stats.tag_counts).sort(([, first], [, second]) => second - first)
+      .slice(0, 3).map(([tag]) => tag).join('、') || '暂无'],
+  ]
+
   return (
-    <div className="main-scroll embedded">
-      {url ? <iframe title="数据统计" src={url} /> : (
-        <div className="page-content">
-          <h1>📊 数据统计</h1>
-          {failed ? <>
-            <p role="alert">无法加载数据统计。</p>
-            <button onClick={() => {
-              setFailed(false)
-              setAttempt((current) => current + 1)
-            }}>重试</button>
-          </> : <p role="status">正在加载数据统计…</p>}
-        </div>
-      )}
+    <div className="main-scroll">
+      <div className="page-content statistics-dashboard">
+        <h1>📊 数据统计</h1>
+        {stats && metrics ? <>
+          <dl className="statistics-metrics">
+            {metrics.map(([label, value]) => <div className="mc-card" key={label}>
+              <dt>{label}</dt>
+              <dd>{value}</dd>
+            </div>)}
+          </dl>
+          <StatisticsActivity daily={stats.daily_activity} hourly={stats.hourly_activity_by_day} />
+          <div className="statistics-distributions">
+            <StatisticsDistribution title="知识板块分布" counts={stats.subject_counts} />
+            <StatisticsDistribution title="题型分布" counts={stats.type_counts} />
+            <StatisticsDistribution title="难度分布" counts={stats.difficulty_dist} />
+          </div>
+        </> : failed ? <section className="mc-card">
+          <p role="alert">无法加载数据统计。</p>
+          <button onClick={() => {
+            setFailed(false)
+            setAttempt(current => current + 1)
+          }}>重试</button>
+        </section> : <p role="status">正在加载数据统计…</p>}
+      </div>
     </div>
   )
 }
@@ -162,6 +301,7 @@ export function Browse({
   query,
   setQuery,
   search,
+  browseMode,
   onRows,
   revision,
   previewPath,
@@ -172,6 +312,7 @@ export function Browse({
   query: string
   setQuery: (q: string) => void
   search: boolean
+  browseMode: BrowseMode
   onRows: (rows: Question[]) => void
   revision: number
   previewPath?: string
@@ -182,10 +323,6 @@ export function Browse({
     [year, setYear] = useState(''),
     [mode, setMode] = useState('exact'),
     [page, setPage] = useState(1)
-  const [browseMode, setBrowseMode] = useState<BrowseMode>(() => {
-    const saved = localStorage.getItem('browse.mode')
-    return browseModes.find(({ value }) => value === saved)?.value ?? 'module'
-  })
   const [paperType, setPaperType] = useState(''),
     [paperYear, setPaperYear] = useState<string>(),
     [paper, setPaper] = useState('')
@@ -269,17 +406,6 @@ export function Browse({
   return (
     <div className={search ? undefined : 'module-browser'}>
       <h1>{search ? '🔎 题目查找' : '🔍 全局浏览'}</h1>
-      {!search && <div className="browse-modes" role="radiogroup" aria-label="浏览方式">
-        {browseModes.map(({ value, label }) => (
-          <label key={value}>
-            <input type="radio" name="browse-mode" value={value} checked={browseMode === value} onChange={() => {
-              setBrowseMode(value)
-              localStorage.setItem('browse.mode', value)
-            }} />
-            {label}
-          </label>
-        ))}
-      </div>}
       <section className="mc-card">
         <input
           className="search-field"
@@ -462,15 +588,26 @@ export function Paper({
   basket,
   setBasket,
   browse,
-  assemble,
+  title,
+  setTitle,
+  answers,
+  setAnswers,
+  hasDraft,
+  busy,
+  openPaper,
 }: {
   basket: Question[]
   setBasket: (rows: Question[]) => void
   browse: () => void
-  assemble: (title: string, answers: boolean) => void
+  title: string
+  setTitle: (value: string) => void
+  answers: boolean
+  setAnswers: (value: boolean) => void
+  hasDraft: boolean
+  busy: boolean
+  openPaper: (newPaper?: boolean) => void
 }) {
-  const [title, setTitle] = useState('高中物理练习卷'),
-    [answers, setAnswers] = useState(true)
+  const canAssemble = !busy && basket.length > 0 && Boolean(title.trim())
   function move(i: number, delta: number) {
     const copy = basket.slice()
     ;[copy[i], copy[i + delta]] = [copy[i + delta], copy[i]]
@@ -480,18 +617,26 @@ export function Paper({
     <>
       <div className="page-head">
         <h1>🖨️ 组卷排版</h1>
-        <button onClick={browse}>＋ 选择题目</button>
+        <button onClick={browse} disabled={busy}>＋ 选择题目</button>
       </div>
+      {hasDraft && <section className="mc-card">
+        <div className="section-head">
+          <h2>当前试卷</h2>
+          <button className="primary" disabled={busy} onClick={() => openPaper()}>打开工作台</button>
+        </div>
+        <p>在工作台预览 PDF、修改 LaTeX，或将新选的题目加入当前试卷。</p>
+      </section>}
       <section className="mc-card">
-        <h2>试卷设置</h2>
+        <h2>{hasDraft ? '新试卷设置' : '试卷设置'}</h2>
         <label className="field">
           试卷名称
-          <input value={title} onChange={(e) => setTitle(e.target.value)} />
+          <input value={title} disabled={busy} onChange={(e) => setTitle(e.target.value)} />
         </label>
         <label>
           <input
             type="checkbox"
             checked={answers}
+            disabled={busy}
             onChange={(e) => setAnswers(e.target.checked)}
           />{' '}
           包含答案与解析
@@ -504,17 +649,18 @@ export function Paper({
             <strong>
               {i + 1}. {questionTitle(r)}
             </strong>
-            <button title="上移" disabled={!i} onClick={() => move(i, -1)}>
+            <button title="上移" disabled={busy || !i} onClick={() => move(i, -1)}>
               ↑
             </button>
             <button
               title="下移"
-              disabled={i === basket.length - 1}
+              disabled={busy || i === basket.length - 1}
               onClick={() => move(i, 1)}
             >
               ↓
             </button>
             <button
+              disabled={busy}
               onClick={() => setBasket(basket.filter((s) => s.path !== r.path))}
             >
               移除
@@ -525,11 +671,11 @@ export function Paper({
           <p>在「全局浏览」中点题目旁的「选入」，即可在这里调整顺序并排版。</p>
         )}
         <button
-          className="primary"
-          disabled={!basket.length || !title.trim()}
-          onClick={() => assemble(title, answers)}
+          className={hasDraft ? undefined : 'primary'}
+          disabled={!canAssemble}
+          onClick={() => openPaper(true)}
         >
-          生成试卷并预览
+          {hasDraft ? '生成新试卷' : '生成试卷并打开工作台'}
         </button>
       </section>
     </>

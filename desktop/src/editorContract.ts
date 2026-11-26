@@ -51,6 +51,7 @@ export interface EditorDocument {
   previewCurrent?: boolean
   chapter?: string
   inputKind?: 'image'
+  exam?: { paths: string[]; answers: boolean }
   originalPage?: number
   pdfPageCount?: number
   sourcePath?: string | null

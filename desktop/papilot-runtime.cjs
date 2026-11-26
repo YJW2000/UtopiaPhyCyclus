@@ -136,7 +136,7 @@ function stopChild(child) {
     const closed = () => complete();
     const grace = setTimeout(() => {
       terminateTree(child);
-      deadline = setTimeout(() => complete(new Error('无法确认 Papilot 工作台已关闭。')), SHUTDOWN_TIMEOUT);
+      deadline = setTimeout(() => complete(new Error('无法确认项目工作台已关闭。')), SHUTDOWN_TIMEOUT);
     }, SHUTDOWN_TIMEOUT);
     child.once('close', closed);
     if (!child.connected) { terminateTree(child); return; }
@@ -157,8 +157,8 @@ function waitUntilReady(child, signal, log) {
       if (error) reject(error);
       else resolve(origin);
     };
-    const timer = setTimeout(() => finish(new Error(`Papilot 启动超时。日志 ${log}`)), READY_TIMEOUT);
-    const exited = code => finish(new Error(`Papilot 工作台已退出（${code ?? '进程终止'}）。日志 ${log}`));
+    const timer = setTimeout(() => finish(new Error(`项目工作台启动超时。日志 ${log}`)), READY_TIMEOUT);
+    const exited = code => finish(new Error(`项目工作台已退出（${code ?? '进程终止'}）。日志 ${log}`));
     const failed = error => finish(error);
     const abort = () => finish(signal.reason);
     const receive = message => {
@@ -205,7 +205,7 @@ async function verifyIdentity(origin, instance, signal) {
     if (attempt < 3) await delay(200, undefined, { signal });
   }
   signal.throwIfAborted();
-  throw new Error('Papilot 未通过本地工作台身份校验。');
+  throw new Error('本地项目工作台未通过身份校验。');
 }
 
 async function readPort(file) {
@@ -290,7 +290,7 @@ function createPapilotRuntime({ resources, profile, resolveEnvironment = async (
       fs.stat(loader).catch(() => null), fs.stat(entry).catch(() => null), fs.stat(node).catch(() => null),
     ]);
     if (!bundle?.version || !dependency?.isFile() || !server?.isFile() || !executable?.isFile()) {
-      throw new Error('缺少 Papilot 工作台运行组件。请使用包含 Papilot 的题库安装包。');
+      throw new Error('缺少项目工作台运行组件。请使用包含项目工作台的题库安装包。');
     }
     const selected = await getEnvironment();
     record.environment = selected;
@@ -320,7 +320,7 @@ function createPapilotRuntime({ resources, profile, resolveEnvironment = async (
       await verifyIdentity(origin, instance, signal);
     }
     signal.throwIfAborted();
-    if (!childAlive(record.child)) throw new Error('Papilot 工作台在启动后退出。');
+    if (!childAlive(record.child)) throw new Error('项目工作台在启动后退出。');
     await saveJson(portFile, Number(new URL(origin).port)).catch(error => console.error('无法保存 Papilot 本地端口。', error.message));
     signal.throwIfAborted();
     record.info = { origin, data, version: bundle.version, commit: bundle.commit, root, desktop, wsl, environment: selected };
@@ -329,7 +329,7 @@ function createPapilotRuntime({ resources, profile, resolveEnvironment = async (
 
   function shutdown(record) {
     if (record.stopping) return record.stopping;
-    record.controller.abort(new Error('Papilot 工作台正在关闭。'));
+    record.controller.abort(new Error('项目工作台正在关闭。'));
     record.stopping = (async () => {
       await record.wslStarting?.catch(() => {});
       await record.wslBackend?.stop();
@@ -354,8 +354,8 @@ function createPapilotRuntime({ resources, profile, resolveEnvironment = async (
 
   function setEnvironment(value) {
     const selected = validatedEnvironment(value);
-    if (!selected) return Promise.reject(new Error('请选择有效的 Papilot 运行环境。'));
-    if (switching) return Promise.reject(new Error('正在切换 Papilot 运行环境。'));
+    if (!selected) return Promise.reject(new Error('请选择有效的项目工作台运行环境。'));
+    if (switching) return Promise.reject(new Error('正在切换项目工作台运行环境。'));
     switching = (async () => {
       const current = await getEnvironment();
       if (selected.kind === current.kind && selected.distribution === current.distribution) return;
@@ -365,7 +365,7 @@ function createPapilotRuntime({ resources, profile, resolveEnvironment = async (
       const previous = running;
       if (previous && !previous.stopping && (!previous.info ||
         !await (previous.wslBackend ? previous.wslBackend.idle().catch(() => false) : childIdle(previous.child)))) {
-        throw new Error('Papilot 工作台正在处理任务，请等待任务完成再切换运行环境。');
+        throw new Error('项目工作台正在处理任务，请等待任务完成再切换运行环境。');
       }
       if (previous) await shutdown(previous);
       await fs.mkdir(data, { recursive: true, mode: 0o700 });

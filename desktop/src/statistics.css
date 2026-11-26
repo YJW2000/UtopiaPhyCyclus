@@ -1,0 +1,132 @@
+.statistics-metrics,
+.statistics-distributions {
+  display: grid;
+  gap: 12px;
+  margin: 0 0 16px;
+}
+
+.statistics-metrics {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 210px), 1fr));
+}
+
+.statistics-distributions {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 1fr));
+  align-items: start;
+}
+
+.statistics-metrics .mc-card,
+.statistics-distributions .mc-card {
+  margin-bottom: 0;
+}
+
+.statistics-metrics dt,
+.statistics-chart-labels {
+  color: var(--mc-muted);
+  font-size: 13px;
+}
+
+.statistics-metrics dd {
+  margin: 4px 0 0;
+  font-size: clamp(19px, 2vw, 28px);
+  font-weight: 650;
+  overflow-wrap: anywhere;
+}
+
+.statistics-distribution,
+.statistics-hourly {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.statistics-distribution li {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(28px, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  margin-block: 8px;
+  overflow-wrap: anywhere;
+}
+
+.statistics-track {
+  background: var(--mc-accent-soft);
+  border-radius: 999px;
+  height: 6px;
+}
+
+.statistics-track > span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--mc-action-bg);
+}
+
+.statistics-activity p {
+  margin: 4px 0 10px;
+}
+
+.statistics-calendar {
+  display: grid;
+  grid-template-columns: repeat(53, minmax(0, 1fr));
+  grid-template-rows: repeat(7, auto);
+  gap: clamp(1px, 0.25vw, 3px);
+  max-width: 850px;
+}
+
+.statistics-calendar > span {
+  aspect-ratio: 1;
+  background: var(--mc-accent-soft);
+  border-radius: 2px;
+}
+
+.statistics-chart-labels {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 4px;
+  max-width: 850px;
+}
+
+.statistics-hour-select {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 20px;
+  font-weight: 650;
+}
+
+.statistics-hour-select select {
+  font-weight: normal;
+}
+
+.statistics-hourly {
+  display: grid;
+  grid-template-columns: repeat(24, minmax(0, 1fr));
+  align-items: end;
+  gap: clamp(2px, 0.5vw, 6px);
+  height: 82px;
+  max-width: 850px;
+  border-bottom: 1px solid var(--mc-border);
+}
+
+.statistics-hourly li {
+  position: relative;
+  display: flex;
+  align-items: flex-end;
+  height: 100%;
+}
+
+.statistics-hourly li > [aria-hidden] {
+  width: 100%;
+  background: var(--mc-action-bg);
+  border-radius: 3px 3px 0 0;
+}
+
+.statistics-sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}

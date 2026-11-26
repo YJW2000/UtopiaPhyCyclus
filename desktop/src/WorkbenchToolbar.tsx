@@ -34,6 +34,7 @@ export interface WorkbenchAction {
   id: string
   label: string
   icon?: WorkbenchIconName
+  text?: boolean
   disabled?: boolean
   pressed?: boolean
   onClick: () => void
@@ -158,7 +159,7 @@ export function WorkbenchToolbar({ view, onPdf, onChanges, changeCount, pdf, sta
     <PdfControls pdf={pdf} />
     <div className="wb-chrome-actions">
       <Action className="wb-chrome-compile" action={{ icon: 'play', ...compile }} />
-      {actions?.map(item => <Action key={item.id} action={item} />)}
+      {actions?.map(item => <Action key={item.id} action={item} text={item.text} />)}
     </div>
     <div className="wb-chrome-actions wb-chrome-task">
       <Action action={{ icon: 'panel', ...chat }} />

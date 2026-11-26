@@ -25,8 +25,23 @@ PYTHON_ARCHIVE = f'python-{PYTHON_VERSION}-embed-amd64.zip'
 PYTHON_URL = f'https://www.python.org/ftp/python/{PYTHON_VERSION}/{PYTHON_ARCHIVE}'
 PORTABLE = WORK / 'runtime-assets/windows-x64'
 LOCK = ROOT / 'requirements-lock.txt'
+DESKTOP_PACKAGES = ('jsonschema', 'pillow', 'pymupdf', 'python-dotenv', 'requests')
 DESKTOP = ROOT / 'desktop'
 INSTALLERS = ROOT / 'dist/desktop-preview/installer'
+CLASSIC_FILES = {
+    'services/batch_solution_ui.py', 'services/browse_preferences.py', 'services/browse_scroll.py',
+    'services/diagram_agent_ui.py', 'services/editor_layout.py', 'services/launcher.py',
+    'services/pdf_edit_ui.py', 'services/pdf_import_ui.py', 'services/portable_diagnostics.py',
+    'services/question_image_ui.py', 'services/question_solution_ui.py',
+    'services/sidebar_navigation.py', 'services/theme_settings_ui.py',
+    'static/browse_scroll.js', 'static/echarts-5.5.0.min.js', 'static/editor_height.js',
+    'static/favicon.png', 'static/image_recognition_paste.js', 'static/metadata_scroll.js',
+    'static/question_focus.js', 'static/sidebar_flyout.js',
+    'utils/charts.py', 'utils/component_theme.py', 'utils/sidebar_theme.py',
+    'utils/theme_overrides.py', 'utils/theme_system.py',
+}
+CLASSIC_TREES = ('utils/agent_voice/', 'utils/chart_assets/', 'utils/pdf_selection/',
+                 'utils/sortable_list/', 'utils/star_rating/')
 
 
 def remove_stage_tree(directory: Path) -> None:
@@ -42,12 +57,13 @@ def stage_source() -> None:
     remove_stage_tree(source)
     approved_trees = ('services/', 'utils/', 'static/', 'fig/', 'Test Paper Group/主题模板/', 'licenses/')
     approved_files = {
-        '.streamlit/config.toml', 'VERSION', 'README.md', 'LICENSE', 'NOTICE.md', 'COPYING-AGPL-3.0',
+        'VERSION', 'README.md', 'LICENSE', 'NOTICE.md', 'COPYING-AGPL-3.0',
         'THIRD_PARTY_NOTICES.md', 'env.example', 'main.tex', 'UtopiaPhyCyclus_book.cls', 'ocr_prompt.txt',
-        'utopia_phycyclus_app.py', 'desktop_legacy.py', 'tools/desktop_backend_entry.py',
+        'tools/desktop_backend_entry.py',
         'desktop/sample/力与运动.tex', 'desktop/sample/力与运动.pdf',
     }
-    files = approved_files | {file for file in selected_files() if file.startswith(approved_trees)}
+    files = approved_files | {file for file in selected_files() if file.startswith(approved_trees)
+                              and file not in CLASSIC_FILES and not file.startswith(CLASSIC_TREES)}
     files.update({'static/UtopiaPhyCyclus-desktop.ico'})
     for relative in sorted(files):
         original = ROOT / relative
@@ -76,7 +92,8 @@ def acquire_python(cache: Path) -> Path:
 
 def stage_python() -> None:
     target = STAGE / 'python'
-    fingerprint = hashlib.sha256(PYTHON_URL.encode() + LOCK.read_bytes() + b'no-pip-entrypoints').hexdigest()
+    fingerprint = hashlib.sha256(PYTHON_URL.encode() + LOCK.read_bytes() + '\n'.join(DESKTOP_PACKAGES).encode()
+                                 + b'no-pip-entrypoints').hexdigest()
     if (target / '.desktop-runtime-version').is_file() and (target / '.desktop-runtime-version').read_text() == fingerprint:
         return
     archive = acquire_python(WORK / 'desktop-downloads')
@@ -87,12 +104,13 @@ def stage_python() -> None:
         (payload / 'python312._pth').write_text('python312.zip\n.\nLib/site-packages\n../app-backend\nimport site\n', encoding='ascii')
         subprocess.run(
             [sys.executable, '-m', 'pip', '--disable-pip-version-check', 'install', '--only-binary=:all:',
-             '--no-deps', '--no-compile', '--target', str(payload / 'Lib/site-packages'), '-r', str(LOCK)],
+             '--no-compile', '--target', str(payload / 'Lib/site-packages'), '-c', str(LOCK), *DESKTOP_PACKAGES],
             check=True,
         )
         remove_stage_tree(payload / 'Lib/site-packages/bin')
         subprocess.run([str(payload / 'python.exe'), '-B', '-c',
-                        'import sys, sqlite3, streamlit, pymupdf; print(sys.version, streamlit.__version__, pymupdf.VersionFitz)'],
+                        'import sys, sqlite3, dotenv, jsonschema, PIL, pymupdf, requests; '
+                        'print(sys.version, pymupdf.VersionFitz)'],
                        check=True)
         (payload / '.desktop-runtime-version').write_text(fingerprint, encoding='ascii')
         remove_stage_tree(target)

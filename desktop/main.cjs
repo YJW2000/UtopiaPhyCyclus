@@ -3,7 +3,6 @@ const { execFileSync, spawn } = require('node:child_process');
 const { createHash, randomUUID } = require('node:crypto');
 const fs = require('node:fs');
 const fsp = require('node:fs/promises');
-const { createServer } = require('node:net');
 const path = require('node:path');
 const { createInterface } = require('node:readline');
 const { Readable } = require('node:stream');
@@ -29,18 +28,18 @@ const MIME_TYPES = new Map(Object.entries({
   '.webp': 'image/webp', '.bmp': 'image/bmp', '.gif': 'image/gif', '.tif': 'image/tiff', '.tiff': 'image/tiff',
 }));
 const METHODS = new Set([
-  'system.ping', 'library.demo', 'library.summary', 'library.search', 'library.assemble', 'library.imageInput',
+  'system.ping', 'library.demo', 'library.summary', 'library.statistics', 'library.search', 'library.assemble', 'library.imageInput',
   'system.check_latex',
   'workspace.fileInfo', 'workspace.saveFileInfo',
   'library.check', 'library.maintenanceStatus', 'context.chat', 'ui.load', 'ui.save', 'ui.providers',
   'workspace.list', 'workspace.open', 'workspace.resume', 'workspace.create',
   'workspace.save', 'workspace.import_pdf', 'workspace.reconstruct', 'workspace.compile', 'workspace.locate', 'workspace.chat',
+  'workspace.append_questions',
   'workspace.papilot_import',
   'workspace.fill_solution', 'workspace.fill_solution_batch', 'workspace.save_question',
   'workspace.apply', 'workspace.dismiss', 'workspace.undo', 'workspace.export', 'workspace.export_tex', 'workspace.export_pdf',
   'workspace.chapters', 'task.get', 'task.cancel',
 ]);
-const ROUTES = new Set(['entry', 'tex', 'pdf', 'browse', 'exam', 'tools', 'search', 'stats', 'intro', 'manual', 'tags']);
 
 protocol.registerSchemesAsPrivileged([
   { scheme: 'utopia', privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true } },
@@ -54,7 +53,6 @@ let window;
 let library;
 let state;
 let rpc;
-let legacy;
 let selection;
 let closing;
 let mayExit = false;
@@ -84,10 +82,6 @@ function isRenderer(url) {
   return typeof url === 'string' && url.startsWith(RENDERER_URL);
 }
 
-function isLegacy(url) {
-  return Boolean(legacy?.base && typeof url === 'string' && url.startsWith(legacy.base));
-}
-
 function pythonExecutable() {
   if (app.isPackaged) return path.join(RESOURCES, 'python', 'python.exe');
   const options = [path.join(SOURCE_ROOT, '.venv', 'Scripts', 'python.exe'), path.join(RESOURCES, 'python', 'python.exe')];
@@ -108,7 +102,6 @@ function startPython(mode, args, stdio, root = library, workspace = state) {
       PYTHONPATH: '',
       PYTHONHOME: '',
       PYTHONNOUSERSITE: '1',
-      STREAMLIT_SERVER_HEADLESS: 'true',
     },
   };
   return spawn(pythonExecutable(), ['-u', '-B', '-X', 'utf8', entry, mode, ...args], options);
@@ -228,65 +221,6 @@ function createRpc() {
   }
 }
 
-function reservePort() {
-  return new Promise((resolve, reject) => {
-    const server = createServer();
-    server.once('error', reject);
-    server.listen(0, '127.0.0.1', () => {
-      const { port } = server.address();
-      server.close(error => error ? reject(error) : resolve(port));
-    });
-  });
-}
-
-async function createLegacy(service) {
-  const port = await reservePort();
-  if (service !== legacy) throw new Error('题库连接已切换。');
-  const prefix = `desktop-${randomUUID()}`;
-  service.base = `http://127.0.0.1:${port}/${prefix}/`;
-  const child = startPython('legacy', [
-    '--server.address=127.0.0.1', `--server.port=${port}`, `--server.baseUrlPath=${prefix}`,
-    '--server.headless=true', '--server.fileWatcherType=none', '--server.runOnSave=false',
-    '--server.enableXsrfProtection=false', '--browser.gatherUsageStats=false',
-  ], ['ignore', 'ignore', 'pipe']);
-  service.child = child;
-  let startupError;
-  let diagnostics = '';
-  child.stderr.setEncoding('utf8').on('data', data => { diagnostics = (diagnostics + data).slice(-2000); });
-  child.once('error', error => { startupError = error; });
-  child.once('close', () => {
-    if (legacy === service) legacy = undefined;
-  });
-  const deadline = Date.now() + 45_000;
-  while (legacy === service && !startupError && Date.now() < deadline) {
-    try {
-      const response = await fetch(`${service.base}_stcore/health`, { signal: AbortSignal.timeout(750) });
-      if (response.ok && (await response.text()).trim() === 'ok') return service.base;
-    } catch { /* The server is still starting. */ }
-    await new Promise(resolve => setTimeout(resolve, 150));
-  }
-  stopPython(child);
-  throw new Error(`无法启动题库页面。${startupError?.message || diagnostics.trim()}`);
-}
-
-async function legacyUrl(route) {
-  if (!ROUTES.has(route)) throw new Error('题库页面不存在。');
-  if (!legacy) {
-    const service = {};
-    legacy = service;
-    service.ready = createLegacy(service).catch(error => {
-      if (legacy === service) legacy = undefined;
-      throw error;
-    });
-  }
-  const service = legacy;
-  const [base] = await Promise.all([service.ready, route === 'stats' ? maintenance.get(state) : undefined]);
-  if (legacy !== service) throw new Error('题库页面连接已关闭。');
-  const url = new URL(base);
-  url.searchParams.set('desktop_page', route);
-  return url.href;
-}
-
 function libraryRoot(directory) {
   if (typeof directory !== 'string' || !path.isAbsolute(directory)) return null;
   try {
@@ -313,8 +247,6 @@ async function setLibrary(root) {
     await fsp.rm(temporary, { force: true });
   }
   rpc?.stop('题库连接已切换。');
-  stopPython(legacy?.child);
-  legacy = undefined;
   if (library) scheduleMaintenance(library, state, 'shutdown');
   readers.clear();
   writers.clear();
@@ -496,7 +428,7 @@ async function serveRenderer(request) {
     "default-src 'self'", "script-src 'self' 'wasm-unsafe-eval'", "style-src 'self' 'unsafe-inline'",
     "img-src 'self' utopia-asset: blob: data:", "font-src 'self' blob: data:",
     "connect-src 'self' utopia-asset:", "worker-src 'self' blob:",
-    'frame-src http://127.0.0.1:*', "object-src 'none'", "base-uri 'none'", "form-action 'none'",
+    "frame-src 'none'", "object-src 'none'", "base-uri 'none'", "form-action 'none'",
   ].join('; '));
   headers.set('X-Content-Type-Options', 'nosniff');
   return new Response(response.body, { status: response.status, headers });
@@ -542,7 +474,7 @@ function registerIpc() {
   handle('call', async (method, params = {}) => {
     const activeLibrary = library;
     const normalized = await normalizeCall(method, params);
-    if (['library.summary', 'library.search', 'library.assemble', 'library.check', 'library.maintenanceStatus'].includes(method)) {
+    if (['library.summary', 'library.statistics', 'library.search', 'library.assemble', 'library.check', 'library.maintenanceStatus'].includes(method)) {
       await maintenance.get(state);
     }
     if (library !== activeLibrary) throw new Error('题库连接已切换。');
@@ -560,19 +492,21 @@ function registerIpc() {
     if (!rpc) rpc = createRpc();
     return rpc.send(method, normalized);
   });
-  handle('legacy', legacyUrl);
   handle('papilot-show', papilot.show);
   handle('papilot-bounds', papilot.resize);
   handle('papilot-hide', papilot.hide);
-  handle('papilot-open-question', async (id, revision) => {
+  let projectSelection = 0;
+  handle('papilot-open-question', async (id, revision, openManuscript) => {
+    const selection = ++projectSelection;
     const activeState = state;
     if (!rpc) rpc = createRpc();
     const { folder, document } = await rpc.send('workspace.papilot_export', { id, revision });
     if (activeState !== state) throw new Error('题库连接已切换。');
     const root = path.join(state, 'papilot-projects', id);
     const resolved = await fsp.realpath(folder);
-    if (!inside(root, resolved) || root === resolved) throw new Error('Papilot 题目项目位置无效。');
-    await papilot.requestFolder(resolved);
+    if (!inside(root, resolved) || root === resolved) throw new Error('题目项目位置无效。');
+    await papilot.requestFolder(resolved, openManuscript === true, () =>
+      selection === projectSelection && activeState === state);
     return document;
   });
   handle('asset', assetUrl);
@@ -659,9 +593,7 @@ function openWindow() {
   window.once('closed', () => { window = undefined; });
   window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   const restrictNavigation = event => {
-    const permitted = event.isMainFrame ? isRenderer(event.url)
-      : isLegacy(event.url) || event.url === 'about:blank' || event.url === 'about:srcdoc';
-    if (!permitted) event.preventDefault();
+    if (!event.isMainFrame || !isRenderer(event.url)) event.preventDefault();
   };
   window.webContents.on('will-frame-navigate', restrictNavigation);
   window.webContents.on('will-redirect', restrictNavigation);
@@ -693,7 +625,6 @@ if (app.requestSingleInstanceLock()) {
       // will-quit fires after the windows close, for both the title bar and app.quit().
       if (selection) await selection.catch(() => {});
       rpc?.stop('桌面应用正在关闭。');
-      stopPython(legacy?.child);
       if (library) scheduleMaintenance(library, state, 'shutdown');
       await Promise.all([...maintenance.values(), papilot.close().catch(error => console.error(error))]);
     })().finally(() => {
@@ -706,14 +637,8 @@ if (app.requestSingleInstanceLock()) {
     await connectLibrary();
     protocol.handle('utopia', serveRenderer);
     protocol.handle('utopia-asset', serveAsset);
-    session.defaultSession.setPermissionCheckHandler((_contents, permission, origin, details) =>
-      Boolean(legacy?.base?.startsWith(`${origin}/`)) &&
-      (permission === 'clipboard-read' || (permission === 'media' && details.mediaType === 'audio')));
-    session.defaultSession.setPermissionRequestHandler((_contents, permission, callback, details) => {
-      const legacyOrigin = isLegacy(details.requestingUrl || '');
-      callback(legacyOrigin && (permission === 'clipboard-read' ||
-        (permission === 'media' && details.mediaTypes?.length === 1 && details.mediaTypes[0] === 'audio')));
-    });
+    session.defaultSession.setPermissionCheckHandler(() => false);
+    session.defaultSession.setPermissionRequestHandler((_contents, _permission, done) => done(false));
     registerIpc();
     papilot.register();
     if (app.isPackaged && !process.env.UTOPIA_DESKTOP_PROFILE) app.setAsDefaultProtocolClient('utopia-papilot');

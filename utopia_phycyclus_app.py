@@ -59,7 +59,7 @@ def _question_key(prefix: str, fpath: str) -> str:
     return hashlib.md5(f"{prefix}:{fpath}".encode("utf-8", errors="ignore")).hexdigest()[:12]
 
 
-APP_ROOT = os.getenv("UTOPIA_LEGACY_ROOT") or os.path.dirname(os.path.abspath(__file__))
+APP_ROOT = os.path.dirname(os.path.abspath(__file__))
 ensure_log_csv(os.getenv("UTOPIA_DESKTOP_LIBRARY") or APP_ROOT)
 
 from utils.core_config import *
@@ -7130,19 +7130,27 @@ def sync_exam_blocks_to_selected_order(selected_paths):
         st.session_state["exam_blocks"] = [
             {"id": str(uuid.uuid4()), "type": "section", "title": NORTHEAST_PHYSICS_CHOICE_SECTION},
             *ordered_questions[:10],
-            {"id": str(uuid.uuid4()), "type": "section", "title": NORTHEAST_PHYSICS_NON_CHOICE_SECTION},
+            {"id": str(uuid.uuid4()), "type": "section", "title": NORTHEAST_PHYSICS_NON_CHOICE_SECTION,
+             "auto_exam_boundary": True},
             *ordered_questions[10:],
         ]
         return
 
     ordered_iter = iter(ordered_questions)
     synced_blocks = []
+    placed_questions = 0
     for block in blocks:
         if block.get("type") == "question":
             next_block = next(ordered_iter, None)
             if next_block is not None:
                 synced_blocks.append(next_block)
+                placed_questions += 1
         elif block.get("type") in ("chapter", "section", "subsection"):
+            if block.get("auto_exam_boundary") and "试卷类" in st.session_state.get("exam_theme", ""):
+                from itertools import islice
+                extra_choices = list(islice(ordered_iter, max(0, 10 - placed_questions)))
+                synced_blocks.extend(extra_choices)
+                placed_questions += len(extra_choices)
             synced_blocks.append(block)
     synced_blocks.extend(list(ordered_iter))
     st.session_state["exam_blocks"] = synced_blocks
@@ -9032,6 +9040,10 @@ def page_exam_paper_generation():
     if "ai_exam_modified" not in st.session_state:
         st.session_state["ai_exam_modified"] = False
         
+    if st.session_state["exam_mode_stage"] == "document":
+        render_exam_document_workspace()
+        return
+
     # 如果在排版阶段，跳过选题页面渲染
     if st.session_state["exam_mode_stage"] == "typesetting":
         render_typesetting_workspace()
@@ -9392,7 +9404,8 @@ def _set_generated_document_title(content: str, title: str) -> str:
     return content
 
 
-def _write_exam_bundle(export_filename, export_dir, pre_content, generated_body, post_content, question_sources, theme_name):
+def _write_exam_bundle(export_filename, export_dir, pre_content, generated_body, post_content, question_sources,
+                       theme_name, *, edited_source=None):
     """写出题目、答案、题目（含答案）三份 LaTeX 文件。"""
     export_filename = _clean_exam_export_filename(export_filename)
     final_export_dir = os.path.join(export_dir, export_filename)
@@ -9405,9 +9418,11 @@ def _write_exam_bundle(export_filename, export_dir, pre_content, generated_body,
     }
     output_files = {}
     for variant in EXAM_OUTPUT_VARIANTS:
-        variant_title = f"{export_filename}（{variant}）"
         variant_content = pre_content + bodies[variant] + "\n\n" + post_content
-        variant_content = _set_generated_document_title(variant_content, variant_title)
+        if edited_source is None:
+            variant_content = _set_generated_document_title(variant_content, f"{export_filename}（{variant}）")
+        elif variant == "题目（含答案）":
+            variant_content = edited_source
         from pathlib import Path
         variant_content = copy_graphics(variant_content, Path(final_export_dir) / 'images', APP_ROOT)
         output_file = _exam_output_tex_path(export_filename, export_dir, variant)
@@ -9658,10 +9673,8 @@ def _replace_choices_with_items(text: str) -> str:
             idx += len(r'\choice')
     return text
 
-def generate_exam_paper(export_filename, export_dir, blocks, theme_name):
+def _exam_document_parts(export_filename, blocks, theme_name):
     export_filename = _clean_exam_export_filename(export_filename)
-    # 确保导出目录存在
-    ensure_dir(export_dir)
     
     # 读取模板内容
     template_path = os.path.join(BASE_DIR, "Test Paper Group", "主题模板", theme_name, f"{theme_name}.tex")
@@ -9690,16 +9703,12 @@ def generate_exam_paper(export_filename, export_dir, blocks, theme_name):
         elif blk["type"] == "question":
             q_path = blk["path"]
             if os.path.exists(q_path):
-                with open(q_path, "r", encoding="utf-8") as qf:
-                    q_content = qf.read()
-                    # Normalize legacy question-local paths before combining questions.
-                    from utils.image_assets import package_question_images
-                    q_content = package_question_images(q_content, os.path.basename(q_path), os.path.dirname(q_path), APP_ROOT)
-                    question_sources.append(q_content)
-                    if theme_name == "讲义类模板":
-                        body_lines.append("\\begin{lanbox}\n" + q_content + "\n\\end{lanbox}")
-                    else:
-                        body_lines.append(q_content)
+                q_content = _exam_question_source(q_path)
+                question_sources.append(q_content)
+                if theme_name == "讲义类模板":
+                    body_lines.append("\\begin{lanbox}\n" + q_content + "\n\\end{lanbox}")
+                else:
+                    body_lines.append(q_content)
                         
     # 如果是试卷类模板，需要对题目格式和分数进行二次加工
     if theme_name == "试卷类模板":
@@ -9769,12 +9778,7 @@ def generate_exam_paper(export_filename, export_dir, blocks, theme_name):
     generated_body = "\n\n".join(body_lines)
     
     # 替换标题（如果有的话）
-    import re
-    if theme_name == "试卷类模板":
-        # 试卷类模板使用的是 \title{...}
-        template_content = re.sub(r'\\title\{.*?\}', f'\\\\title{{{export_filename}}}', template_content)
-    elif r'\renewcommand{\mytitle}' in template_content:
-        template_content = re.sub(r'\\renewcommand\{\\mytitle\}\{.*?\}', f'\\\\renewcommand{{\\\\mytitle}}{{{export_filename}}}', template_content)
+    template_content = _set_generated_document_title(template_content, export_filename)
     
     # 查找 \begin{document} 之后的内容
     doc_idx = template_content.find(r'\begin{document}')
@@ -9796,17 +9800,236 @@ def generate_exam_paper(export_filename, export_dir, blocks, theme_name):
                 # 尾部内容保留（\end{document}及以后）
                 post_content = template_content[end_idx:]
                 
-                return _write_exam_bundle(
-                    export_filename,
-                    export_dir,
-                    pre_content,
-                    generated_body,
-                    post_content,
-                    question_sources,
-                    theme_name,
-                )
+                return pre_content, generated_body, post_content, question_sources
             
     return None
+
+
+def _exam_question_source(path):
+    from utils.image_assets import graphics_references, resolve_image
+
+    source = read_tex(path)
+    for ref in reversed(graphics_references(source)):
+        try:
+            image = resolve_image(ref["path"], APP_ROOT, os.path.dirname(path), source)
+        except (FileNotFoundError, ValueError):
+            continue  # Leave unresolved references in the editable source for repair.
+        source = source[:ref["path_start"]] + image.as_posix() + source[ref["path_end"]:]
+    return source
+
+
+def generate_exam_paper(export_filename, export_dir, blocks, theme_name):
+    parts = _exam_document_parts(export_filename, blocks, theme_name)
+    if parts:
+        return _write_exam_bundle(export_filename, export_dir, *parts, theme_name)
+    return None
+
+
+_EXAM_BODY_MARKER = "% ===== 组卷正文 =====\n"
+_EXAM_THEME_NAMES = ("练习类模板", "讲义类模板", "试卷类模板")
+
+
+def _merge_exam_source(base, edited, generated):
+    """Combine compatible source edits and structure changes using the last generated source."""
+    if edited == base:
+        return generated
+    if generated == base or generated == edited:
+        return edited
+
+    from difflib import SequenceMatcher
+
+    lines = base.splitlines(keepends=True)
+    changes = []
+    for source in (edited, generated):
+        replacement = source.splitlines(keepends=True)
+        for tag, start, end, first, last in SequenceMatcher(None, lines, replacement, autojunk=False).get_opcodes():
+            if tag != "equal":
+                changes.append((start, end, "".join(replacement[first:last])))
+
+    merged = []
+    cursor = 0
+    for start, end, replacement in sorted(dict.fromkeys(changes), key=lambda change: change[:2]):
+        if start < cursor:
+            return None
+        merged.extend(lines[cursor:start])
+        merged.append(replacement)
+        cursor = end
+    merged.extend(lines[cursor:])
+    return "".join(merged)
+
+
+def _prepare_exam_document_draft(export_filename, blocks, theme_name):
+    parts = _exam_document_parts(export_filename, blocks, theme_name)
+    if not parts:
+        raise ValueError("找不到可用的组卷模板。")
+    pre_content, body, post_content, _ = parts
+    generated = pre_content + _EXAM_BODY_MARKER + body + "\n\n" + post_content
+    drafts = st.session_state.setdefault("exam_document_drafts", {})
+    if theme_name not in drafts:
+        drafts[theme_name] = {"source": generated, "base": generated, "compile_on_open": True}
+    draft = drafts[theme_name]
+    merged = _merge_exam_source(draft["base"], draft["source"], generated)
+    if merged is None:
+        draft["conflict"] = generated
+    else:
+        draft["compile_on_open"] = draft.get("compile_on_open", False) or merged != draft["source"]
+        draft.update(source=merged, base=generated)
+        draft.pop("conflict", None)
+    return draft
+
+
+def _export_edited_exam(export_filename, export_dir, source, theme_name):
+    # Ignore comments when locating the document and its numbered questions.
+    masked = re.sub(r"(?m)(?<!\\)%[^\r\n]*", lambda match: " " * len(match[0]), source)
+    start = masked.find(r"\begin{document}")
+    end = masked.rfind(r"\end{document}")
+    if start < 0 or end <= start:
+        raise ValueError("整卷源码需要保留 \\begin{document} 和 \\end{document}。")
+    marker = source.find(_EXAM_BODY_MARKER, start, end)
+    body_start = marker + len(_EXAM_BODY_MARKER) if marker >= 0 else start + len(r"\begin{document}")
+    positions = [
+        match.start() for match in re.finditer(r"\\begin\{(?:problem|question)\}", masked[body_start:end])
+    ]
+    positions.append(end - body_start)
+    body = source[body_start:end]
+    questions = [body[left:right] for left, right in zip(positions, positions[1:])]
+    return _write_exam_bundle(export_filename, export_dir, source[:body_start], body, source[end:], questions,
+                              theme_name, edited_source=source)
+
+
+def _render_exam_export(export_filename, export_dir, blocks, theme_name, *, source=None):
+    if theme_name not in _EXAM_THEME_NAMES:
+        st.warning("暂不支持该模板生成试卷。")
+        return
+    export_filename = _clean_exam_export_filename(export_filename)
+    is_overwrite = any(os.path.exists(_exam_output_tex_path(export_filename, export_dir, variant))
+                       for variant in EXAM_OUTPUT_VARIANTS)
+    with st.spinner("正在导出试卷并编译 PDF…"):
+        try:
+            if source is None:
+                outputs = generate_exam_paper(export_filename, export_dir, blocks, theme_name)
+            else:
+                outputs = _export_edited_exam(export_filename, export_dir, source, theme_name)
+        except (OSError, ValueError) as exc:
+            st.error(f"导出失败。{exc}")
+            return
+        if not outputs:
+            st.error("生成失败，请检查模板文件是否存在或格式是否正确。")
+            return
+
+        st.success("已导出题目、答案和题目（含答案）三份 LaTeX 文件。")
+        for variant, path in outputs.items():
+            result = _compile_exam_pdf(path)
+            if result.get("ok"):
+                st.success(f"{variant} PDF · {result['pdf_path']}")
+            else:
+                st.warning(f"{variant} · {result.get('error', 'PDF 编译失败。')}")
+                if result.get("log"):
+                    with st.expander(f"查看「{variant}」的 XeLaTeX 编译日志"):
+                        st.code(result["log"])
+
+    if is_overwrite:
+        st.info("已覆盖同名试卷，题目组卷引用次数保持原记录。")
+    else:
+        usage = _increment_exam_usage_counts(_question_paths_from_exam_blocks(blocks))
+        if usage.get("updated"):
+            st.success(f"已更新 {usage['updated']} 道题目的组卷引用次数。")
+        if usage.get("skipped"):
+            st.caption("部分题目缺少完整元数据，未更新组卷引用次数 · " + "、".join(usage["skipped"][:5]))
+
+
+def _return_to_exam_selection():
+    st.session_state["exam_selected_qs"] = [block["path"] for block in st.session_state["exam_blocks"]
+                                            if block["type"] == "question"]
+    st.session_state["exam_mode_stage"] = "selection"
+
+
+def render_exam_document_workspace():
+    from services.pdf_edit_ui import pdf_revision, render_pdf_edit
+
+    theme_name = st.session_state["exam_theme"]
+    export_filename = st.session_state["exam_export_filename"]
+    export_dir = st.session_state["exam_export_dir"]
+    draft = st.session_state["exam_document_drafts"][theme_name]
+    source_key = "exam_document_source"
+    if source_key not in st.session_state or draft.pop("sync_source", False):
+        st.session_state[source_key] = draft["source"]
+
+    st.subheader("整卷工作台")
+    structure, add, compile_button, export = st.columns(4)
+
+    def return_to_structure():
+        draft["source"] = st.session_state[source_key]
+        st.session_state["exam_mode_stage"] = "typesetting"
+
+    def select_more_questions():
+        draft["source"] = st.session_state[source_key]
+        _return_to_exam_selection()
+
+    structure.button("返回试卷结构", use_container_width=True, on_click=return_to_structure)
+    add.button("继续选题", use_container_width=True, on_click=select_more_questions)
+    compile_clicked = compile_button.button("编译预览", use_container_width=True, type="primary")
+    export_clicked = export.button("导出试卷", use_container_width=True, disabled=bool(draft.get("conflict")))
+
+    if draft.get("conflict"):
+        st.warning("试卷结构与您修改的源码有重叠。已保留当前源码，请参考结构稿手动合并。")
+        with st.expander("查看当前结构生成的源码"):
+            st.code(draft["conflict"], language="latex")
+        if st.button("标记为已合并"):
+            draft["source"] = st.session_state[source_key]
+            draft["base"] = draft.pop("conflict")
+            st.rerun()
+
+    source_column, pdf_column = st.columns(2)
+    source = source_column.text_area("整卷 LaTeX 源码", key=source_key, height=640)
+    draft["source"] = source
+    source_column.download_button("下载当前源码", source.encode("utf-8"), export_filename + ".tex",
+                                  mime="text/plain", key="exam_document_download_tex")
+
+    def revision_of(text):
+        return pdf_revision(text, BASE_DIR, {}, "xelatex", BASE_DIR, "exam")
+
+    def compile_source(text):
+        return compile_tex_preview(text, BASE_DIR, {}, resource_dir=BASE_DIR, timeout=180)
+
+    def accept_source(text, result):
+        draft.update(source=text, sync_source=True, preview=result, preview_revision=revision_of(text),
+                     compile_result=result)
+        st.rerun()
+
+    revision = revision_of(source)
+    compile_on_open = draft.pop("compile_on_open", False)
+    if compile_clicked or compile_on_open:
+        with st.spinner("正在编译整卷…"):
+            result = compile_source(source)
+        draft["compile_result"] = result
+        if result.get("ok"):
+            draft.update(preview=result, preview_revision=revision)
+
+    with pdf_column:
+        st.markdown("##### 整卷 PDF 预览")
+        result = draft.get("compile_result", {})
+        if result and not result.get("ok"):
+            st.error(result.get("error", "PDF 编译失败。"))
+        preview = draft.get("preview")
+        if preview:
+            stale = draft["preview_revision"] != revision or not result.get("ok")
+            if stale:
+                st.warning("下方显示上次成功编译的 PDF。点击「编译预览」更新。")
+            st.download_button("下载预览 PDF", preview["pdf"], export_filename + ".pdf",
+                               mime="application/pdf", key="exam_document_download_pdf")
+            try:
+                render_pdf_edit(preview, source=source, revision=revision, key="exam_document_pdf_edit",
+                                compile_candidate=compile_source, on_accept=accept_source, disabled=stale)
+            except (ValueError, RuntimeError, OSError) as exc:
+                st.error(f"PDF 页面显示失败，可下载 PDF 查看。{exc}")
+        if result.get("log"):
+            with st.expander("编译日志", expanded=not result.get("ok")):
+                st.code(result["log"], language="text")
+
+    if export_clicked:
+        _render_exam_export(export_filename, export_dir, st.session_state["exam_blocks"], theme_name, source=source)
+
 
 def render_typesetting_workspace():
     st.subheader("🖨️ 试卷排版工作台")
@@ -9823,56 +10046,32 @@ def render_typesetting_workspace():
     
     default_filename = _next_exam_export_filename(export_dir, theme_name, today=today)
     
-    # 返回按钮与生成按钮栏
-    c_back, c_name, c_gen = st.columns([1, 1.5, 1])
+    # 返回、打开整卷工作台及快速导出。
+    c_back, c_name, c_preview, c_gen = st.columns([1, 1.5, 1, 1])
     with c_back:
-        def go_back_to_selection():
-            st.session_state["exam_mode_stage"] = "selection"
-        st.button("⬅️ 返回继续选题", on_click=go_back_to_selection, use_container_width=True)
+        st.button("⬅️ 返回继续选题", on_click=_return_to_exam_selection, use_container_width=True)
     with c_name:
-        export_filename = st.text_input("输出文件名", value=default_filename, label_visibility="collapsed")
-    with c_gen:
-        if st.button("🖨️ 确认生成试卷", type="primary", use_container_width=True):
-            if theme_name in ("练习类模板", "讲义类模板", "试卷类模板"):
-                export_filename = _clean_exam_export_filename(export_filename)
-                expected_paths = [
-                    _exam_output_tex_path(export_filename, export_dir, variant)
-                    for variant in EXAM_OUTPUT_VARIANTS
-                ]
-                is_overwrite = any(os.path.exists(path) for path in expected_paths)
-                output_files = generate_exam_paper(export_filename, export_dir, st.session_state["exam_blocks"], theme_name)
-                if output_files:
-                    st.success("三份 LaTeX 文件已生成：题目、答案、题目（含答案）。")
-                    compile_failures = []
-                    for variant in EXAM_OUTPUT_VARIANTS:
-                        output_path = output_files.get(variant)
-                        if not output_path:
-                            compile_failures.append((variant, {"error": "未生成 LaTeX 文件。", "log": ""}))
-                            continue
-                        compile_result = _compile_exam_pdf(output_path)
-                        if compile_result.get("ok"):
-                            st.success(f"{variant} PDF：{compile_result.get('pdf_path')}")
-                        else:
-                            compile_failures.append((variant, compile_result))
-
-                    for variant, compile_result in compile_failures:
-                        st.warning(f"{variant}：{compile_result.get('error', 'PDF 编译失败。')}")
-                        if compile_result.get("log"):
-                            with st.expander(f"查看“{variant}”的 xelatex 编译日志"):
-                                st.code(compile_result["log"])
-
-                    if is_overwrite:
-                        st.info("检测到本次为覆盖同名试卷，未重复增加题目组卷引用次数。")
-                    else:
-                        usage_result = _increment_exam_usage_counts(_question_paths_from_exam_blocks(st.session_state["exam_blocks"]))
-                        if usage_result.get("updated", 0):
-                            st.success(f"已更新 {usage_result['updated']} 道题目的组卷引用次数。")
-                        if usage_result.get("skipped"):
-                            st.caption("部分题目缺少完整元数据，未更新引用次数：" + "、".join(usage_result["skipped"][:5]))
-                else:
-                    st.error("生成失败，请检查模板文件是否存在或格式是否正确！")
-            else:
-                st.warning("暂不支持其他模板的生成，敬请期待！")
+        names = st.session_state.setdefault("exam_export_names", {})
+        export_filename = st.text_input("输出文件名", value=names.get(theme_name, default_filename),
+                                        label_visibility="collapsed", key=f"exam_export_name_{theme_name}")
+        names[theme_name] = export_filename
+    blocks = st.session_state["exam_blocks"]
+    has_questions = any(block["type"] == "question" for block in blocks)
+    open_workspace = c_preview.button("打开工作台", type="primary", use_container_width=True,
+                                      disabled=not has_questions)
+    quick_export = c_gen.button("确认生成试卷", use_container_width=True, disabled=not has_questions)
+    if open_workspace or quick_export:
+        try:
+            draft = None
+            if open_workspace or theme_name in st.session_state.get("exam_document_drafts", {}):
+                draft = _prepare_exam_document_draft(export_filename, blocks, theme_name)
+            if open_workspace or (draft and draft.get("conflict")):
+                st.session_state.update(exam_mode_stage="document", exam_export_dir=export_dir,
+                                        exam_export_filename=_clean_exam_export_filename(export_filename))
+                st.rerun()
+            _render_exam_export(export_filename, export_dir, blocks, theme_name, source=draft["source"] if draft else None)
+        except (OSError, ValueError) as exc:
+            st.error(str(exc))
     
     st.markdown("---")
     
@@ -10110,10 +10309,14 @@ def render_typesetting_workspace():
             c_up, c_down, c_del = st.columns(3)
             with c_up:
                 if st.button("⬆️", key=f"blk_up_{blk['id']}", disabled=(i==0), help="上移", use_container_width=True):
+                    blocks[i].pop("auto_exam_boundary", None)
+                    blocks[i-1].pop("auto_exam_boundary", None)
                     blocks[i], blocks[i-1] = blocks[i-1], blocks[i]
                     st.rerun()
             with c_down:
                 if st.button("⬇️", key=f"blk_down_{blk['id']}", disabled=(i==len(blocks)-1), help="下移", use_container_width=True):
+                    blocks[i].pop("auto_exam_boundary", None)
+                    blocks[i+1].pop("auto_exam_boundary", None)
                     blocks[i], blocks[i+1] = blocks[i+1], blocks[i]
                     st.rerun()
             with c_del:

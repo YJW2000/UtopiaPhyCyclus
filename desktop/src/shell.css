@@ -219,6 +219,42 @@ summary:focus-visible {
   color: var(--mc-muted);
   margin: 0;
 }
+.browse-project-dock {
+  flex-direction: column;
+}
+.editor-mount > .browse-project-controls {
+  flex: 0 0 auto;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--mc-border);
+  background: var(--mc-surface);
+}
+.browse-project-controls button {
+  padding: 4px 10px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--mc-muted);
+  font: inherit;
+}
+.browse-project-controls button[aria-pressed='true'] {
+  border-color: var(--mc-border);
+  background: var(--mc-accent-soft);
+  color: var(--mc-text);
+  font-weight: 600;
+}
+.browse-project-controls button:disabled {
+  opacity: 0.5;
+}
+.browse-project-loading {
+  display: grid;
+  place-items: center;
+  margin: 0;
+  padding: 16px;
+  color: var(--mc-muted);
+}
 .workspace-with-dock .page-content {
   padding-inline: clamp(12px, 1.6vw, 24px);
 }
@@ -233,15 +269,11 @@ summary:focus-visible {
   margin: 0;
   overflow-wrap: anywhere;
 }
-.workspace-body:has(> .pane-divider[data-dragging]) iframe {
-  pointer-events: none;
-}
 .editor-mount > * {
   flex: 1;
   min-width: 0;
 }
 .top-strip,
-.advanced-bar,
 .context-chat header {
   min-height: 50px;
   display: flex;
@@ -252,8 +284,7 @@ summary:focus-visible {
   background: var(--mc-surface);
   gap: 8px;
 }
-.top-strip span,
-.advanced-bar {
+.top-strip span {
   font-size: 13px;
   color: var(--mc-muted);
 }
@@ -296,7 +327,6 @@ summary:focus-visible {
 .filters,
 .pager,
 .paper-row,
-.advanced-bar,
 .top-strip > div {
   display: flex;
   align-items: center;
@@ -325,7 +355,6 @@ summary:focus-visible {
 .page-content button,
 .top-strip button,
 .context-chat button,
-.advanced-bar button,
 .error-strip button {
   padding: 7px 13px;
   border: 1px solid var(--mc-border);
@@ -346,15 +375,11 @@ summary:focus-visible {
   border-color: transparent;
   font-weight: 600;
 }
-.page-content .text-action,
-.page-content .advanced-link {
+.page-content .text-action {
   border: none;
   background: transparent;
   color: var(--mc-action-bg);
   padding: 6px 0;
-}
-.advanced-link {
-  margin-top: 6px;
 }
 .question-list article,
 .paper-row,
@@ -781,20 +806,6 @@ summary:focus-visible {
 }
 .error-strip {
   color: var(--mc-text);
-}
-.embedded {
-  display: flex;
-  flex-direction: column;
-}
-.embedded iframe {
-  flex: 1;
-  border: none;
-  width: 100%;
-  background: var(--mc-surface);
-}
-.advanced-bar {
-  flex: none;
-  min-height: 40px;
 }
 .page-content pre {
   overflow: auto;

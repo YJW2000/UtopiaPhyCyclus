@@ -78,12 +78,10 @@ function Lesson({
 }
 
 export default function ArchitectureGuide({
-  navigate, demo, openClassic, pendingClassicPage,
+  navigate, demo,
 }: {
   navigate: (page: GuidePage) => void
   demo: () => void
-  openClassic: (page: 'intro' | 'manual') => void
-  pendingClassicPage: 'intro' | 'manual' | null
 }) {
   const lessons = useRef(new Map<string, HTMLDetailsElement>())
   const screenshotDialog = useRef<HTMLDialogElement>(null)
@@ -130,10 +128,12 @@ export default function ArchitectureGuide({
       </section>
       <section className="mc-card guide-section" aria-labelledby="guide-manual">
         <h2 id="guide-manual">规范指南</h2>
-        <p>查阅题库文件命名、LaTeX 源码结构、选项与插图的书写规范。</p>
-        <button disabled={pendingClassicPage !== null} onClick={() => openClassic('manual')}>
-          {pendingClassicPage === 'manual' ? '正在打开…' : '阅读完整规范指南 ↗'}
-        </button>
+        <ul>
+          <li>题目按主知识板块和年份保存在 <code>chapters</code> 下，文件名为「年份-试卷类别-试卷名称-题号-知识板块.tex」。多个板块用中文逗号分隔。</li>
+          <li>每题用一个 <code>problem</code> 环境，五个参数与文件名对应。选择题用 <code>choices</code> 和 <code>{String.raw`\choice{{选项内容}}`}</code>，答案和解析分别放入 <code>answer</code> 和 <code>solutions</code> 环境。</li>
+          <li>用 <code>tikzpicture</code> 绘制示意图。照片等外部图片放入该题的「相关图」目录，用 <code>{String.raw`\includegraphics`}</code> 在对应位置引用。</li>
+        </ul>
+        <button onClick={() => jumpTo('tex-intake')}>查看 TeX 示例</button>
       </section>
       <nav className="mc-card guide-contents" aria-label="教程目录">
         <p>选择教程跳到操作步骤。点击截图可放大查看。</p>
@@ -165,9 +165,6 @@ export default function ArchitectureGuide({
           ))}
         </section>
       ))}
-      <button className="advanced-link" disabled={pendingClassicPage !== null} onClick={() => openClassic('intro')}>
-        {pendingClassicPage === 'intro' ? '正在打开…' : '查看经典版架构与教程 ↗'}
-      </button>
       <dialog
         ref={screenshotDialog}
         className="guide-screenshot-dialog"
