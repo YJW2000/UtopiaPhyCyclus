@@ -481,6 +481,7 @@ async def run(args, root):
             assert recognized['recognitionAgent'] == 'codex'
             if args.model:
                 assert recognized['recognitionModel'] == EXPLICIT_MODEL
+                print('PASS the selected model reached the Codex CLI and was saved on the draft', flush=True)
             await page.until("document.querySelector('.papilot-workspace')?.getAttribute('aria-busy') === 'false'", seconds=135)
             embedded_url = await wait_for(process, lambda: desktop_target(port, embedded=True), seconds=45)
             async with websockets.connect(embedded_url, ping_interval=None) as project_socket:
@@ -499,7 +500,7 @@ async def run(args, root):
                 await point_note(project, active['id'])
             print('PASS first paste automatically opens the recognized document' if args.direct else
                   'PASS recognition failure retains the screenshot and retries the same draft', flush=True)
-            print('PASS automatic vision Agent fallback preserves source crops, compiles LaTeX, and opens the PDF in the embedded revision view', flush=True)
+            print('PASS image recognition preserves source crops, compiles LaTeX, and opens the PDF in the embedded revision view', flush=True)
             print('PASS the revision PDF contains the original cropped pixels and saves an inline note', flush=True)
 
             await page.click('LaTeX 源码')
