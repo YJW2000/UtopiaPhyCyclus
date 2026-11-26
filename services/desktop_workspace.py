@@ -15,7 +15,7 @@ from uuid import uuid4
 
 from services.desktop_jobs import DesktopJobs
 from services.desktop_library import exam_question_files, exam_question_source
-from services.desktop_model import selected_provider
+from services.desktop_model import requested_model, selected_model, selected_provider
 from services.desktop_revision import (
     changed_ranges, chat_revision, decode_attachments, offsets, rebase_selections, utf16_length,
 )
@@ -484,8 +484,9 @@ class DesktopWorkspace:
         _file(params['path'], ('.pdf',))
         provider = self._agent_provider(params)
         require_image_support(provider)
+        model = requested_model(params.get('model'), provider)
         created = self.create({'path': params['path'], 'title': params.get('title')})
-        return self.reconstruct({**params, 'id': created['id'], 'agent': provider})
+        return self.reconstruct({**params, 'id': created['id'], 'agent': provider, 'model': model})
 
     def _linked_bank_file(self, document, relative_path):
         if not isinstance(relative_path, str) or not relative_path:
@@ -527,12 +528,14 @@ class DesktopWorkspace:
 
     def reconstruct(self, params):
         provider = self._agent_provider(params)
+        model = requested_model(params.get('model'), provider)
         with self.lock:
             document = self._read(params.get('id'))
             if not document.get('pdfPath'):
                 raise ValueError('当前草稿还没有原卷 PDF。')
         require_image_support(provider)
-        return self.jobs.submit(lambda job: self._reconstruct(document, params, job), document['id'], provider=provider)
+        return self.jobs.submit(lambda job: self._reconstruct(document, params, job), document['id'],
+                                provider=provider, model=model)
 
     def _reconstruct(self, document, params, job):
         original = Path(document['pdfPath']).read_bytes()
@@ -565,6 +568,11 @@ class DesktopWorkspace:
                 latest['originalPage'] = original_page
                 if latest.get('inputKind') == 'image':
                     latest['recognitionAgent'] = selected_provider()
+                    model = selected_model()
+                    if model:
+                        latest['recognitionModel'] = model
+                    else:
+                        latest.pop('recognitionModel', None)
                 self._write(latest)
                 return self._public(latest)
 
@@ -744,6 +752,7 @@ class DesktopWorkspace:
             raise ValueError('对话范围无效。')
         attachments, images = decode_attachments(params.get('attachments', []))
         provider = self._agent_provider(params)
+        model = requested_model(params.get('model'), provider)
         with self.lock:
             document = self._read(params.get('id'))
             self._check_revision(document, params)
@@ -817,7 +826,7 @@ class DesktopWorkspace:
 
             job.publish(commit)
 
-        return self.jobs.submit(chat_job, document['id'], provider=provider)
+        return self.jobs.submit(chat_job, document['id'], provider=provider, model=model)
 
     def _generate_solution_proposal(self, document, progress):
         source = document['source']
@@ -844,7 +853,8 @@ class DesktopWorkspace:
         self._write(document)
 
     def fill_solution(self, params):
-        provider = selected_provider(self.state)
+        provider = self._agent_provider(params)
+        model = requested_model(params.get('model'), provider)
         with self.lock:
             document = self._read(params.get('id'))
             self._check_revision(document, params)
@@ -864,7 +874,7 @@ class DesktopWorkspace:
 
             job.publish(commit)
 
-        return self.jobs.submit(fill_job, document['id'], provider=provider)
+        return self.jobs.submit(fill_job, document['id'], provider=provider, model=model)
 
     @staticmethod
     def _pending_solution(document):

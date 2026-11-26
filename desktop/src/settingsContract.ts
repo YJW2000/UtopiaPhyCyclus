@@ -8,6 +8,7 @@ export interface LocalAgent {
   label: string
   installed: boolean
   images: boolean
+  modelSelection?: boolean
   setup?: string
   loginCommand?: string | null
 }
@@ -16,6 +17,14 @@ export interface ProviderStatus {
   agents: LocalAgent[]
   effectiveProvider?: ProviderId | null
 }
+
+export interface ModelChoice {
+  agent: ProviderId
+  model?: string
+  modelName?: string
+}
+
+export type ModelCatalog = Partial<Record<ProviderId, { id: string; name: string; images?: boolean }[]>>
 
 export interface EnvironmentTool {
   id: EnvironmentToolId

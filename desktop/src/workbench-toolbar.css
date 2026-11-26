@@ -158,8 +158,3 @@
 .wb-chat-empty .wb-chat-scroll { display: none; }
 .wb-chat-empty .wb-chat-composer { margin-top: 10px; }
 .wb-workbench .wb-chat-empty .wb-chat-composer textarea { min-height: min(105px, 19vh); }
-.wb-chat-agent { position: relative; min-width: 0; }
-.wb-chat-agent > button { max-width: 100%; font-size: 12px; }
-.wb-chat-agent > button > span { overflow: hidden; text-overflow: ellipsis; }
-.wb-chat-agent > .wb-chrome-popover { inset-block: auto calc(100% + 6px); }
-.wb-chat-agent .wb-chrome-popover > span { padding: 6px 8px; font-size: 11px; color: var(--mc-muted, #756e63); }

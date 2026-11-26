@@ -332,7 +332,7 @@ function createPapilotView({ runtime, resources, getWindow }) {
     return runtime.stop();
   }
 
-  return { register, show, resize: bounds => { latestBounds = checkedBounds(bounds); resize(); }, hide, openLink, quickNotes, requestFolder, close };
+  return { register, show, resize: bounds => { latestBounds = checkedBounds(bounds); resize(); }, hide, openLink, models: runtime.models, quickNotes, requestFolder, close };
 }
 
 module.exports = { createPapilotView };

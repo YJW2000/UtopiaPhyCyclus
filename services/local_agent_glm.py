@@ -29,7 +29,7 @@ def glm_configured():
     return _credentials() is not None
 
 
-def glm_request(prompt, schema, images, *, timeout=180):
+def glm_request(prompt, schema, images, *, timeout=180, model=None):
     from services.local_agent import AgentResponseError, _decode_output, _structured_prompt
 
     if images:
@@ -37,7 +37,7 @@ def glm_request(prompt, schema, images, *, timeout=180):
     if not glm_configured():
         raise RuntimeError('请先完成本机 GLM 凭据配置。')
     payload = {
-        'model': 'glm-5.3',
+        'model': model or 'glm-5.3',
         'max_tokens': 32768,
         'messages': [{'role': 'user', 'content': _structured_prompt(prompt, schema)}],
     }

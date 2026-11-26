@@ -10,6 +10,28 @@ const { pathToFileURL } = require('node:url');
 const READY_TIMEOUT = 180_000;
 const SHUTDOWN_TIMEOUT = 4_000;
 const LOG_LIMIT = 5 * 1024 * 1024;
+const DESKTOP_PROVIDERS = [
+  'codex', 'claude', 'copilot', 'opencode', 'gemini', 'cursor', 'codebuddy', 'qoder',
+  'agy', 'workbuddy', 'pi', 'grok', 'kimi', 'glm', 'deepseek', 'qwen',
+];
+
+function modelCatalog(state) {
+  const runtimes = state.runtimes ?? { codex: state.runtime };
+  const catalog = {};
+  for (const provider of DESKTOP_PROVIDERS) {
+    const runtime = runtimes[provider === 'agy' ? 'antigravity' : provider];
+    if (!runtime?.connected || runtime.installed === false || runtime.hidden || !Array.isArray(runtime.models)) continue;
+    const hidden = new Set(Array.isArray(runtime.hiddenModels) ? runtime.hiddenModels : []);
+    const listed = new Map();
+    for (const model of runtime.models) {
+      if (typeof model?.id !== 'string' || !/^[a-zA-Z0-9][a-zA-Z0-9._:/@+\-]{0,199}$/.test(model.id) || hidden.has(model.id)) continue;
+      const name = typeof model.name === 'string' ? model.name.trim().slice(0, 200) : '';
+      listed.set(model.id, { id: model.id, name: name || model.id });
+    }
+    if (listed.size) catalog[provider] = [...listed.values()];
+  }
+  return catalog;
+}
 
 function absolutePaths(entries) {
   const directories = new Map();
@@ -380,8 +402,21 @@ function createPapilotRuntime({ resources, profile, resolveEnvironment = async (
     return switching;
   }
 
+  async function models() {
+    // Native one-shot requests use Windows credentials and tools. WSL may
+    // list models from a different account or entirely different CLIs.
+    if ((await getEnvironment()).kind !== 'native') return {};
+    const started = await start();
+    if (started.environment.kind !== 'native') return {};
+    const response = await fetch(new URL('/api/state', started.origin), {
+      redirect: 'error', signal: AbortSignal.timeout(5000),
+    });
+    if (!response.ok) throw new Error('无法读取本机模型列表。');
+    return modelCatalog(await response.json());
+  }
+
   return {
-    start, getEnvironment, setEnvironment,
+    start, getEnvironment, setEnvironment, models,
     stop: () => running ? shutdown(running) : Promise.resolve(),
     current: () => running && !running.stopping ? running.info || null : null,
     async projectPath(windowsPath) {

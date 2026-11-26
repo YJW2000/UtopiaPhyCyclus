@@ -54,6 +54,7 @@ export interface EditorDocument {
   chapter?: string
   inputKind?: 'image'
   recognitionAgent?: ProviderId
+  recognitionModel?: string
   exam?: { paths: string[]; answers: boolean }
   originalPage?: number
   pdfPageCount?: number

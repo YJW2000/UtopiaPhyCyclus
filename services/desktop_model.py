@@ -7,9 +7,12 @@ from contextvars import ContextVar
 import json
 import os
 from pathlib import Path
+import re
 
 
 _job_provider = ContextVar('desktop_agent_provider', default=None)
+_job_model = ContextVar('desktop_agent_model', default=None)
+_MODEL_ID = re.compile(r'[a-zA-Z0-9][a-zA-Z0-9._:/@+-]{0,199}')
 
 
 def read_settings(state=None):
@@ -32,12 +35,35 @@ def selected_provider(state=None):
     return value if isinstance(value, str) and value in LOCAL_AGENTS else 'codex'
 
 
+def requested_model(value, provider=None):
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise ValueError('模型 ID 无效。')
+    value = value.strip()
+    if not value:
+        return None
+    if not _MODEL_ID.fullmatch(value):
+        raise ValueError('模型 ID 无效。请选择可用模型或输入 CLI 使用的模型 ID。')
+    if provider == 'pi':
+        source, _, model = value.partition('/')
+        if not source or not model:
+            raise ValueError('Pi 的模型 ID 需要使用「提供商/模型」格式。')
+    return value
+
+
+def selected_model():
+    return _job_model.get()
+
+
 @contextmanager
-def using_provider(provider):
+def using_provider(provider, model=None):
     token = _job_provider.set(provider)
+    model_token = _job_model.set(model)
     try:
         yield
     finally:
+        _job_model.reset(model_token)
         _job_provider.reset(token)
 
 

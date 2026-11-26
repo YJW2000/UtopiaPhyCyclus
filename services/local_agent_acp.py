@@ -51,7 +51,35 @@ def _set_restricted_mode(request, session, mode):
     return False
 
 
-def _conversation(process, prompt, provider):
+def _select_model(request, session, provider, model):
+    option = next((entry for entry in session.get('configOptions') or []
+                   if entry.get('category') == 'model' or entry.get('id') == 'model'), None)
+    params = {'sessionId': session['sessionId']}
+    try:
+        if option is None:
+            if (session.get('models') or {}).get('currentModelId') != model:
+                result = request(7, 'session/set_model', {**params, 'modelId': model})
+                current = (result or {}).get('currentModelId')
+                if current is not None and current != model:
+                    raise RuntimeError(f'Agent reported {current}')
+            return
+        if option.get('currentValue') == model:
+            return
+        # OpenCode may acknowledge the first request with stale config options.
+        attempts = 3 if provider == 'opencode' else 1
+        for attempt in range(attempts):
+            result = request(7 + attempt, 'session/set_config_option',
+                             {**params, 'configId': option['id'], 'value': model})
+            updated = next((entry for entry in (result or {}).get('configOptions') or []
+                            if entry.get('id') == option['id']), None)
+            if (updated or {}).get('currentValue') == model or (updated is None and provider != 'opencode'):
+                return
+    except RuntimeError as error:
+        raise RuntimeError(f'Could not select requested model {model}: {error}') from error
+    raise RuntimeError(f'Could not select requested model {model}')
+
+
+def _conversation(process, prompt, provider, model=None):
     chunks = []
     session_id = None
     grok_lines = _read_grok_lines(process.stdout) if provider == 'grok' else None
@@ -139,6 +167,8 @@ def _conversation(process, prompt, provider):
             raise RuntimeError('Agent does not support the required plan mode')
     elif provider == 'deepseek':
         _set_restricted_mode(request, session, 'read-only')
+    if model:
+        _select_model(request, session, provider, model)
     chunks.clear()
     result = request(5, 'session/prompt', {'sessionId': session_id, 'prompt': prompt})
     if grok_lines is not None and result.get('stopReason') == 'end_turn':
@@ -163,7 +193,7 @@ def main():
         process = subprocess.Popen(payload['command'], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                    stderr=diagnostics, creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
         try:
-            reply = _conversation(process, payload['prompt'], payload['provider'])
+            reply = _conversation(process, payload['prompt'], payload['provider'], payload.get('model'))
         except (OSError, KeyError, TypeError, RuntimeError, ValueError) as error:
             sys.stderr.write(str(error) + '\n')
             diagnostics.seek(max(0, os.fstat(diagnostics.fileno()).st_size - 4000))

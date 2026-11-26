@@ -13,6 +13,18 @@ const server = http.createServer((request, response) => {
     response.writeHead(503).end(); return;
   }
   response.setHeader('content-type', 'application/json');
+  if (request.url === '/api/state') {
+    const model = (id, name) => ({ id, name, isDefault: true });
+    const ready = { installed: true, connected: true, authenticated: true, account: 'test account' };
+    response.end(JSON.stringify({ csrf: 'test-token', runtimes: {
+      codex: { ...ready, hiddenModels: ['hidden-model'], models: [model('known-model', 'Known model'), model('hidden-model'), model('--flag')] },
+      antigravity: { ...ready, models: [model('gemini/example:variant')] },
+      kimi: { ...ready, hidden: true, models: [model('kimi-k3')] },
+      papilot: { ...ready, models: [model('writer-model')] },
+      pi: { ...ready, connected: false, models: [model('provider/model')] },
+    } }));
+    return;
+  }
   response.end(JSON.stringify({ name: 'Papilot', data: process.env.PAPILOT_DATA,
     desktopInstance: process.env.UTOPIA_WRONG_INSTANCE || process.env.PAPILOT_DESKTOP_INSTANCE }));
 });
@@ -68,4 +80,12 @@ test('backend identity failure is rejected and does not leave a current workspac
   const { runtime } = await fixture(t, { UTOPIA_WRONG_INSTANCE: 'other-process' });
   await assert.rejects(runtime.start(), /身份校验/);
   assert.equal(runtime.current(), null);
+});
+
+test('the native catalog exposes selectable model names and IDs only', async t => {
+  const { runtime } = await fixture(t);
+  assert.deepEqual(await runtime.models(), {
+    codex: [{ id: 'known-model', name: 'Known model' }],
+    agy: [{ id: 'gemini/example:variant', name: 'gemini/example:variant' }],
+  });
 });

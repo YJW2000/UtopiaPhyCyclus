@@ -53,7 +53,7 @@ class DesktopJobs:
         self._executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix='utopia-desktop')
         self._jobs = {}
 
-    def submit(self, operation, document_id=None, *, provider=None):
+    def submit(self, operation, document_id=None, *, provider=None, model=None):
         job = DesktopJob(document_id)
         while len(self._jobs) >= 128:
             expired = next((key for key, old in self._jobs.items()
@@ -63,16 +63,16 @@ class DesktopJobs:
             self._jobs.pop(expired)
         queued = job.snapshot()
         self._jobs[queued['id']] = job
-        self._executor.submit(self._execute, job, operation, provider)
+        self._executor.submit(self._execute, job, operation, provider, model)
         result = {'taskId': queued['id'], 'status': 'queued'}
         if document_id:
             result['documentId'] = document_id
         return result
 
     @staticmethod
-    def _execute(job, operation, provider):
+    def _execute(job, operation, provider, model):
         try:
-            with cancellable(job.event), (using_provider(provider) if provider else nullcontext()):
+            with cancellable(job.event), (using_provider(provider, model) if provider else nullcontext()):
                 with job.lock:
                     check_cancelled()
                     job.state['status'] = 'running'

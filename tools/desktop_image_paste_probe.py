@@ -10,6 +10,7 @@ import asyncio
 import base64
 import ctypes
 from ctypes import wintypes
+from hashlib import sha256
 import json
 import os
 from pathlib import Path
@@ -38,6 +39,7 @@ SOURCE = 'textarea[aria-label="编辑 LaTeX 源码"]'
 GROUP_CHAT = 'textarea[aria-label="发送给题库助手"]'
 EDITOR_CHAT = '#wb-chat-prompt'
 OCR_SEED = '截图回归测试：一辆小车受到水平恒力。'
+EXPLICIT_MODEL = 'fixture-vision-v2'
 WORKSPACE = "document.querySelector('.editor-mount')?.style.display === 'flex'"
 
 
@@ -75,6 +77,14 @@ class CodexFixture {
         }
         var fixture = AppDomain.CurrentDomain.BaseDirectory;
         if (File.Exists(Path.Combine(fixture, "preview-only"))) return 1;
+        var expectedModel = Path.Combine(fixture, "expected-model");
+        if (File.Exists(expectedModel)) {
+            var model = Array.IndexOf(args, "--model");
+            if (model < 0 || model + 1 >= args.Length || args[model + 1] != File.ReadAllText(expectedModel)) {
+                Console.Error.WriteLine("The selected model was not passed to Codex");
+                return 4;
+            }
+        }
         var first = Path.Combine(fixture, "first.png");
         if (!File.Exists(first)) {
             File.Copy(args[image + 1], first);
@@ -310,6 +320,8 @@ async def run(args, root):
     screenshot = make_fixture(screenshot_file)
     profile, bank = root / 'profile', root / 'bank'
     (bank / 'chapters').mkdir(parents=True)
+    identity = sha256(str(bank.resolve()).lower().encode('utf-8')).hexdigest()[:24]
+    (profile / 'workspaces' / identity / 'workspace').mkdir(parents=True)
     codex = make_codex_fixture(root)
     first_image = codex.with_name('first.png')
     retry_image = codex.with_name('retry.png')
@@ -318,6 +330,8 @@ async def run(args, root):
     preview_only.touch()
     if args.direct:
         codex.with_name('direct').touch()
+    if args.model:
+        codex.with_name('expected-model').write_text(EXPLICIT_MODEL, encoding='ascii')
     with socket.socket() as sock:
         sock.bind(('127.0.0.1', 0))
         port = sock.getsockname()[1]
@@ -370,6 +384,15 @@ async def run(args, root):
             await page.paint()
             intake = await page.js("document.querySelector('.intake').innerText")
             assert all(label in intake for label in ('Ctrl+V', PASTE, '选择图片', '自动')), intake
+            if args.model:
+                await page.js("document.querySelector('button[aria-label=选择图片识别模型]').click()")
+                await page.until("Boolean(document.querySelector('.model-picker-popover [role=group][aria-label=Codex]'))")
+                await page.click('输入模型 ID…')
+                await page.js("document.querySelector('input[placeholder=\"输入模型 ID\"]').focus()")
+                await page.command('Input.insertText', {'text': EXPLICIT_MODEL})
+                await page.click('使用模型')
+                await page.until(f"document.querySelector('button[aria-label=选择图片识别模型]')?.textContent.includes({json.dumps(EXPLICIT_MODEL)})")
+                print('PASS choosing an exact OCR model from the image intake UI', flush=True)
             clean_screen = await page.command('Page.captureScreenshot', {'format': 'png'}) if args.screenshot else None
             baseline = sequence()
             if args.packaged:
@@ -440,9 +463,8 @@ async def run(args, root):
             if not args.direct:
                 assert recognized['id'] == failed['id']
             if not recognized['previewCurrent']:
-                await page.click('编译日志')
-                log = await page.js("document.querySelector('.wb-log')?.textContent")
-                raise AssertionError(f'Image reconstruction did not produce a current PDF: {log}')
+                editor = await page.js("document.querySelector('.editor-mount')?.innerText.slice(-4000)")
+                raise AssertionError(f'Image reconstruction did not produce a current PDF: {editor}')
             assert Path(recognized['previewPath']).is_file()
             assert OCR_SEED in recognized['source'] and len(await page.get_docs()) == previous_draft_count + 1
             check_original_pdf(recognized, screenshot)
@@ -457,6 +479,8 @@ async def run(args, root):
             assert retry_image.read_bytes() == first_image.read_bytes()
             assert (await page.js("window.utopia.call('ui.load')"))['provider'] == 'cursor'
             assert recognized['recognitionAgent'] == 'codex'
+            if args.model:
+                assert recognized['recognitionModel'] == EXPLICIT_MODEL
             await page.until("document.querySelector('.papilot-workspace')?.getAttribute('aria-busy') === 'false'", seconds=135)
             embedded_url = await wait_for(process, lambda: desktop_target(port, embedded=True), seconds=45)
             async with websockets.connect(embedded_url, ping_interval=None) as project_socket:
@@ -530,6 +554,7 @@ if __name__ == '__main__':
     parser.add_argument('--exe', type=Path, required=True, help='Stock Electron executable or built desktop application.')
     parser.add_argument('--resources', type=Path, help='Use staged or installed runtime resources for a stock Electron test.')
     parser.add_argument('--direct', action='store_true', help='Verify a successful first paste without retrying OCR.')
+    parser.add_argument('--model', action='store_true', help='Verify the chosen model reaches the OCR subprocess.')
     parser.add_argument('--packaged', action='store_true', help='Run an unpacked or installed build directly and exercise renderer paste.')
     parser.add_argument('--screenshot', type=Path, help='Write a screenshot of the clean image intake page after the probe passes.')
     args = parser.parse_args()

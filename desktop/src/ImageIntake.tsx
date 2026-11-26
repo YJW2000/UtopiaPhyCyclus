@@ -2,7 +2,10 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import type { ClipboardImage } from './bridge'
 import { editorCall, errorMessage, pollEditorTask } from './editorContract'
 import type { EditorCompileResult, EditorDocument } from './editorContract'
-import type { ProviderId, ProviderStatus } from './settingsContract'
+import ModelPicker from './ModelPicker'
+import type { ModelChoice, ProviderStatus } from './settingsContract'
+
+const modelKey = 'utopia-image-intake-model'
 
 async function readImageFile(file: File): Promise<ClipboardImage> {
   const jpeg = file.type === 'image/jpeg' || (!file.type && /\.jpe?g$/i.test(file.name))
@@ -59,13 +62,14 @@ export default function ImageIntake({ disabled, onBusyChange, onOpen, onSettings
 }) {
   const [image, setImage] = useState<ClipboardImage>()
   const [draft, setDraft] = useState<EditorDocument>()
-  const [providers, setProviders] = useState<ProviderStatus>()
-  const [selected, setSelected] = useState<ProviderId>()
+  const [modelChoice, setModelChoice] = useState<ModelChoice | undefined>(() => {
+    try { return JSON.parse(localStorage.getItem(modelKey) ?? 'null') ?? undefined } catch { return undefined }
+  })
+  const [selectedModel, setSelectedModel] = useState('')
   const [error, setError] = useState('')
   const [progress, setProgress] = useState('')
   const running = useRef<AbortController | null>(null)
   const input = useRef<HTMLInputElement>(null)
-  const options = (providers?.agents ?? []).filter(agent => agent.installed && agent.images)
   const busy = disabled || Boolean(progress)
 
   useEffect(() => () => {
@@ -97,18 +101,18 @@ export default function ImageIntake({ disabled, onBusyChange, onOpen, onSettings
   }, [disabled, onBusyChange])
 
   const recognize = useCallback(async (
-    next: ClipboardImage, existing: EditorDocument | undefined, signal: AbortSignal, preferred?: ProviderId,
+    next: ClipboardImage, existing: EditorDocument | undefined, signal: AbortSignal,
   ) => {
     setProgress('正在选择支持图片的模型…')
     const status = await editorCall<ProviderStatus>('ui.providers')
     if (signal.aborted) return
-    setProviders(status)
     const available = status.agents.filter(agent => agent.installed && agent.images)
-    const provider = available.find(agent => agent.id === preferred)
-      ?? available.find(agent => agent.id === status.effectiveProvider)
-      ?? available[0]
-    setSelected(provider?.id)
+    const provider = modelChoice
+      ? available.find(agent => agent.id === modelChoice.agent)
+      : available.find(agent => agent.id === status.effectiveProvider) ?? available[0]
+    if (modelChoice && !provider) throw new Error('所选模型连接不可用。请重新选择图片识别模型后重试。')
     if (!provider) throw new Error('未检测到支持图片的模型连接。请在设置中配置后重试。')
+    setSelectedModel(modelChoice?.modelName || modelChoice?.model || provider.label)
     let document = existing
     if (!document) {
       setProgress('正在保存原图…')
@@ -122,7 +126,7 @@ export default function ImageIntake({ disabled, onBusyChange, onOpen, onSettings
     }
     setProgress('正在识别图片并生成 LaTeX…')
     document = await runImageTask<EditorDocument>('workspace.reconstruct',
-      { id: document.id, firstPage: 1, lastPage: 1, agent: provider.id }, signal, setProgress)
+      { id: document.id, firstPage: 1, lastPage: 1, agent: provider.id, model: modelChoice?.model }, signal, setProgress)
     if (signal.aborted) return
     setDraft(document)
     setProgress('正在编译 PDF…')
@@ -137,7 +141,7 @@ export default function ImageIntake({ disabled, onBusyChange, onOpen, onSettings
       return
     }
     if (!signal.aborted) onOpen(document)
-  }, [onOpen])
+  }, [modelChoice, onOpen])
 
   const read = useCallback((load: () => Promise<ClipboardImage | null>) => {
     void operate('正在读取图片…', async signal => {
@@ -146,8 +150,7 @@ export default function ImageIntake({ disabled, onBusyChange, onOpen, onSettings
       if (!next) throw new Error('剪贴板中没有图片。请先复制图片或截图。')
       setImage(next)
       setDraft(undefined)
-      setProviders(undefined)
-      setSelected(undefined)
+      setSelectedModel('')
       await recognize(next, undefined, signal)
     })
   }, [operate, recognize])
@@ -182,11 +185,18 @@ export default function ImageIntake({ disabled, onBusyChange, onOpen, onSettings
     <section className="mc-card intake">
       <span aria-hidden="true">📝</span>
       <h2>从题目图片录入</h2>
-      <p>按 Ctrl+V 粘贴截图，或选择 PNG、JPG 图片。系统会自动选择支持图片的模型，生成 LaTeX，编译 PDF 后打开修订。</p>
+      <p>按 Ctrl+V 粘贴截图，或选择 PNG、JPG 图片。识别完成后生成 LaTeX、编译 PDF 并打开修订。</p>
       <div className="intake-actions">
         <button type="button" className={image ? undefined : 'primary'} disabled={busy}
           onClick={() => read(window.utopia.readClipboardImage)}>粘贴图片</button>
         <button type="button" disabled={busy} onClick={() => input.current?.click()}>选择图片</button>
+        <ModelPicker images value={modelChoice} disabled={busy} onChange={choice => {
+          setModelChoice(choice)
+          try {
+            if (choice) localStorage.setItem(modelKey, JSON.stringify(choice))
+            else localStorage.removeItem(modelKey)
+          } catch { /* The mounted intake still retains the selection. */ }
+        }} />
         <input ref={input} hidden type="file" accept="image/jpeg,image/png" onChange={event => {
           const file = event.target.files?.[0]
           event.target.value = ''
@@ -197,17 +207,11 @@ export default function ImageIntake({ disabled, onBusyChange, onOpen, onSettings
         <div className="image-intake-preview">
           <img src={`data:image/${image.type};base64,${image.data}`} alt="原图" />
           <small>{image.name}</small>
-          {selected && progress && <p>识别模型 · {options.find(option => option.id === selected)?.label}</p>}
+          {selectedModel && progress && <p>识别模型 · {selectedModel}</p>}
           {error && !busy && <div className="intake-actions">
-            {options.length > 1 && <label className="image-intake-model">
-              重试模型
-              <select value={selected ?? ''} onChange={event =>
-                setSelected(options.find(option => option.id === event.target.value)?.id)}>
-                {options.map(option => <option key={option.id} value={option.id}>{option.label}</option>)}
-              </select>
-            </label>}
             <button type="button" className="primary" onClick={() => {
-              void operate('正在重试…', signal => recognize(image, draft, signal, selected))
+              setSelectedModel('')
+              void operate('正在重试…', signal => recognize(image, draft, signal))
             }}>重试识别</button>
             <button type="button" onClick={onSettings}>模型连接设置</button>
           </div>}

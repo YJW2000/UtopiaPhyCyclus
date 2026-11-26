@@ -2,6 +2,7 @@ import type {
   EnvironmentInstallResult,
   EnvironmentStatus,
   EnvironmentToolId,
+  ModelCatalog,
 } from './settingsContract';
 import type { EditorDocument } from './editorContract';
 import type { QuickNote } from './MagicPenSettings';
@@ -37,6 +38,7 @@ declare global {
       papilotHide(): Promise<void>;
       papilotOpenQuestion(id: string, revision?: number, openManuscript?: boolean): Promise<EditorDocument>;
       papilotQuickNotes(notes?: QuickNote[] | null): Promise<QuickNote[] | null>;
+      papilotModels(): Promise<ModelCatalog>;
       onPapilotShortcut(listener: () => void): () => void;
     };
   }

@@ -18,7 +18,8 @@ SCHEMA = {
 
 
 @pytest.mark.parametrize('vision', [True, False])
-def test_pi_uses_configured_model_and_checks_image_input(tmp_path, monkeypatch, vision):
+@pytest.mark.parametrize('select', [True, False])
+def test_pi_uses_configured_model_and_checks_image_input(tmp_path, monkeypatch, vision, select):
     marker = tmp_path / 'prompt-received'
     cli = tmp_path / 'pi_stub.py'
     cli.write_text('''
@@ -32,9 +33,13 @@ def receive():
 def emit(**event):
     print(json.dumps(event), flush=True)
 
+if sys.argv[1] == 'select':
+    assert receive() == {'id': 'model', 'type': 'set_model', 'provider': 'fixture', 'modelId': 'chosen'}
+    emit(type='response', id='model', success=True)
 state = receive()
 assert state == {'id': 'state', 'type': 'get_state'}
-emit(type='response', id='state', success=True, data={'model': {'input': sys.argv[1:]}})
+emit(type='response', id='state', success=True,
+     data={'model': {'provider': 'fixture', 'id': 'chosen', 'input': sys.argv[2:]}})
 line = sys.stdin.readline()
 if line:
     Path('prompt-received').touch()
@@ -59,17 +64,19 @@ sys.stdin.read()
             '--mode', 'rpc', '--no-session', '--no-tools', '--no-mcp', '--no-extensions',
             '--no-skills', '--no-prompt-templates', '--no-context-files', '--no-approve',
         }
-        request['command'] = [sys.executable, '-X', 'utf8', str(cli), *(['image'] if vision else ['text'])]
+        request['command'] = [sys.executable, '-X', 'utf8', str(cli), 'select' if select else 'default',
+                              'image' if vision else 'text']
         return invoke(command, directory, json.dumps(request).encode(), env, timeout)
 
     monkeypatch.setattr(local_agent, '_invoke', invoke_stub)
+    selection = {'model': 'fixture/chosen'} if select else {}
     if vision:
-        result = local_agent_pi.pi_request('pi', tmp_path, '图中有什么', SCHEMA, [b'pixels'], os.environ, 6)
+        result = local_agent_pi.pi_request('pi', tmp_path, '图中有什么', SCHEMA, [b'pixels'], os.environ, 6, **selection)
         assert json.loads(result) == {'reply': 'ok'}
         assert marker.exists()
     else:
         with pytest.raises(local_agent.AgentResponseError, match='does not support image input'):
-            local_agent_pi.pi_request('pi', tmp_path, '图中有什么', SCHEMA, [b'pixels'], os.environ, 6)
+            local_agent_pi.pi_request('pi', tmp_path, '图中有什么', SCHEMA, [b'pixels'], os.environ, 6, **selection)
         assert not marker.exists()
 
 
@@ -79,10 +86,12 @@ def test_glm_uses_fixed_endpoints_and_keeps_the_key_out_of_child_payload(monkeyp
     monkeypatch.setattr(local_agent_glm, 'registered_tool_variable', lambda name: 'test-key' if name == 'ZHIPU_API_KEY' else '')
     assert local_agent_glm.glm_configured()
 
+    models = []
+
     def run(command, *, input, **options):
         assert command[-2] == 'services.local_agent_glm'
         request = json.loads(input)
-        assert request['model'] == 'glm-5.3'
+        models.append(request['model'])
         assert '小球下落' in request['messages'][0]['content']
         assert 'test-key' not in input.decode('utf-8')
         assert options['kill_tree_on_timeout']
@@ -90,6 +99,8 @@ def test_glm_uses_fixed_endpoints_and_keeps_the_key_out_of_child_payload(monkeyp
 
     monkeypatch.setattr(local_agent_glm, 'run', run)
     assert local_agent_glm.glm_request('小球下落', SCHEMA, []) == {'reply': 'ok'}
+    assert local_agent.run_agent_json('glm', '小球下落', SCHEMA, [], model='glm-5.3-flash') == {'reply': 'ok'}
+    assert models == ['glm-5.3', 'glm-5.3-flash']
     with pytest.raises(ValueError, match='只支持文本'):
         local_agent_glm.glm_request('小球下落', SCHEMA, [b'pixels'])
 

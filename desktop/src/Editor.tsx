@@ -10,7 +10,7 @@ import { WorkbenchBookmarks, WorkbenchFind, WorkbenchIcon, WorkbenchRail, Workbe
 import type { WorkbenchAction } from './WorkbenchToolbar'
 import { editorCall, errorMessage, pollEditorTask } from './editorContract'
 import type { EditorAttachment, EditorCompileResult, EditorDocument, EditorMessage, EditorProposal, EditorSelection, PdfPanel } from './editorContract'
-import type { ProviderId } from './settingsContract'
+import type { ModelChoice, ProviderId } from './settingsContract'
 import './editor.css'
 
 export type { EditorDocument } from './editorContract'
@@ -159,10 +159,13 @@ function Workbench({
   const [bookmarks, setBookmarks] = useState(() => parseStored<Partial<Record<PdfPanel, number[]>>>(bookmarkKey) ?? {})
   const [historyAfter, setHistoryAfter] = useState(() => parseStored<string>(historyKey))
   const [showHistory, setShowHistory] = useState(false)
-  const [agent, setAgent] = useState(() => {
-    const saved = parseStored<ProviderId | 'default' | 'api'>(agentKey)
-    return saved === 'api' || saved === 'default' ? undefined : saved ?? document.recognitionAgent
+  const [modelChoice, setModelChoice] = useState<ModelChoice | undefined>(() => {
+    const saved = parseStored<ModelChoice | ProviderId | 'default' | 'api'>(agentKey)
+    if (saved === 'api' || saved === 'default') return undefined
+    if (saved) return typeof saved === 'string' ? { agent: saved } : saved
+    return document.recognitionAgent ? { agent: document.recognitionAgent, model: document.recognitionModel } : undefined
   })
+  const requestedModel = modelChoice ? { agent: modelChoice.agent, model: modelChoice.model } : {}
   const [locateMode, setLocateMode] = useState(false)
   const [locatingSource, setLocatingSource] = useState(false)
   const [attachments, setAttachments] = useState<EditorAttachment[]>(() => activeChatDrafts.get(document.id)?.attachments ?? [])
@@ -457,13 +460,12 @@ function Workbench({
       await persist()
       if (run.controller.signal.aborted) return
       const source = latestDraft.current.source
-      const params: Record<string, unknown> = { id: document.id, source, revision: latestRecord.current.revision }
+      const params: Record<string, unknown> = { id: document.id, source, revision: latestRecord.current.revision, ...requestedModel }
       if (!fillSolution) {
         setShowHistory(false)
         const screenshots = preview.source === source ? preciseCaptures.map(({ page, rect, panel, previewPath }) => ({ page, rect, panel, previewPath })) : []
         Object.assign(params, { prompt: text, attachments, scope: selectionOnly && (selected || screenshots.length) ? 'selection' : 'document' })
         if (boundary >= 0) params.historyAfter = historyAfter
-        if (agent) params.agent = agent
         if (selectionOnly && selected) params.selection = { start: selected.start, end: selected.end }
         if (selectionOnly && screenshots.length) params.pdfSelections = screenshots
       }
@@ -808,7 +810,7 @@ function Workbench({
     setNotice('')
     try {
       await persist()
-      const next = await runTask<EditorDocument>('workspace.reconstruct', { firstPage, lastPage }, undefined, setRecognitionProgress)
+      const next = await runTask<EditorDocument>('workspace.reconstruct', { firstPage, lastPage, ...requestedModel }, undefined, setRecognitionProgress)
       const sourceChanged = next.source !== latestRecord.current.source
       const userEdited = latestDraft.current.source !== latestRecord.current.source
       accept(next, sourceChanged && !userEdited)
@@ -1090,7 +1092,7 @@ function Workbench({
         width: `clamp(min(${chatMinWidth}px, ${chatMaxFraction * 100}%), ${layout.chatWidth}px, min(${chatMaxWidth}px, ${chatMaxFraction * 100}%))`,
       } : undefined}>
         <EditorChat messages={taskMessages} proposals={taskProposals} source={draft.source} attachments={attachments} selection={selected} prompt={prompt} status={chatStatus}
-          agent={agent} onAgent={id => { setAgent(id); storeValue(agentKey, id ?? 'default') }}
+          modelChoice={modelChoice} onModelChoice={choice => { setModelChoice(choice); storeValue(agentKey, choice ?? 'default') }}
           pending={pending} busy={Boolean(pending)} hasPdfSelection={preciseCaptures.length > 0} onPrompt={setPrompt} onAttach={files => void attachFiles(files)}
           onRemove={id => setAttachments(previous => previous.filter(item => item.id !== id))} onClearSelection={() => selectSource(null)} onSend={scope => void requestAgent('workspace.chat', scope)}
           onStop={() => void stopChat()} onApply={item => void updateProposal('apply', item)} onDismiss={item => void updateProposal('dismiss', item)} onCompare={compareProposal} />

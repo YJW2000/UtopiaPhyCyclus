@@ -9,9 +9,9 @@ import time
 import pymupdf
 import pytest
 
-from services import desktop_library, local_agent
+from services import desktop_library, local_agent, local_agent_acp, local_codex
 from services.desktop_jobs import DesktopJobs
-from services.desktop_model import selected_provider
+from services.desktop_model import selected_model, selected_provider
 from services.desktop_workspace import DesktopWorkspace
 
 
@@ -53,6 +53,7 @@ def test_preferences_report_current_agent_and_route_context_chat(tmp_path, monke
     assert glm['installed'] and not glm['images']
     assert 'fixture-glm-key' not in json.dumps(status)
     assert {item['id'] for item in status['agents']} == set(local_agent.LOCAL_AGENTS)
+    assert all(item['modelSelection'] for item in status['agents'])
     assert next(item for item in status['agents'] if item['id'] == 'copilot')['installed']
     assert not next(item for item in status['agents'] if item['id'] == 'cursor')['images']
 
@@ -80,8 +81,8 @@ def test_saved_agent_handles_editor_chat_and_pdf_reconstruction(tmp_path, monkey
 
     calls = []
 
-    def agent(provider, prompt, schema, images, *, timeout):
-        calls.append((provider, images))
+    def agent(provider, prompt, schema, images, *, timeout, model=None):
+        calls.append((provider, images, model))
         if images:
             return {'status': 'ok', 'fragments': [
                 {'question_id': 'q1', 'number': '1', 'kind': 'stem', 'latex': '小球下落。'},
@@ -92,18 +93,25 @@ def test_saved_agent_handles_editor_chat_and_pdf_reconstruction(tmp_path, monkey
     try:
         settings({'provider': 'cursor'})
         doc = workspace.create({'title': '草稿', 'source': '小球下落。'})
-        answer = _wait(workspace.jobs, workspace.chat({'id': doc['id'], 'prompt': '小球受什么力？'}))
+        with pytest.raises(ValueError, match='模型 ID 无效'):
+            workspace.chat({'id': doc['id'], 'prompt': '小球受什么力？', 'model': 'x&y'})
+        answer = _wait(workspace.jobs, workspace.chat({'id': doc['id'], 'prompt': '小球受什么力？',
+                                                       'model': ' vendor/physics:large '}))
         assert answer['status'] == 'succeeded', answer
-        imported = workspace.create({'path': str(original)})
+        imported = workspace.create({'path': str(original), 'inputKind': 'image'})
         with pytest.raises(ValueError, match='只支持文本'):
             workspace.reconstruct({'id': imported['id']})
         for unsupported in ('api', 'arbitrary-executable'):
             with pytest.raises(ValueError, match='请选择可用的本机 Agent'):
                 workspace.reconstruct({'id': imported['id'], 'agent': unsupported})
 
-        answer = _wait(workspace.jobs, workspace.reconstruct({'id': imported['id'], 'agent': 'pi'}))
+        with pytest.raises(ValueError, match='提供商/模型'):
+            workspace.reconstruct({'id': imported['id'], 'agent': 'pi', 'model': 'missing-provider'})
+        answer = _wait(workspace.jobs, workspace.reconstruct({'id': imported['id'], 'agent': 'pi', 'model': 'fixture/vision'}))
         assert answer['status'] == 'succeeded', answer
         assert '小球下落' in answer['result']['source']
+        assert answer['result']['recognitionAgent'] == 'pi'
+        assert answer['result']['recognitionModel'] == 'fixture/vision'
         assert selected_provider(state) == 'cursor'
 
         settings({'provider': 'gemini'})
@@ -112,9 +120,11 @@ def test_saved_agent_handles_editor_chat_and_pdf_reconstruction(tmp_path, monkey
         answer = _wait(workspace.jobs, workspace.reconstruct({'id': imported['id']}))
         assert answer['status'] == 'succeeded', answer
         assert '小球下落' in answer['result']['source']
-        assert calls[0] == ('cursor', [])
+        assert 'recognitionModel' not in answer['result']
+        assert calls[0] == ('cursor', [], 'vendor/physics:large')
         assert calls[1][0] == 'pi' and calls[1][1][0].startswith(b'\x89PNG')
         assert calls[2][0] == 'gemini' and calls[2][1][0].startswith(b'\x89PNG')
+        assert [call[2] for call in calls[1:]] == ['fixture/vision', None]
     finally:
         workspace.jobs.close()
 
@@ -128,11 +138,13 @@ def test_queued_provider_keeps_its_submission_selection(tmp_path, monkeypatch):
     try:
         for _ in range(2):
             jobs.submit(lambda job: blockers.wait(5))
-        task = jobs.submit(lambda job: job.publish(selected_provider), provider=selected_provider())
+        task = jobs.submit(lambda job: job.publish(lambda: (selected_provider(), selected_model())),
+                           provider=selected_provider(), model='fixture-model')
         settings.write_text('{"provider":"opencode"}')
         blockers.set()
-        assert _wait(jobs, task)['result'] == 'claude'
+        assert _wait(jobs, task)['result'] == ('claude', 'fixture-model')
         assert selected_provider() == 'opencode'
+        assert selected_model() is None
     finally:
         blockers.set()
         jobs.close()
@@ -145,6 +157,7 @@ def test_claude_sends_structured_stdin_without_real_tools(monkeypatch):
     def cli(args, *, cwd, input, env, **options):
         assert args[0] == 'claude.exe'
         assert args[args.index('--tools') + 1] == ''
+        assert args[args.index('--model') + 1] == 'haiku'
         assert '--strict-mcp-config' in args
         assert json.loads(args[args.index('--json-schema') + 1]) == SCHEMA
         assert not any('含 & 的指令' in arg for arg in args)
@@ -155,7 +168,36 @@ def test_claude_sends_structured_stdin_without_real_tools(monkeypatch):
         return subprocess.CompletedProcess(args, 0, b'{"type":"result","structured_output":{"reply":"ok"}}\n', b'')
 
     monkeypatch.setattr(local_agent, 'run', cli)
-    assert local_agent.run_agent_json('claude', '含 & 的指令', SCHEMA, [b'pixels']) == {'reply': 'ok'}
+    assert local_agent.run_agent_json('claude', '含 & 的指令', SCHEMA, [b'pixels'], model='haiku') == {'reply': 'ok'}
+
+
+def test_codex_passes_model_as_one_cli_argument(monkeypatch):
+    monkeypatch.setattr(local_codex, '_find_codex', lambda *unused: 'codex.cmd')
+
+    def cli(args, *, cwd, **options):
+        assert args[args.index('--model') + 1] == 'fixture/physics:v2'
+        assert args[-1] == '-'
+        (cwd / 'result.json').write_text('{"reply":"ok"}', encoding='utf-8')
+        return subprocess.CompletedProcess(args, 0, b'', b'')
+
+    monkeypatch.setattr(local_codex, 'run', cli)
+    assert local_agent.run_agent_json('codex', '检查单位', SCHEMA, [], model='fixture/physics:v2') == {'reply': 'ok'}
+    with pytest.raises(ValueError, match='模型 ID 无效'):
+        local_agent.run_agent_json('codex', '检查单位', SCHEMA, [], model='--sandbox')
+
+
+def test_acp_reports_when_the_selected_model_does_not_apply():
+    option = {'id': 'active-model', 'category': 'model', 'currentValue': 'default'}
+    session = {'sessionId': 'example', 'configOptions': [option]}
+    requests = []
+
+    def request(ident, method, params):
+        requests.append((method, params['value']))
+        return {'configOptions': [option]}
+
+    with pytest.raises(RuntimeError, match='Could not select requested model selected'):
+        local_agent_acp._select_model(request, session, 'opencode', 'selected')
+    assert requests == [('session/set_config_option', 'selected')] * 3
 
 
 @pytest.mark.parametrize('provider', ['copilot', 'cursor', 'gemini', 'opencode', 'codebuddy', 'qoder', 'agy'])
@@ -177,12 +219,30 @@ assert hello['method'] == 'initialize' and hello['params']['clientCapabilities']
 send(id=hello['id'], result=dict(protocolVersion=1, agentCapabilities={'promptCapabilities': {'image': True}}))
 session = get()
 assert session['method'] == 'session/new' and session['params']['mcpServers'] == []
-cursor = sys.argv[1] == 'cursor'
-send(id=session['id'], result=dict(sessionId='example'))
+provider = sys.argv[1]
+cursor = provider == 'cursor'
+option = {'category': 'model', 'id': 'active-model', 'currentValue': 'default'}
+modern = provider in {'copilot', 'opencode'}
+send(id=session['id'], result=dict(sessionId='example', **({'configOptions': [option]} if modern else {})))
 if cursor:
     mode = get()
     assert mode['method'] == 'session/set_mode' and mode['params']['modeId'] == 'ask'
     send(id=mode['id'], result={})
+model = get()
+if modern:
+    assert model['method'] == 'session/set_config_option'
+    assert model['params'] == dict(sessionId='example', configId='active-model', value='fixture/vision')
+    if provider == 'opencode':
+        send(id=model['id'], result={'configOptions': [option]})
+        first = model
+        model = get()
+        assert model['method'] == first['method'] and model['params'] == first['params']
+    option['currentValue'] = 'fixture/vision'
+    send(id=model['id'], result={'configOptions': [option]})
+else:
+    assert model['method'] == 'session/set_model'
+    assert model['params'] == dict(sessionId='example', modelId='fixture/vision')
+    send(id=model['id'], result={})
 task = get()
 assert task['method'] == 'session/prompt'
 if cursor:
@@ -245,7 +305,7 @@ sys.stdin.read()
 
     monkeypatch.setattr(local_agent, 'run', cli)
     images = [] if provider == 'cursor' else [b'pixels']
-    assert local_agent.run_agent_json(provider, 'read the attachment', SCHEMA, images) == {'reply': 'ok'}
+    assert local_agent.run_agent_json(provider, 'read the attachment', SCHEMA, images, model='fixture/vision') == {'reply': 'ok'}
 
 
 def test_qoder_detects_native_alias_and_reports_matching_login_command(monkeypatch):

@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
 import type { ClipboardEvent, DragEvent, FormEvent, ReactNode } from 'react'
 import type { EditorAttachment, EditorMessage, EditorProposal, EditorSelection } from './editorContract'
-import type { ProviderId, ProviderStatus } from './settingsContract'
+import ModelPicker from './ModelPicker'
+import type { ModelChoice } from './settingsContract'
 
 interface ChatProps {
   messages: EditorMessage[]
@@ -14,8 +15,8 @@ interface ChatProps {
   pending?: EditorMessage
   busy: boolean
   hasPdfSelection: boolean
-  agent?: ProviderId
-  onAgent?: (agent: ProviderId | undefined) => void
+  modelChoice?: ModelChoice
+  onModelChoice: (choice: ModelChoice | undefined) => void
   onPrompt: (value: string) => void
   onAttach: (files: File[]) => void
   onRemove: (id: string) => void
@@ -27,7 +28,7 @@ interface ChatProps {
   onCompare: (proposal: EditorProposal) => void
 }
 
-export function EditorChat({ messages, proposals, source, attachments, selection, prompt, status, pending, busy, hasPdfSelection, agent, onAgent, onPrompt, onAttach, onRemove, onClearSelection, onStop, onSend, onApply, onDismiss, onCompare }: ChatProps) {
+export function EditorChat({ messages, proposals, source, attachments, selection, prompt, status, pending, busy, hasPdfSelection, modelChoice, onModelChoice, onPrompt, onAttach, onRemove, onClearSelection, onStop, onSend, onApply, onDismiss, onCompare }: ChatProps) {
   const list = useRef<HTMLDivElement>(null)
   const picker = useRef<HTMLInputElement>(null)
   const [lightbox, setLightbox] = useState<EditorAttachment>()
@@ -98,7 +99,7 @@ export function EditorChat({ messages, proposals, source, attachments, selection
           onAttach(Array.from(event.target.files ?? [])); event.target.value = ''
         }} />
         <button type="button" className="wb-icon wb-plus" title="添加参考图片" aria-label="添加参考图片" onClick={() => picker.current?.click()}>+</button>
-        {onAgent && <ChatAgentPicker agent={agent} disabled={busy} onAgent={onAgent} />}
+        <ModelPicker value={modelChoice} disabled={busy} onChange={onModelChoice} />
         {activeSelection && <label className="wb-chat-scope"><input type="checkbox" checked={selectionOnly} onChange={event => setSelectionOnly(event.target.checked)} /> 仅修改所选区域</label>}
         {busy ? <button type="button" className="wb-btn wb-stop" onClick={onStop}><span aria-hidden="true">■</span> 停止</button>
           : <button type="submit" className="wb-send" aria-label="发送" title="发送（Enter）" disabled={!prompt.trim() && !attachments.length}>↑</button>}
@@ -106,45 +107,6 @@ export function EditorChat({ messages, proposals, source, attachments, selection
     </form>
     {lightbox && <EditorModal title={lightbox.title} onClose={() => setLightbox(undefined)}><img className="wb-lightbox-image" src={lightbox.dataUrl} alt={lightbox.title} /></EditorModal>}
   </section>
-}
-
-function ChatAgentPicker({ agent, disabled, onAgent }: { agent?: ProviderId; disabled: boolean; onAgent: (agent: ProviderId | undefined) => void }) {
-  const [status, setStatus] = useState<ProviderStatus>()
-  const [error, setError] = useState(false)
-  const [open, setOpen] = useState(false)
-  const trigger = useRef<HTMLButtonElement>(null)
-  const picker = useRef<HTMLDivElement>(null)
-  const label = status?.agents.find(item => item.id === agent)?.label ?? agent ?? '默认 Agent'
-
-  useEffect(() => {
-    if (!open) return
-    let current = true
-    const closeOutside = (event: PointerEvent) => { if (!picker.current?.contains(event.target as Node)) setOpen(false) }
-    window.addEventListener('pointerdown', closeOutside, true)
-    void window.utopia.call<ProviderStatus>('ui.providers').then(data => {
-      if (current) { setStatus(data); setError(false) }
-    }, () => { if (current) setError(true) })
-    return () => { current = false; window.removeEventListener('pointerdown', closeOutside, true) }
-  }, [open])
-
-  function choose(id?: ProviderId) {
-    setOpen(false)
-    onAgent(id)
-    trigger.current?.focus()
-  }
-
-  return <div className="wb-chat-agent" ref={picker} onKeyDown={event => {
-    if (event.key === 'Escape' && open) { event.stopPropagation(); setOpen(false); trigger.current?.focus() }
-  }} onBlur={event => { if (!event.currentTarget.contains(event.relatedTarget)) setOpen(false) }}>
-    <button type="button" className="wb-chrome-btn" ref={trigger} aria-label="切换工作台 Agent" aria-expanded={open && !disabled} disabled={disabled} onClick={() => setOpen(value => !value)}>
-      <span>{label}</span>⌄
-    </button>
-    {open && !disabled && <div className="wb-chrome-popover" aria-label="工作台 Agent">
-      <button type="button" className="wb-chrome-btn" aria-pressed={agent === undefined} onClick={() => choose()}>默认 Agent</button>
-      {status?.agents.filter(item => item.installed).map(item => <button type="button" key={item.id} className="wb-chrome-btn" aria-pressed={agent === item.id} onClick={() => choose(item.id)}>{item.label}</button>)}
-      {error ? <span role="alert">读取失败，可在设置中检查连接。</span> : !status && <span role="status">正在检测本地 Agent…</span>}
-    </div>}
-  </div>
 }
 
 function ProposalCard({ item, source, busy, onApply, onDismiss, onCompare }: { item: EditorProposal; source: string; busy: boolean } & Pick<ChatProps, 'onApply' | 'onDismiss' | 'onCompare'>) {

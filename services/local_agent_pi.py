@@ -8,7 +8,7 @@ import sys
 from tempfile import TemporaryFile
 
 
-def pi_request(executable, directory, prompt, schema, images, env, timeout):
+def pi_request(executable, directory, prompt, schema, images, env, timeout, model=None):
     from services.local_agent import AgentResponseError, _image_blocks, _invoke, _structured_prompt
 
     command = [executable, '--mode', 'rpc', '--no-session', '--no-tools', '--no-mcp',
@@ -20,6 +20,8 @@ def pi_request(executable, directory, prompt, schema, images, env, timeout):
             'images': [{'type': 'image', 'mimeType': 'image/png', 'data': image} for image in _image_blocks(images)],
         },
     }
+    if model:
+        payload['model'] = model
     worker = str(Path(__file__).resolve())
     result = _invoke([sys.executable, '-B', '-X', 'utf8', worker], directory,
                      json.dumps(payload, ensure_ascii=False).encode('utf-8'), env, timeout)
@@ -44,8 +46,14 @@ def _read(process):
     raise RuntimeError('Pi exited before returning a response')
 
 
-def _reply(process, prompt):
+def _reply(process, prompt, model_id=None):
     events = _read(process)
+    if model_id:
+        provider, _, model = model_id.partition('/')
+        _send(process, {'id': 'model', 'type': 'set_model', 'provider': provider, 'modelId': model})
+        change = next(event for event in events if event.get('type') == 'response' and event.get('id') == 'model')
+        if not change.get('success'):
+            raise RuntimeError(f'Could not select requested model {model_id}: {change.get("error", "")}')
     _send(process, {'id': 'state', 'type': 'get_state'})
     state = next(event for event in events if event.get('type') == 'response' and event.get('id') == 'state')
     if not state.get('success'):
@@ -53,6 +61,8 @@ def _reply(process, prompt):
     model = state.get('data', {}).get('model')
     if not model:
         raise RuntimeError('Pi has no configured model. Sign in in the Pi CLI.')
+    if model_id and f'{model.get("provider")}/{model.get("id")}' != model_id:
+        raise RuntimeError(f'Could not select requested model {model_id}')
     if prompt['images'] and 'image' not in model.get('input', []):
         raise RuntimeError('Pi model does not support image input')
 
@@ -87,7 +97,7 @@ def main():
             with subprocess.Popen(payload['command'], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                   stderr=diagnostics, creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0)) as process:
                 try:
-                    reply = _reply(process, payload['prompt'])
+                    reply = _reply(process, payload['prompt'], payload.get('model'))
                 finally:
                     process.stdin.close()
                     process.stdout.close()

@@ -93,7 +93,8 @@ def agent_status(tool_path):
         executable = _find_agent(agent_id, tool_path)
         installed = glm_configured() if agent_id == 'glm' else bool(executable)
         result.append(dict(id=agent_id, label=agent.label, installed=installed, path=executable,
-                           images=agent.images, loginCommand=_login_command(agent, executable), setup=agent.setup, auth='unknown'))
+                           images=agent.images, modelSelection=True, loginCommand=_login_command(agent, executable),
+                           setup=agent.setup, auth='unknown'))
     return result
 
 
@@ -130,7 +131,7 @@ def _message_blocks(prompt, images):
     ]]
 
 
-def _claude(executable, directory, prompt, schema, images, env, timeout):
+def _claude(executable, directory, prompt, schema, images, env, timeout, model=None):
     npm_binary = Path(executable).parent / 'node_modules/@anthropic-ai/claude-code/bin/claude.exe'
     if executable.lower().endswith('.cmd') and npm_binary.is_file():
         executable = str(npm_binary)
@@ -140,6 +141,8 @@ def _claude(executable, directory, prompt, schema, images, env, timeout):
     command = [executable, '--print', '--input-format', 'stream-json', '--output-format', 'stream-json', '--verbose',
                '--permission-mode', 'dontAsk', '--tools', '', '--strict-mcp-config', '--mcp-config', 'mcp.json',
                '--settings', 'settings.json', '--no-chrome', '--no-session-persistence', '--safe-mode']
+    if model:
+        command.extend(['--model', model])
     (directory / 'mcp.json').write_text('{"mcpServers":{}}', encoding='utf-8')
     # Keep the JSON value out of cmd.exe parsing when npm supplies a .cmd shim.
     # In this case Claude still follows the schema supplied in the user message.
@@ -173,7 +176,7 @@ def _opencode_config(executable, directory, env, timeout):
     env['OPENCODE_CONFIG_CONTENT'] = json.dumps(config)
 
 
-def _acp(provider, executable, directory, prompt, schema, images, env, timeout):
+def _acp(provider, executable, directory, prompt, schema, images, env, timeout, model=None):
     if provider == 'opencode':
         _opencode_config(executable, directory, env, timeout)
         command = [executable, 'acp']
@@ -219,10 +222,12 @@ def _acp(provider, executable, directory, prompt, schema, images, env, timeout):
     task = _structured_prompt(prompt, schema)
     if images:
         task += '\n\n本次任务包含图片，若当前模型无法读取图片，请只返回 {"utopia_error":"image_unsupported"}。'
-    payload = json.dumps({'provider': provider, 'command': command, 'prompt': _message_blocks(task, images)},
-                         ensure_ascii=False).encode()
+    payload = {'provider': provider, 'command': command, 'prompt': _message_blocks(task, images)}
+    if model:
+        payload['model'] = model
     worker = str(Path(__file__).with_name('local_agent_acp.py'))
-    result = _invoke([sys.executable, '-B', '-X', 'utf8', worker], directory, payload, env, timeout)
+    result = _invoke([sys.executable, '-B', '-X', 'utf8', worker], directory,
+                     json.dumps(payload, ensure_ascii=False).encode(), env, timeout)
     if result.returncode:
         raise AgentResponseError(result.stderr)
     return result.stdout.decode('utf-8')
@@ -260,18 +265,22 @@ def _decode_output(value, schema):
     return value
 
 
-def run_agent_json(provider, prompt, schema, images, *, timeout=180):
+def run_agent_json(provider, prompt, schema, images, *, timeout=180, model=None):
+    from services.desktop_model import requested_model
+
     if not isinstance(provider, str) or provider not in LOCAL_AGENTS:
         raise ValueError('请选择可用的本机 Agent。')
+    model = requested_model(model, provider)
+    selection = {'model': model} if model else {}
     if images:
         require_image_support(provider)
     if provider == 'glm':
         from services.local_agent_glm import glm_request
-        return glm_request(prompt, schema, images, timeout=timeout)
+        return glm_request(prompt, schema, images, timeout=timeout, **selection)
     tool_path = fresh_tool_path()
     if provider == 'codex':
         return _run_codex_json(prompt, schema, images, timeout=timeout, tool_path=tool_path,
-                               env=_agent_environment(tool_path))
+                               env=_agent_environment(tool_path), **selection)
 
     agent = LOCAL_AGENTS[provider]
     executable = _find_agent(provider, tool_path)
@@ -283,12 +292,12 @@ def run_agent_json(provider, prompt, schema, images, *, timeout=180):
             directory = Path(temp)
             env = _agent_environment(tool_path)
             if provider == 'claude':
-                value = _claude(executable, directory, prompt, schema, images, env, timeout)
+                value = _claude(executable, directory, prompt, schema, images, env, timeout, **selection)
             elif provider == 'pi':
                 from services.local_agent_pi import pi_request
-                value = pi_request(executable, directory, prompt, schema, images, env, timeout)
+                value = pi_request(executable, directory, prompt, schema, images, env, timeout, **selection)
             else:
-                value = _acp(provider, executable, directory, prompt, schema, images, env, timeout)
+                value = _acp(provider, executable, directory, prompt, schema, images, env, timeout, **selection)
         return _decode_output(value, schema)
     except subprocess.TimeoutExpired:
         raise RuntimeError(f'{agent.label} 在 {timeout} 秒内未完成，请稍后重试。') from None
@@ -300,6 +309,8 @@ def run_agent_json(provider, prompt, schema, images, *, timeout=180):
             message = f'{agent.label} 登录或模型配置不可用。{_setup_help(agent, executable)}'
         elif any(term in detail for term in ('usage limit', 'rate limit', 'quota', '429')):
             message = f'{agent.label} 的调用额度暂时受限，请稍后重试。'
+        elif model and 'could not select requested model' in detail:
+            message = f'{agent.label} 无法切换到模型 {model}。请检查模型 ID、账户权限及 CLI 版本。'
         elif images and any(term in detail for term in ('vision', 'multimodal', 'image support', 'image input')):
             message = f'{agent.label} 当前模型无法接收图片，请在该 CLI 中切换到支持视觉的模型后重试。'
         else:

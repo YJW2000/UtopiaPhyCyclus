@@ -41,15 +41,16 @@ def _find_codex(path: str | None = None) -> str | None:
 
 def run_local_codex_json(prompt: str, schema: dict, images: list[bytes], *, timeout: int = 180) -> dict:
     """Dispatch existing document callers through the desktop preference when set."""
-    from services.desktop_model import selected_provider
+    from services.desktop_model import selected_model, selected_provider
     from services.local_agent import run_agent_json
     provider = selected_provider()
-    if provider == 'codex' and not os.environ.get('UTOPIA_DESKTOP_STATE'):
+    model = selected_model()
+    if provider == 'codex' and not model and not os.environ.get('UTOPIA_DESKTOP_STATE'):
         return _run_codex_json(prompt, schema, images, timeout=timeout)
-    return run_agent_json(provider, prompt, schema, images, timeout=timeout)
+    return run_agent_json(provider, prompt, schema, images, timeout=timeout, **({'model': model} if model else {}))
 
 
-def _run_codex_json(prompt, schema, images, *, timeout, tool_path=None, env=None):
+def _run_codex_json(prompt, schema, images, *, timeout, tool_path=None, env=None, model=None):
     executable = _find_codex(tool_path) if tool_path else _find_codex()
     if not executable:
         raise RuntimeError("未找到本机 Codex CLI。请安装 Codex CLI 并运行 codex login 后重试。")
@@ -60,6 +61,8 @@ def _run_codex_json(prompt, schema, images, *, timeout, tool_path=None, env=None
                    "-c", "features.shell_tool=false", "-c", "features.apps=false", "-c", "features.plugins=false",
                    "-c", "mcp_servers={}", "-c", 'web_search="disabled"',
                    "--ephemeral", "--output-schema", "schema.json", "-o", "result.json"]
+        if model:
+            command.extend(["--model", model])
         for index, data in enumerate(images):
             name = f"image-{index + 1}.png"
             (directory / name).write_bytes(data)

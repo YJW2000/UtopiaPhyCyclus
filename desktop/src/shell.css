@@ -556,14 +556,6 @@ summary:focus-visible {
 .intake [role='status'] {
   margin: 4px 0 0;
 }
-.image-intake-model {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex-wrap: wrap;
-  gap: 8px;
-  max-width: 100%;
-}
 .image-intake-error {
   margin-top: 12px;
   overflow-wrap: anywhere;
