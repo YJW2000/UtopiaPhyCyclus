@@ -1,5 +1,10 @@
 UtopiaPhyCyclus desktop renderer
 
+Apache ECharts 5.5.0 (Apache-2.0)
+https://github.com/apache/echarts
+The distribution retains the upstream attribution in the bundled script.
+The license is included in resources/app-backend/licenses/Apache-2.0.txt.
+
 Papilot 0.14.1 (MIT), copyright 2026 Cui Chen
 https://github.com/PapilotAI/papilot/tree/a1d4dfffd5284e1bbbd3d36649ff82a5de897b31
 The full upstream license and dependency notices are included with the bundled

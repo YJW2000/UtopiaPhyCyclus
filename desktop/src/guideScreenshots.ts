@@ -1,13 +1,11 @@
 import agentSettings from './guide-screenshots/settings-agent.webp'
 import localTools from './guide-screenshots/settings-tools.webp'
 import imageIntake from './guide-screenshots/image-intake.webp'
-import imageReview from './guide-screenshots/image-review.webp'
 import texIntake from './guide-screenshots/tex-intake.webp'
 import texPreview from './guide-screenshots/tex-preview.webp'
 import pdfOriginal from './guide-screenshots/pdf-original.webp'
 import pdfRange from './guide-screenshots/pdf-range.webp'
 import visualEdit from './guide-screenshots/visual-edit.webp'
-import papilotTransfer from './guide-screenshots/papilot-transfer.webp'
 import papilot from './guide-screenshots/papilot.webp'
 import saveQuestion from './guide-screenshots/save-question.webp'
 import searchQuestion from './guide-screenshots/search-question.webp'
@@ -49,11 +47,6 @@ export const lessonScreenshots: Record<string, Partial<Record<number, GuideScree
       title: '通过剪贴板或图片文件录入',
       alt: '侧栏选中图片识别，录入卡片中有粘贴图片和选择图片两个按钮。',
     },
-    2: {
-      src: imageReview,
-      title: '检查原图后，选择识别模型并开始编译',
-      alt: '录入页显示力与运动的原始题目，图片下方有识别模型下拉框和开始识别并编译按钮。',
-    },
   },
   'tex-intake': {
     1: {
@@ -84,14 +77,9 @@ export const lessonScreenshots: Record<string, Partial<Record<number, GuideScree
     },
   },
   'papilot-project': {
-    1: {
-      src: papilotTransfer,
-      title: '从当前文稿的更多操作菜单进入项目工作台',
-      alt: '题目工作台右上角已展开更多操作菜单，可进入项目工作台。',
-    },
     2: {
       src: papilot,
-      title: '在项目工作台标记 PDF，右侧新任务列出待发送的批注',
+      title: '在题目 PDF 上标记，右侧新任务列出待发送的批注',
       alt: '稿件页中央是演示 PDF 和批注标记，右侧新任务中有一条待发送批注。',
     },
   },

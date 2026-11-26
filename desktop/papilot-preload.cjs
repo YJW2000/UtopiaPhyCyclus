@@ -55,6 +55,11 @@ contextBridge.exposeInMainWorld('papilotDesktop', {
 // changes in the upstream appearance editor use its normal persistent state.
 if (process.isMainFrame && /^http:\/\/127\.0\.0\.1:\d+$/.test(location.origin)) {
   try {
+    // The question bank already provides document navigation beside the PDF.
+    if (!localStorage.getItem('utopia:document-layout')) {
+      localStorage.setItem('papilot:sidebar', 'hidden');
+      localStorage.setItem('utopia:document-layout', '1');
+    }
     if (!localStorage.getItem('papilot:language')) localStorage.setItem('papilot:language', 'zh-CN');
     if (!localStorage.getItem('papilot:appearance')) {
       localStorage.setItem('papilot:appearance', JSON.stringify({

@@ -22,6 +22,9 @@ SOURCE = r'''
 \begin{document}
 题库项目验收：电阻的阻值为 $6\,\Omega$，电压为 $3\,\mathrm{V}$。
 \[ I = \frac{U}{R} = 0.5\,\mathrm{A} \]
+\par Polish the explanation.
+\par Check the units.
+\par Remove the repeated answer.
 \end{document}
 '''.strip()
 ORIGINAL = '题库项目验收'
@@ -80,6 +83,61 @@ async def point_note(page, project):
     assert await page.js(f'fetch({endpoint}).then(r => r.json()).then(s => s.annotations.some(n => n.comment === {json.dumps(NOTE)}))')
 
 
+async def mark_text(page, shortcut, word):
+    await click(page, f'.pdf-rail [aria-keyshortcuts="{shortcut}"]')
+    bounds = await page.js(f'''(() => {{
+        const word = {json.dumps(word)};
+        const span = [...document.querySelectorAll('.pdfViewer .textLayer span')].find(
+            item => item.firstChild?.nodeType === Node.TEXT_NODE && item.firstChild.data.includes(word));
+        if (!span) throw Error('Missing fixture text ' + word);
+        span.scrollIntoView({{block: 'nearest'}});
+        const node = span.firstChild, start = node.data.indexOf(word);
+        const range = new Range();
+        range.setStart(node, start);
+        range.setEnd(node, start + word.length);
+        const r = range.getBoundingClientRect();
+        return {{left: r.left + 1, right: r.right - 1, y: r.top + r.height / 2}};
+    }})()''')
+    x, end, y = bounds['left'], bounds['right'], bounds['y']
+    await page.command('Input.dispatchMouseEvent', {'type': 'mousePressed', 'button': 'left', 'buttons': 1, 'clickCount': 1, 'x': x, 'y': y})
+    for step in range(1, 6):
+        await page.command('Input.dispatchMouseEvent', {'type': 'mouseMoved', 'button': 'left', 'buttons': 1, 'x': x + (end - x) * step / 5, 'y': y})
+    await page.command('Input.dispatchMouseEvent', {'type': 'mouseReleased', 'button': 'left', 'clickCount': 1, 'x': end, 'y': y})
+
+
+async def verify_marking_tools(page, project, screenshot=None):
+    endpoint = json.dumps(f'/api/projects/{project}/manuscript')
+    notes = f'fetch({endpoint}).then(r => r.json()).then(s => s.annotations)'
+    await page.until("document.querySelector('.textLayer')?.textContent.includes('Remove')")
+    await mark_text(page, 'Q', 'Polish')
+    await page.until(f'{find(".stamp-wheel .stamp-slot")}?.checkVisibility()')
+    if screenshot:
+        await page.screen(screenshot.with_stem(screenshot.stem + '-wheel'))
+    await click(page, '.stamp-wheel .stamp-slot')
+    await page.until(f'({notes}).then(a => a.some(n => n.stamp && n.quote.includes("Polish") && n.rects.length))')
+    await mark_text(page, 'T', 'Check')
+    await page.until("document.activeElement?.matches('.pdf-note-card textarea')")
+    await page.command('Input.insertText', {'text': NOTE})
+    if screenshot:
+        await page.screen(screenshot.with_stem(screenshot.stem + '-comment'))
+    for kind in ('keyDown', 'keyUp'):
+        await page.command('Input.dispatchKeyEvent', {'type': kind, 'key': 'Enter', 'code': 'Enter', 'windowsVirtualKeyCode': 13})
+    await page.until(f'({notes}).then(a => a.some(n => n.comment === {json.dumps(NOTE)} && n.quote.includes("Check")))')
+    await mark_text(page, 'D', 'Remove')
+    await page.until(f'({notes}).then(a => a.some(n => n.kind === "delete" && n.quote.includes("Remove") && n.rects.length))')
+    strike = '.note-mark[data-kind=delete]'
+    tag = '.note-tag[data-kind=delete]'
+    await page.until(f'{find(tag)}?.checkVisibility() && Number({find(tag)}.textContent) > 0')
+    assert await page.js(f'getComputedStyle({find(strike)}).backgroundImage.includes("linear-gradient")')
+    await click(page, '.rail-history [aria-keyshortcuts="Control+Z"]')
+    await page.until(f'!{find(tag)}')
+    await click(page, '.rail-history [aria-keyshortcuts="Control+Shift+Z"]')
+    await page.until(f'{find(tag)}?.checkVisibility()')
+    if screenshot:
+        await page.screen(screenshot.with_stem(screenshot.stem + '-delete'))
+    print('Selected real PDF text, used the quick-note wheel and inline comment, struck text and undid/redid its numbered mark.', flush=True)
+
+
 def compiled_pdf_text(origin, project, build_key):
     with urlopen(f'{origin}/api/projects/{quote(project)}/manuscript.pdf?key={quote(build_key)}', timeout=5) as response:
         payload = response.read()
@@ -100,6 +158,8 @@ async def commit_tex_edit(page, folder):
     original = source.read_text(encoding='utf-8')
     assert ORIGINAL in original
     source.write_text(original.replace(ORIGINAL, REVISED, 1), encoding='utf-8')
+    if not await page.js(f'{find(".git-link")}?.checkVisibility()'):
+        await click(page, '.sidebar-toggle')
     await click(page, '.git-link')
     await page.until('document.querySelector(".git-panel")?.textContent.includes("main.tex")', seconds=35)
     await page.js('document.querySelector(".git-message-box textarea").focus()')
@@ -146,18 +206,10 @@ async def probe(executable, development, root, screenshot=None):
             await shell.js('document.querySelector("textarea.paste-tex").focus()')
             await shell.command('Input.insertText', {'text': SOURCE})
             await shell.until(f'{find("textarea.paste-tex")}?.value === {json.dumps(SOURCE)}')
-            await click_label(shell, '在工作台打开')
-            more_actions = 'button[aria-label="更多操作"]'
-            await shell.until(f'{find(".error-strip")} || {find(more_actions)}?.checkVisibility()', seconds=60)
-            assert not (error := await shell.js(f'{find(".error-strip")}?.textContent')), error
-            await click(shell, more_actions)
-            assert not await shell.js(f'Boolean({find(SLOT)})')
-            assert not runtime_log.exists()
-            assert desktop_target(port, embedded=True) is None
-
             started = perf_counter()
-            await click_label(shell, '在项目工作台打开')
-            await shell.until(f'{find(SLOT)}?.checkVisibility()')
+            await click(shell, '.paste-tex + button')
+            await shell.until(f'{find(SLOT)}?.checkVisibility() || {find(".error-strip")}?.checkVisibility()', seconds=180)
+            assert not (error := await shell.js(f'{find(".error-strip")}?.textContent')), error
             assert await shell.js('Boolean(document.querySelector("[data-page=tex][aria-current=page]"))')
             assert await shell.js(f'!{find(SLOT)}.querySelector("iframe")')
             await shell.until(f'{find(SLOT)}?.getAttribute("aria-busy") === "false"', seconds=135)
@@ -181,7 +233,6 @@ async def probe(executable, development, root, screenshot=None):
                 folder = Path(projects[0]['path']).resolve(strict=True)
                 assert folder.is_relative_to(root), 'The opened project must be inside the disposable workspace.'
                 assert source_files(bank) == originals
-                await click(project, '.manuscript-link')
                 project_id = projects[0]['id']
                 endpoint = json.dumps(f'/api/projects/{project_id}/manuscript')
                 await project.until(f'fetch({endpoint}).then(r => r.json()).then(s => s.build?.status === "ready")', seconds=150)
@@ -194,23 +245,21 @@ async def probe(executable, development, root, screenshot=None):
                 await project.command('Page.bringToFront')
                 await project.command('Emulation.setFocusEmulationEnabled', {'enabled': True})
                 await project.until('Boolean(document.querySelector(".pdfViewer .page canvas"))', seconds=45)
+                await verify_marking_tools(project, project_id, screenshot)
                 await point_note(project, project_id)
                 if screenshot:
                     await project.screen(screenshot)
                 await commit_tex_edit(project, folder)
                 print('PDF annotation and Git commit verified.', flush=True)
 
-            await click_label(shell, '题库文稿')
+            await click_label(shell, 'LaTeX 源码')
             await shell.until(f'!{find(SLOT)}?.checkVisibility()')
-            await click(shell, 'button[aria-label="更多操作"]')
-            await click_label(shell, '从项目工作台导入改动')
-            await click(shell, '[aria-label="查看 LaTeX 源码"]')
             source_field = find('textarea[aria-label="编辑 LaTeX 源码"]')
             await shell.until(f'{source_field}?.value.includes({json.dumps(REVISED)})', seconds=45)
             assert source_files(bank) == originals
             print('Git-reviewed source round-tripped to the Utopia draft.', flush=True)
 
-            await click_label(shell, '项目工作台')
+            await click(shell, 'button[aria-label="返回 PDF 校订"]')
             await shell.until(f'{find(SLOT)}?.getAttribute("aria-busy") === "false"')
             async with websockets.connect(embedded_url) as project_socket:
                 project = Page(project_socket)

@@ -23,21 +23,18 @@ import pymupdf
 import websockets
 
 from desktop_speed_probe import Page, ROOT, target
+from desktop_papilot_probe import RENDER_FLAGS, compiled_pdf_text, desktop_target
+from desktop_maintenance_probe import wait_for
 
 
 PASTE = '粘贴图片'
-RECOGNIZE = '开始识别并编译'
+RETRY = '重试识别'
 IMAGE = '.intake img[alt="原图"]'
-MODEL = '.image-intake-model select'
 INTAKE_ERROR = '.image-intake-error[role=alert]'
 SOURCE = 'textarea[aria-label="编辑 LaTeX 源码"]'
 GROUP_CHAT = 'textarea[aria-label="发送给题库助手"]'
 EDITOR_CHAT = '#wb-chat-prompt'
 OCR_SEED = '截图回归测试：一辆小车受到水平恒力。'
-RENDERED = (
-    "[...document.querySelectorAll('.wb-pdf[aria-label=\"PDF 预览\"] canvas')]"
-    ".some(c => c.checkVisibility() && c.style.visibility === 'visible')"
-)
 WORKSPACE = "document.querySelector('.editor-mount')?.style.display === 'flex'"
 
 
@@ -74,6 +71,7 @@ class CodexFixture {
             return 3;
         }
         var fixture = AppDomain.CurrentDomain.BaseDirectory;
+        if (File.Exists(Path.Combine(fixture, "preview-only"))) return 1;
         var first = Path.Combine(fixture, "first.png");
         if (!File.Exists(first)) {
             File.Copy(args[image + 1], first);
@@ -169,7 +167,7 @@ class IntakePage(Page):
     async def get_docs(self):
         return await self.js("window.utopia.call('workspace.list')")
 
-    async def preview_image(self, click, original, name=None):
+    async def preview_image(self, click, original, name=None, expect_failure=True):
         before = await self.get_docs()
         await click()
         await self.paint()
@@ -183,7 +181,10 @@ class IntakePage(Page):
         preview = pymupdf.Pixmap(base64.b64decode(src.split(',', 1)[1]))
         assert preview.samples == original.samples, 'The intake changed the original screenshot pixels.'
         assert not await self.js(WORKSPACE)
-        assert await self.get_docs() == before
+        if expect_failure:
+            await self.until("document.querySelector('.image-intake-error[role=alert]')?.textContent.includes('本地 Codex 调用失败')", seconds=45)
+            drafts = await self.get_docs()
+            assert len(drafts) == len(before) + 1, drafts
 
     async def close_editor(self):
         await self.js("document.querySelector('button[aria-label=返回]').click()")
@@ -237,9 +238,15 @@ Object.defineProperty(clipboard, 'read', { value: async () => {
 const source = fs.readFileSync(productionMain, 'utf8');
 const renderer = "const RENDERER = path.join(__dirname, 'dist');";
 if (!source.includes(renderer)) throw Error('Cannot locate the production renderer root');
+let mainSource = source.replace(renderer, 'const RENDERER = ' + JSON.stringify(rendererSnapshot) + ';');
+if (process.env.probeResources) {
+  const resources = /^const RESOURCES = .+?;$/m;
+  if (!resources.test(mainSource)) throw Error('Cannot locate desktop runtime resources');
+  mainSource = mainSource.replace(resources, () => 'const RESOURCES = ' + JSON.stringify(process.env.probeResources) + ';');
+}
 const entry = new Module(productionMain, module);
 entry.filename = productionMain;
-entry._compile(source.replace(renderer, 'const RENDERER = ' + JSON.stringify(rendererSnapshot) + ';'), productionMain);
+entry._compile(mainSource, productionMain);
 """.strip(), encoding='utf-8')
     return launcher
 
@@ -289,6 +296,8 @@ async def run(args, root):
     first_image = codex.with_name('first.png')
     retry_image = codex.with_name('retry.png')
     release = codex.with_name('release')
+    preview_only = codex.with_name('preview-only')
+    preview_only.touch()
     with socket.socket() as sock:
         sock.bind(('127.0.0.1', 0))
         port = sock.getsockname()[1]
@@ -307,7 +316,9 @@ async def run(args, root):
         env.update(clipboardMode=str(root / 'mode.txt'), clipboardLog=str(root / 'clipboard.log'),
                    screenshotFile=str(screenshot_file), productionMain=str(ROOT / 'desktop' / 'main.cjs'),
                    rendererSnapshot=str(renderer))
-    command.extend([f'--remote-debugging-port={port}', '--library', str(bank)])
+        if args.resources:
+            env['probeResources'] = str(args.resources.resolve(strict=True))
+    command.extend([*RENDER_FLAGS, f'--remote-debugging-port={port}', '--library', str(bank)])
     console = root / 'electron.log'
     with console.open('wb') as output:
         process = subprocess.Popen(command, env=env, cwd=ROOT, creationflags=subprocess.CREATE_NO_WINDOW,
@@ -337,7 +348,7 @@ async def run(args, root):
             await page.until("document.querySelector('h1')?.innerText.includes('图片识别')")
             await page.paint()
             intake = await page.js("document.querySelector('.intake').innerText")
-            assert all(label in intake for label in ('Ctrl+V', PASTE, '选择图片', RECOGNIZE)), intake
+            assert all(label in intake for label in ('Ctrl+V', PASTE, '选择图片', '自动')), intake
             clean_screen = await page.command('Page.captureScreenshot', {'format': 'png'}) if args.screenshot else None
             baseline = sequence()
             if args.packaged:
@@ -357,7 +368,7 @@ async def run(args, root):
 
             pasted_name = '剪贴板事件测试.png'
             await page.preview_image(lambda: png_event(pasted_name), screenshot, pasted_name)
-            print('PASS renderer paste event previews the original PNG without creating a draft', flush=True)
+            print('PASS renderer paste event previews the original PNG and starts recognition', flush=True)
 
             assert await page.guarded_ctrl_v(GROUP_CHAT) == {'trusted': True, 'prevented': False}
             await page.text_paste_event(GROUP_CHAT, '题库助手普通文字')
@@ -380,25 +391,13 @@ async def run(args, root):
             await page.preview_image(upload, screenshot, screenshot_file.name)
             if not args.packaged:
                 assert (root / 'clipboard.log').read_text(encoding='utf-8').splitlines() == image_modes
-            assert await page.get_docs() == [] and not first_image.exists()
-            print('PASS upload previews the selected file and no OCR runs before explicit submission', flush=True)
+            previous_draft_count = len(await page.get_docs())
+            preview_only.unlink()
+            print('PASS choosing a file starts recognition without a second submission', flush=True)
 
             recognition_name = '识别编译截图.png'
-            await page.preview_image(lambda: png_event(recognition_name), screenshot, recognition_name)
-
-            model = json.dumps(MODEL)
+            await page.preview_image(lambda: png_event(recognition_name), screenshot, recognition_name, expect_failure=False)
             intake_error = f'document.querySelector({json.dumps(INTAKE_ERROR)})'
-            codex_option = f"document.querySelector({model})?.querySelector('option[value=codex]')"
-            await page.until(f'Boolean({codex_option} || {intake_error})', seconds=45)
-            assert await page.js(f'Boolean({codex_option})'), await page.js(f'{intake_error}?.textContent')
-            assert await page.js(f'document.querySelector({model}).value') == ''
-            assert await page.js(f"!document.querySelector({model}).querySelector('option[value=api],option[value=cursor]')")
-            await page.js(f"""(() => {{
-              const select = document.querySelector({model});
-              select.value = 'codex';
-              select.dispatchEvent(new Event('change', {{bubbles: true}}));
-            }})()""")
-            await page.click(RECOGNIZE)
             async with asyncio.timeout(30):
                 while not first_image.exists():
                     await asyncio.sleep(.05)
@@ -410,15 +409,15 @@ async def run(args, root):
             assert await page.js(f'document.querySelector({json.dumps(IMAGE)})?.checkVisibility()')
             assert not await page.js(WORKSPACE), 'Failed recognition opened the workbench.'
             failed = await page.raw_document()
-            assert failed['source'] == '' and len(await page.get_docs()) == 1, failed
-            await page.click(RECOGNIZE)
+            assert failed['source'] == '' and len(await page.get_docs()) == previous_draft_count + 1, failed
+            await page.click(RETRY)
 
-            await page.until(f'{WORKSPACE} || Boolean({intake_error})', seconds=60)
+            await page.until(f'{WORKSPACE} || Boolean({intake_error})', seconds=150)
             assert await page.js(WORKSPACE), await page.js(f'{intake_error}?.textContent')
             recognized = await page.raw_document()
             assert recognized['id'] == failed['id'] and recognized['title'] == recognition_name
             assert recognized['previewCurrent'] and Path(recognized['previewPath']).is_file(), recognized
-            assert OCR_SEED in recognized['source'] and len(await page.get_docs()) == 1
+            assert OCR_SEED in recognized['source'] and len(await page.get_docs()) == previous_draft_count + 1
             check_original_pdf(recognized, screenshot)
             crop = re.search(r'\\includegraphics\[[^\n]*?\]\{([^}]+)\}', recognized['source'])
             assert crop, recognized['source']
@@ -430,12 +429,29 @@ async def run(args, root):
             assert pymupdf.Pixmap(str(retry_image)).width > 0
             assert retry_image.read_bytes() == first_image.read_bytes()
             assert (await page.js("window.utopia.call('ui.load')"))['provider'] == 'cursor'
-            await page.until(RENDERED)
-            assert await page.js(f"document.querySelector({json.dumps(SOURCE)})?.checkVisibility()")
+            assert recognized['recognitionAgent'] == 'codex'
+            await page.until("document.querySelector('.papilot-workspace')?.getAttribute('aria-busy') === 'false'", seconds=135)
+            embedded_url = await wait_for(process, lambda: desktop_target(port, embedded=True), seconds=45)
+            async with websockets.connect(embedded_url) as project_socket:
+                project = Page(project_socket)
+                await project.command('Page.bringToFront')
+                await project.command('Emulation.setFocusEmulationEnabled', {'enabled': True})
+                state = "fetch('/api/state').then(r => r.json()).then(s => s.projects.map(({id, path}) => ({id, path})))"
+                await project.until(f'{state}.then(items => items.some(p => p.path?.includes({json.dumps(recognized["id"])})))', seconds=150)
+                projects = await project.js(state)
+                active, = (item for item in projects if item['path'] and Path(item['path']).parent.name == recognized['id'])
+                await project.until('Boolean(document.querySelector(".pdfViewer .page canvas"))', seconds=150)
+                endpoint = json.dumps(f"/api/projects/{active['id']}/manuscript")
+                ready = f'fetch({endpoint}).then(r => r.json())'
+                await project.until(f'{ready}.then(s => s.build?.status === "ready")', seconds=90)
+                build_key = await project.js(f'{ready}.then(s => s.build.key)')
+                contents = await asyncio.to_thread(compiled_pdf_text, await project.js('location.origin'), active['id'], build_key)
+                assert '水平恒力' in contents, contents
             print('PASS recognition failure retains the screenshot and retries the same draft', flush=True)
-            print('PASS selected local Agent overrides the default, preserves source crops, and opens the workbench with LaTeX and its compiled PDF', flush=True)
+            print('PASS automatic vision Agent fallback preserves source crops, compiles LaTeX, and opens the PDF in the embedded revision view', flush=True)
 
-            await page.js("document.querySelector('button[aria-label=展开题目助手]').click()")
+            await page.click('LaTeX 源码')
+            await page.until(f'document.querySelector({json.dumps(SOURCE)})?.checkVisibility()')
             assert await page.guarded_ctrl_v(EDITOR_CHAT) == {'trusted': True, 'prevented': False}
             await page.text_paste_event(EDITOR_CHAT, '题目助手普通文字')
             await page.js(f"""(() => {{
@@ -481,6 +497,7 @@ async def run(args, root):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--exe', type=Path, required=True, help='Stock Electron executable or built desktop application.')
+    parser.add_argument('--resources', type=Path, help='Use staged or installed runtime resources for a stock Electron test.')
     parser.add_argument('--packaged', action='store_true', help='Run an unpacked or installed build directly and exercise renderer paste.')
     parser.add_argument('--screenshot', type=Path, help='Write a screenshot of the clean image intake page after the probe passes.')
     args = parser.parse_args()

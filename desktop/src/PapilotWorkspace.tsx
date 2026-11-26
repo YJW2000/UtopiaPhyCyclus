@@ -4,8 +4,6 @@ import { errorMessage } from './editorContract'
 
 import './papilot-workspace.css'
 
-type WorkspaceStatus = { phase: 'loading' | 'ready' } | { phase: 'error'; message: string }
-
 function nativeBounds(element: HTMLElement): PapilotBounds {
   const rect = element.getBoundingClientRect()
   const left = Math.max(0, rect.left)
@@ -17,10 +15,9 @@ function nativeBounds(element: HTMLElement): PapilotBounds {
   return { x, y, width: Math.max(0, Math.floor(right) - x), height: Math.max(0, Math.floor(bottom) - y) }
 }
 
-export default function PapilotWorkspace() {
+export default function PapilotWorkspace({ onError }: { onError: (message: string) => void }) {
   const slot = useRef<HTMLDivElement>(null)
-  const [attempt, setAttempt] = useState(0)
-  const [status, setStatus] = useState<WorkspaceStatus>({ phase: 'loading' })
+  const [ready, setReady] = useState(false)
 
   useEffect(() => {
     const element = slot.current
@@ -34,8 +31,8 @@ export default function PapilotWorkspace() {
     const fail = (error: unknown) => {
       if (!active || failed) return
       failed = true
-      setStatus({ phase: 'error', message: errorMessage(error) })
       void window.utopia.papilotHide().catch(() => {})
+      onError(errorMessage(error))
     }
 
     const resize = () => {
@@ -48,7 +45,7 @@ export default function PapilotWorkspace() {
       if (!started) {
         started = true
         void window.utopia.papilotShow(bounds).then(() => {
-          if (active && !failed) setStatus({ phase: 'ready' })
+          if (active && !failed) setReady(true)
         }, fail)
       } else {
         void window.utopia.papilotBounds(bounds).catch(fail)
@@ -72,17 +69,9 @@ export default function PapilotWorkspace() {
       document.removeEventListener('scroll', schedule, true)
       if (started && !failed) void window.utopia.papilotHide().catch(() => {})
     }
-  }, [attempt])
+  }, [onError])
 
-  return <div ref={slot} className="papilot-workspace" role="region" aria-label="项目工作台" aria-busy={status.phase === 'loading'}>
-    {status.phase === 'loading' && <p className="papilot-workspace-status" role="status">正在打开项目工作台…</p>}
-    {status.phase === 'error' && <div className="papilot-workspace-status papilot-workspace-error" role="alert">
-      <strong>项目工作台启动失败</strong>
-      <p>{status.message}</p>
-      <button type="button" onClick={() => {
-        setStatus({ phase: 'loading' })
-        setAttempt(value => value + 1)
-      }}>重试</button>
-    </div>}
+  return <div ref={slot} className="papilot-workspace" role="region" aria-label="PDF 校订" aria-busy={!ready}>
+    {!ready && <p className="papilot-workspace-status" role="status">正在打开 PDF 校订…</p>}
   </div>
 }

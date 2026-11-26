@@ -147,10 +147,6 @@
 .wb-chat-progress { margin-left: auto; color: var(--mc-muted, #756e63); font-size: 11px; }
 .wb-chat-scroll { flex: 1; min-height: 0; padding: 13px 14px; overflow: auto; overscroll-behavior: contain; scrollbar-gutter: stable; }
 .wb-chat-history { display: flex; flex-direction: column; gap: 13px; min-height: 100%; max-width: 780px; margin: 0 auto; }
-.wb-chat-welcome { display: grid; place-items: center; gap: 4px; text-align: center; color: var(--mc-muted, #756e63); margin: auto; padding: 20px 6px; }
-.wb-chat-welcome > span { color: var(--mc-accent, #b66448); font-size: 25px; }
-.wb-chat-welcome h2 { font-size: 15px; margin: 5px 0 0; color: var(--mc-text, #26231e); }
-.wb-chat-welcome p { font-size: 12px; margin: 0; line-height: 1.55; }
 .wb-message { min-width: 0; align-self: flex-start; max-width: 100%; box-sizing: border-box; }
 .wb-message-user { align-self: flex-end; max-width: 94%; border: 1px solid var(--mc-border, #ded3c5); border-radius: 12px 12px 3px 12px; padding: 7px 9px; background: color-mix(in srgb, var(--mc-accent, #b66448) 8%, var(--mc-surface, #fffdf9)); }
 .wb-message-label { color: var(--mc-muted, #756e63); font-size: 11px; font-weight: 650; }

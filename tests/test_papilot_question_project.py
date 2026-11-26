@@ -75,6 +75,34 @@ def test_standalone_keeps_engine_and_freezes_nested_tex_edits(tmp_path):
     assert (source_dir / 'parts' / 'diagram.tex').read_bytes() == '磁场示意'.encode('gb18030')
 
 
+def test_native_revision_updates_the_synced_project_and_preserves_divergent_edits(tmp_path):
+    root = tmp_path / 'managed'
+    original = '原始力学题'
+    initial = prepare_question_project(root, original, '力学题', tmp_path, (), DEFAULTS)
+    folder = Path(initial['folder'])
+    draft = folder / 'question.tex'
+    draft.write_text(draft.read_text(encoding='utf-8').replace(original, 'PDF 校订后的力学题'), encoding='utf-8')
+    notes = folder / 'notes.json'
+    notes.write_bytes(b'annotations')
+    synced = read_question_project(root)
+    revised = synced.replace('力学题', '电学题')
+    published = prepare_question_project(root, revised, '新标题', tmp_path, (), DEFAULTS,
+                                         synced_hash=hashlib.sha256(synced.encode('utf-8')).hexdigest())
+    assert published['folder'] == initial['folder']
+    assert published['baseline'] == hashlib.sha256(revised.encode('utf-8')).hexdigest()
+    assert '电学题' in draft.read_text(encoding='utf-8')
+    assert read_question_project(root) == revised
+    assert notes.read_bytes() == b'annotations'
+
+    departing = draft.read_text(encoding='utf-8').replace('电学题', '电路题')
+    draft.write_text(departing, encoding='utf-8')
+    with pytest.raises(ValueError, match='均已修改'):
+        prepare_question_project(root, '题库草稿也作了修改', '新标题', tmp_path, (), DEFAULTS,
+                                 synced_hash=published['baseline'])
+    assert draft.read_text(encoding='utf-8') == departing
+    assert notes.read_bytes() == b'annotations'
+
+
 def test_modified_wrapper_returns_a_full_document_and_external_dependencies_are_refused(tmp_path):
     support = tmp_path / 'support'
     support.mkdir()

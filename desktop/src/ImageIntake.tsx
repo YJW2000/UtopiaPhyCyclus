@@ -60,29 +60,13 @@ export default function ImageIntake({ disabled, onBusyChange, onOpen, onSettings
   const [image, setImage] = useState<ClipboardImage>()
   const [draft, setDraft] = useState<EditorDocument>()
   const [providers, setProviders] = useState<ProviderStatus>()
-  const [selected, setSelected] = useState<ProviderId | ''>()
-  const [providerError, setProviderError] = useState('')
+  const [selected, setSelected] = useState<ProviderId>()
   const [error, setError] = useState('')
-  const [compileError, setCompileError] = useState('')
   const [progress, setProgress] = useState('')
   const running = useRef<AbortController | null>(null)
   const input = useRef<HTMLInputElement>(null)
   const options = (providers?.agents ?? []).filter(agent => agent.installed && agent.images)
-  const effective = options.find(option => option.id === providers?.effectiveProvider)?.id ?? ''
-  const provider = selected ?? effective
-  const hasImage = Boolean(image)
-  const hasSource = Boolean(draft?.source.trim())
   const busy = disabled || Boolean(progress)
-
-  useEffect(() => {
-    if (!hasImage) return
-    let active = true
-    void editorCall<ProviderStatus>('ui.providers').then(
-      status => { if (active) setProviders(status) },
-      failure => { if (active) setProviderError(errorMessage(failure)) },
-    )
-    return () => { active = false }
-  }, [hasImage])
 
   useEffect(() => () => {
     if (running.current) {
@@ -112,6 +96,49 @@ export default function ImageIntake({ disabled, onBusyChange, onOpen, onSettings
     }
   }, [disabled, onBusyChange])
 
+  const recognize = useCallback(async (
+    next: ClipboardImage, existing: EditorDocument | undefined, signal: AbortSignal, preferred?: ProviderId,
+  ) => {
+    setProgress('正在选择支持图片的模型…')
+    const status = await editorCall<ProviderStatus>('ui.providers')
+    if (signal.aborted) return
+    setProviders(status)
+    const available = status.agents.filter(agent => agent.installed && agent.images)
+    const provider = available.find(agent => agent.id === preferred)
+      ?? available.find(agent => agent.id === status.effectiveProvider)
+      ?? available[0]
+    setSelected(provider?.id)
+    if (!provider) throw new Error('未检测到支持图片的模型连接。请在设置中配置后重试。')
+    let document = existing
+    if (!document) {
+      setProgress('正在保存原图…')
+      const { path } = await editorCall<{ path: string }>('library.imageInput', { ...next })
+      if (signal.aborted) return
+      document = await editorCall<EditorDocument>('workspace.create', {
+        pdfPath: path, title: next.name, inputKind: 'image',
+      })
+      if (signal.aborted) return
+      setDraft(document)
+    }
+    setProgress('正在识别图片并生成 LaTeX…')
+    document = await runImageTask<EditorDocument>('workspace.reconstruct',
+      { id: document.id, firstPage: 1, lastPage: 1, agent: provider.id }, signal, setProgress)
+    if (signal.aborted) return
+    setDraft(document)
+    setProgress('正在编译 PDF…')
+    try {
+      await runImageTask<EditorCompileResult>('workspace.compile',
+        { id: document.id, source: document.source }, signal, setProgress)
+      if (signal.aborted) return
+      document = await editorCall<EditorDocument>('workspace.open', { id: document.id })
+      if (!document.previewPath || !document.previewCurrent) throw new Error('请重新编译当前 LaTeX 源码。')
+    } catch (failure) {
+      if (!signal.aborted) onOpen(document, errorMessage(failure))
+      return
+    }
+    if (!signal.aborted) onOpen(document)
+  }, [onOpen])
+
   const read = useCallback((load: () => Promise<ClipboardImage | null>) => {
     void operate('正在读取图片…', async signal => {
       const next = await load()
@@ -119,9 +146,11 @@ export default function ImageIntake({ disabled, onBusyChange, onOpen, onSettings
       if (!next) throw new Error('剪贴板中没有图片。请先复制图片或截图。')
       setImage(next)
       setDraft(undefined)
-      setCompileError('')
+      setProviders(undefined)
+      setSelected(undefined)
+      await recognize(next, undefined, signal)
     })
-  }, [operate])
+  }, [operate, recognize])
 
   useEffect(() => {
     function shortcut(event: KeyboardEvent) {
@@ -149,49 +178,11 @@ export default function ImageIntake({ disabled, onBusyChange, onOpen, onSettings
     }
   }, [read])
 
-  function recognizeAndCompile() {
-    if (!image || (!hasSource && !provider)) return
-    void operate(draft ? '正在处理图片…' : '正在保存原图…', async signal => {
-      let document = draft
-      if (!document) {
-        const { path } = await editorCall<{ path: string }>('library.imageInput', { ...image })
-        if (signal.aborted) return
-        document = await editorCall<EditorDocument>('workspace.create', {
-          pdfPath: path, title: image.name, inputKind: 'image',
-        })
-        if (signal.aborted) return
-        setDraft(document)
-      }
-      if (!document.source.trim()) {
-        setProgress('正在识别图片…')
-        document = await runImageTask<EditorDocument>('workspace.reconstruct',
-          { id: document.id, firstPage: 1, lastPage: 1, agent: provider }, signal, setProgress)
-        if (signal.aborted) return
-        setDraft(document)
-      }
-      setProgress('正在编译 PDF…')
-      setCompileError('')
-      try {
-        await runImageTask<EditorCompileResult>('workspace.compile', { id: document.id, source: document.source }, signal, setProgress)
-        if (signal.aborted) return
-        const compiled = await editorCall<EditorDocument>('workspace.open', { id: document.id })
-        if (signal.aborted) return
-        if (!compiled.previewPath || !compiled.previewCurrent) {
-          setDraft(compiled)
-          throw new Error('LaTeX 源码已更新，请重新编译。')
-        }
-        onOpen(compiled)
-      } catch (failure) {
-        if (!signal.aborted) setCompileError(errorMessage(failure))
-      }
-    })
-  }
-
   return (
     <section className="mc-card intake">
       <span aria-hidden="true">📝</span>
       <h2>从题目图片录入</h2>
-      <p>按 Ctrl+V 粘贴截图，或选择 PNG、JPG 图片。选择识别模型后，点击「开始识别并编译」。</p>
+      <p>按 Ctrl+V 粘贴截图，或选择 PNG、JPG 图片。系统会自动选择支持图片的模型，生成 LaTeX，编译 PDF 后打开修订。</p>
       <div className="intake-actions">
         <button type="button" className={image ? undefined : 'primary'} disabled={busy}
           onClick={() => read(window.utopia.readClipboardImage)}>粘贴图片</button>
@@ -206,42 +197,24 @@ export default function ImageIntake({ disabled, onBusyChange, onOpen, onSettings
         <div className="image-intake-preview">
           <img src={`data:image/${image.type};base64,${image.data}`} alt="原图" />
           <small>{image.name}</small>
-          <div className="intake-actions">
-            <label className="image-intake-model">
-              识别模型
-              <select value={provider} disabled={busy || hasSource || options.length === 0}
-                onChange={event => setSelected(options.find(option => option.id === event.target.value)?.id ?? '')}>
-                <option value="" disabled>{providers || providerError ? '选择支持图片的模型连接' : '正在检测模型连接…'}</option>
+          {selected && progress && <p>识别模型 · {options.find(option => option.id === selected)?.label}</p>}
+          {error && !busy && <div className="intake-actions">
+            {options.length > 1 && <label className="image-intake-model">
+              重试模型
+              <select value={selected ?? ''} onChange={event =>
+                setSelected(options.find(option => option.id === event.target.value)?.id)}>
                 {options.map(option => <option key={option.id} value={option.id}>{option.label}</option>)}
               </select>
-            </label>
-            <button type="button" className="primary" disabled={busy || (!hasSource && !provider)} onClick={recognizeAndCompile}>
-              {hasSource ? '重新编译并打开' : '开始识别并编译'}
-            </button>
-            {compileError && draft && (
-              <button type="button" disabled={busy} onClick={() => onOpen(draft, compileError)}>打开工作台修正源码</button>
-            )}
-          </div>
-          {providerError ? (
-            <p className="image-intake-error" role="alert">模型连接检测失败。{providerError}</p>
-          ) : providers && !options.length ? (
-            <p>请在设置中配置支持图片的 Agent。</p>
-          ) : provider && !hasSource && (
-            <p>识别使用此 Agent 中配置的模型。</p>
-          )}
-          {(providerError || (providers && !options.length)) && (
-            <button type="button" disabled={busy} onClick={onSettings}>打开模型连接设置</button>
-          )}
+            </label>}
+            <button type="button" className="primary" onClick={() => {
+              void operate('正在重试…', signal => recognize(image, draft, signal, selected))
+            }}>重试识别</button>
+            <button type="button" onClick={onSettings}>模型连接设置</button>
+          </div>}
         </div>
       )}
       {progress && <p role="status">{progress}</p>}
       {error && <p className="image-intake-error" role="alert">{error}</p>}
-      {compileError && (
-        <div className="image-intake-error" role="alert">
-          LaTeX 已保留，PDF 编译失败。
-          <details><summary>编译日志</summary><pre>{compileError}</pre></details>
-        </div>
-      )}
     </section>
   )
 }

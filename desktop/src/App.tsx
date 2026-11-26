@@ -1,6 +1,6 @@
 import { lazy, Suspense, useCallback, useEffect, useId, useRef, useState } from 'react'
 import logo from '../../static/sidebar.webp'
-import { Browse, BrowseModeSelector, emptySummary, loadBrowseMode, Paper, Statistics } from './Bank'
+import { Browse, BrowseModeSelector, emptySummary, loadBrowseMode, Paper, questionTitle, Statistics } from './Bank'
 import type { Question, Summary } from './Bank'
 import ContextChat from './ContextChat'
 import FileInfoDialog from './FileInfoDialog'
@@ -8,7 +8,7 @@ import type { QuestionFileInfo } from './FileInfoDialog'
 import ImageIntake from './ImageIntake'
 import PaneDivider from './PaneDivider'
 import SettingsConnections from './SettingsConnections'
-import type { EditorHandle } from './Editor'
+import type { EditorHandle, ProjectDocumentAction } from './Editor'
 import type { EditorDocument } from './editorContract'
 import { useSolutionBatch } from './useSolutionBatch'
 import type { BatchResultRow } from './useSolutionBatch'
@@ -46,6 +46,7 @@ type Prefs = {
   library: string
   provider: string
   tokens: Record<string, string>
+  chartPalette: string[]
   skins: Record<string, { name: string; accent: string }>
 }
 const call = window.utopia.call
@@ -74,8 +75,10 @@ export default function App() {
   const [fileInfo, setFileInfo] = useState<{ path: string; document: EditorDocument }>()
   const [browseRevision, setBrowseRevision] = useState(0)
   const [browseMode, setBrowseMode] = useState(loadBrowseMode)
+  const [browseFilters, setBrowseFilters] = useState<HTMLDivElement | null>(null)
   const [documentView, setDocumentView] = useState<DocumentView>('draft')
   const [openProjectId, setOpenProjectId] = useState<string>()
+  const [projectActionBusy, setProjectActionBusy] = useState(false)
   const workbenchId = useId()
   const [reviewProposalId, setReviewProposalId] = useState<string>()
   const solutionBatch = useSolutionBatch()
@@ -162,11 +165,7 @@ export default function App() {
     browseAutoOpen.current = next === 'browse' && !doc?.questionPath && !workbenchQuestion
     if (next === 'browse') {
       setWorkbenchOpen(true)
-      if (page !== 'browse') setDocumentView('project')
       if (page === 'browse' && browseAutoOpen.current) setBrowseRevision(revision => revision + 1)
-    } else {
-      setOpenProjectId(undefined)
-      setDocumentView('draft')
     }
     setPage(next)
     setEditing(false)
@@ -196,7 +195,10 @@ export default function App() {
     setWorkbenchQuestion(question)
     setWorkbenchOpen(docked)
     setOpenProjectId(undefined)
-    if (route !== 'browse' || reviewId) setDocumentView('draft')
+    setProjectActionBusy(false)
+    const canPreview = Boolean(result.source.trim()) && !result.exam && !reviewId && !compileError
+    const imageReady = result.inputKind !== 'image' || Boolean(result.previewPath && result.previewCurrent !== false)
+    setDocumentView(canPreview && imageReady ? 'project' : 'draft')
     setEditing(!docked)
     setPage(route)
   }, [])
@@ -316,17 +318,42 @@ export default function App() {
   const showEmptyWorkbench = browseWorkbench && !docking
   const showDockedEditor = rightVisible && docking
   const documentVisible = editing || showDockedEditor
-  const showProjectControls = (browseWorkbench && docking) || Boolean(doc?.papilotProject)
   const canOpenProject = Boolean(doc?.source.trim())
-  const showProject = documentVisible && showProjectControls && documentView === 'project' && canOpenProject
+  const showProject = documentVisible && documentView === 'project' && canOpenProject
   const projectReady = Boolean(doc && openProjectId === doc.id)
   const requestProject = showProject && !projectReady && !busy
+  const projectFailed = useCallback((message: string) => {
+    setOpenProjectId(undefined)
+    setDocumentView('draft')
+    setError(message)
+  }, [])
   useEffect(() => window.utopia.onPapilotShortcut(() => {
     if (documentVisible && projectReady) setDocumentView('project')
   }), [documentVisible, projectReady])
   const remainingWidth = browseWorkbench ? MODULE_BROWSER_MIN : BROWSE_MIN
   const maximumDock = `min(${WORKBENCH_FRACTION * 100}%, calc(100% - ${remainingWidth}px))`
   const dockSize = `clamp(min(${WORKBENCH_MIN}px, ${maximumDock}), ${workbenchWidth}px, ${maximumDock})`
+  async function openDocumentAction(action: ProjectDocumentAction) {
+    const editor = editorRef.current
+    if (!editor || projectActionBusy) return
+    const token = routeGeneration.current
+    setProjectActionBusy(true)
+    setError('')
+    try {
+      if (projectReady) await editor.syncProject()
+      if (token !== routeGeneration.current) return
+      setDocumentView('draft')
+      editor.openProjectAction(action)
+    } catch (error) {
+      if (token === routeGeneration.current) {
+        setDocumentView('draft')
+        setError(errorText(error))
+        if (action === 'source') editor.openProjectAction(action)
+      }
+    } finally {
+      setProjectActionBusy(false)
+    }
+  }
   return (
     <div className={'app-shell' + (collapsed ? ' compact' : '')}>
       <aside className="app-nav">
@@ -366,10 +393,15 @@ export default function App() {
       </aside>
       <main className="workspace">
         {!editing && (
-          <header className="top-strip">
+          <header className={'top-strip' + (browseWorkbench ? ' browse-top-strip' : '')}>
             <span>
               高中物理题库 <b> / </b> {pages[page][1]}
             </span>
+            {browseWorkbench && <BrowseModeSelector mode={browseMode} onChange={mode => {
+              setBrowseMode(mode)
+              localStorage.setItem('browse.mode', mode)
+              mainScroll.current?.scrollTo(0, 0)
+            }} />}
             <div>
               {doc && page !== 'stats' && page !== 'exam' && !browseWorkbench && (
                 <button
@@ -382,11 +414,7 @@ export default function App() {
             </div>
           </header>
         )}
-        {browseWorkbench && <BrowseModeSelector mode={browseMode} onChange={mode => {
-          setBrowseMode(mode)
-          localStorage.setItem('browse.mode', mode)
-          mainScroll.current?.scrollTo(0, 0)
-        }} />}
+        {browseWorkbench && <div className="browse-filter-slot" ref={setBrowseFilters} />}
         {error && (
           <div className="error-strip" role="alert">
             {error}
@@ -401,7 +429,7 @@ export default function App() {
           </div>
         )}
         <div className={'workspace-body' + (rightVisible ? ' workspace-with-dock' : '')}>
-          {!editing && page === 'stats' && <Statistics />}
+          {!editing && page === 'stats' && <Statistics prefs={prefs} />}
           {!editing && page !== 'stats' && <>
             <div ref={mainScroll} className="main-scroll">
               <div className="page-content">
@@ -410,6 +438,7 @@ export default function App() {
                     key={page}
                     {...actionProps}
                     {...{ summary, query, setQuery, browseMode }}
+                    filtersHost={browseWorkbench ? browseFilters : undefined}
                     search={page === 'search'}
                     onRows={page === 'browse' ? showBrowseRows : setRows}
                     revision={browseRevision}
@@ -683,28 +712,34 @@ export default function App() {
         {doc && (
           <div
             id={showEmptyWorkbench ? undefined : workbenchId}
-            className={'editor-mount' + (showDockedEditor ? ' browse-workbench' : '') + (showProjectControls ? ' document-with-project' : '')}
+            className={'editor-mount document-editor' + (showDockedEditor ? ' browse-workbench' : '')}
             role={showDockedEditor ? 'region' : undefined}
             aria-label={showDockedEditor ? '题目工作台' : undefined}
             style={{ display: documentVisible ? 'flex' : 'none', width: showDockedEditor ? dockSize : undefined }}
           >
-            {showProjectControls && <div className="document-view-controls" role="group" aria-label="工作台视图">
-              <button type="button" aria-pressed={!showProject} onClick={() => setDocumentView('draft')}>
-                题库文稿
-              </button>
-              <button type="button" disabled={!canOpenProject} aria-pressed={showProject} onClick={() => {
-                if (showProject) return
-                setOpenProjectId(undefined)
-                setDocumentView('project')
-              }}>
-                项目工作台
-              </button>
+            {showProject && <div className="document-actions" role="group" aria-label="题目操作">
+              <strong title={doc.title}>{workbenchQuestion ? questionTitle(workbenchQuestion) : doc.title}</strong>
+              <button type="button" disabled={projectActionBusy} onClick={() => void openDocumentAction('source')}>LaTeX 源码</button>
+              {doc.pdfPath && <button type="button" disabled={projectActionBusy} onClick={() => void openDocumentAction('original')}>
+                {doc.inputKind === 'image' ? '原图对照' : '原卷对照'}
+              </button>}
+              {Boolean(doc.proposals?.length) && <button type="button" disabled={!projectReady || projectActionBusy} onClick={() => void openDocumentAction('changes')}>审阅改动</button>}
+              {questionPath && <button type="button" disabled={!projectReady || projectActionBusy} onClick={() => void openDocumentAction('metadata')}>文件信息</button>}
+              {!doc.exam && <button type="button" disabled={!projectReady || projectActionBusy || doc.proposals?.some(item => item.status === 'pending')} onClick={() => void openDocumentAction('save')}>
+                {doc.questionPath ? '保存原题' : '另存入库'}
+              </button>}
+              {showDockedEditor && <button type="button" onClick={() => setEditing(true)}>展开</button>}
+              <button type="button" onClick={() => {
+                if (!editing) setWorkbenchOpen(false)
+                setEditing(false)
+                void summaryLoad()
+              }}>{editing ? '返回' : '关闭'}</button>
             </div>}
             {showProject && (projectReady ? (
-              <Suspense fallback={<p className="document-project-loading" role="status">正在载入项目工作台…</p>}>
-                <PapilotWorkspace />
+              <Suspense fallback={<p className="document-project-loading" role="status">正在载入 PDF 校订…</p>}>
+                <PapilotWorkspace onError={projectFailed} />
               </Suspense>
-            ) : <p className="document-project-loading" role="status">正在打开题目项目…</p>)}
+            ) : <p className="document-project-loading" role="status">正在准备题目 PDF…</p>)}
             <div className="editor-mount" hidden={showProject} style={{ display: showProject ? 'none' : 'flex' }}>
               <Suspense fallback={<p>正在载入编辑器…</p>}>
                 <Editor
@@ -718,19 +753,18 @@ export default function App() {
                   onEditFileInfo={questionPath && (workbenchQuestion || page === 'browse') ? (document) => setFileInfo({ path: questionPath, document }) : undefined}
                   active={documentVisible && !showProject}
                   requestProject={requestProject}
-                  openProjectManuscript={page === 'browse'}
-                  onOpenPapilot={(automatic) => {
+                  openProjectManuscript
+                  onOpenPapilot={() => {
                     if (routeToken !== routeGeneration.current) return
                     setOpenProjectId(doc.id)
-                    if (!automatic) {
-                      setDocumentView('project')
-                      if (!editing) setWorkbenchOpen(true)
-                    }
                   }}
+                  onOpenPdfRevision={canOpenProject ? () => {
+                    setOpenProjectId(undefined)
+                    setDocumentView('project')
+                  } : undefined}
                   onProjectOpenFailed={(message) => {
                     if (routeToken !== routeGeneration.current) return
-                    setDocumentView('draft')
-                    setError(message)
+                    projectFailed(message)
                   }}
                   reviewProposalId={reviewProposalId}
                   onChange={next => {

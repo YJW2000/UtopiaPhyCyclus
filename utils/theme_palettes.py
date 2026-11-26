@@ -43,6 +43,41 @@ def palette(skin=None,mode='light'):
     return dict(zip(FIELDS,_ROWS[normalize_skin(skin)]['dark' if mode=='dark' else 'light']))
 
 
+_CHART_PALETTES = {
+    'claude_warm': (
+        ('#CC785C', '#D97706', '#B56345', '#E0AA46', '#8D5B4C', '#C26A27', '#78350F', '#4A7C59', '#B45309'),
+        ('#D97757', '#E59275', '#F59E0B', '#F29E7E', '#FBBF24', '#CC785C', '#F09A78', '#92400E', '#52B788'),
+    ),
+    'liquid_glass': (
+        ('#D97706', '#F59E0B', '#B45309', '#FBBF24', '#92400E', '#D97706', '#F59E0B', '#10B981'),
+        ('#F59E0B', '#FBBF24', '#D97706', '#FDE68A', '#B45309', '#F59E0B', '#FBBF24', '#34D399'),
+    ),
+    'crystal_glass': (
+        ('#0891B2', '#06B6D4', '#14B8A6', '#0EA5E9', '#6366F1', '#10B981', '#22D3EE', '#0D9488'),
+        ('#22D3EE', '#67E8F9', '#2DD4BF', '#38BDF8', '#A5B4FC', '#34D399', '#06B6D4', '#5EEAD4'),
+    ),
+    'sage': (
+        ('#2d7a54', '#3b8a65', '#52b788', '#10b981', '#059669', '#15803d', '#047857', '#22c55e', '#16a34a'),
+        ('#4ade80', '#52b788', '#86efac', '#34d399', '#6ee7b7', '#4ade80', '#10b981', '#22c55e', '#a7f3d0'),
+    ),
+    'default': (
+        ('#14161B', '#2D3139', '#475569', '#64748B', '#3B82F6', '#6366F1', '#0EA5E9', '#10B981'),
+        ('#6366F1', '#818CF8', '#A5B4FC', '#38BDF8', '#818CF8', '#7DD3FC', '#6366F1', '#34D399'),
+    ),
+}
+
+
+def chart_palette(skin, mode):
+    aliases = {
+        'claude_design': 'claude_warm', 'claude': 'claude_warm', 'sand': 'claude_warm',
+        'ghani_glass': 'liquid_glass', 'glass': 'liquid_glass', 'amber_gold': 'liquid_glass',
+        'black_gold': 'liquid_glass', 'green': 'sage',
+    }
+    name = (skin or '').strip().lower()
+    light, dark = _CHART_PALETTES.get(aliases.get(name, name), _CHART_PALETTES['default'])
+    return list(dark if mode == 'dark' else light)
+
+
 def theme_tokens(skin=None,mode='light'):
     skin=normalize_skin(skin)
     c=palette(skin,mode)

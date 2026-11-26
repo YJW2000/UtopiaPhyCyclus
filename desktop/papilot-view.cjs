@@ -5,6 +5,17 @@ const { pathToFileURL } = require('node:url');
 const WINDOW_CSS = `
   .desktop-window-drag { display: none !important; }
   [data-desktop] .main, [data-desktop] .toolbar { --desktop-window-space: 0px !important; }
+  .manuscript-side .new-task-panel:not(.has-notes) .new-task-start {
+    margin-block: 0;
+    padding-block: 4px 16px;
+  }
+  .manuscript-side .new-task-panel:not(.has-notes) .new-task-welcome {
+    flex-direction: row;
+    justify-content: flex-start;
+    margin-bottom: 4px;
+  }
+  .manuscript-side .new-task-welcome svg { width: 20px; height: 20px; }
+  .manuscript-side .new-task-panel:not(.has-notes) .skill-menu { top: calc(100% + 6px); bottom: auto; }
 `;
 
 function originOf(url) {
@@ -156,19 +167,21 @@ function createPapilotView({ runtime, resources, getWindow }) {
       if (!requested) return;
       if (!view) view = createView();
       const target = view;
+      const parent = getWindow();
+      if (!parent || parent.isDestroyed() || target.webContents.isDestroyed()) return;
+      if (attached !== parent) {
+        parent.contentView.addChildView(target);
+        attached = parent;
+      }
+      // The manuscript starts its initial state request only while visible.
+      resize();
       if (loadedRuntime !== started || origin !== started.origin || originOf(target.webContents.getURL()) !== started.origin) {
         origin = started.origin;
         readyForFolder = false;
         await target.webContents.loadURL(origin);
         loadedRuntime = started;
       }
-      const parent = getWindow();
-      if (!requested || !parent || parent.isDestroyed() || target.webContents.isDestroyed()) return;
-      if (attached !== parent) {
-        parent.contentView.addChildView(target);
-        attached = parent;
-      }
-      resize();
+      if (!requested || attached !== parent || target.webContents.isDestroyed()) return;
       if (pendingTask) target.webContents.send('papilot:open-task', pendingTask);
       pendingTask = undefined;
     })().finally(() => { showJob = undefined; });

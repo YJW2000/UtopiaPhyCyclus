@@ -377,11 +377,12 @@ def test_image_draft_persists_and_recognizes_editable_source(workspace, monkeypa
     assert workspace.resume({})['inputKind'] == 'image'
     assert workspace.list({})[0]['inputKind'] == 'image'
 
-    queued = workspace.reconstruct({'id': ident, 'firstPage': 1, 'lastPage': 1})
+    queued = workspace.reconstruct({'id': ident, 'firstPage': 1, 'lastPage': 1, 'agent': 'claude'})
     task = wait_task(workspace.jobs.get, queued)
     assert task['status'] == 'succeeded', task.get('error')
     recognized = task['result']
     assert recognized['inputKind'] == 'image' and len(calls) == 1
+    assert workspace.open({'id': ident})['recognitionAgent'] == 'claude'
     ref = graphics_references(recognized['source'])[0]['path']
     assert recognized['source'].index('图片题') < recognized['source'].index(ref)
     with Image.open(directory / ref) as crop:

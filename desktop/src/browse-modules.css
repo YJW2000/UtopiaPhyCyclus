@@ -2,19 +2,18 @@
   container-type: inline-size;
 }
 
-.page-content .module-browser h1 {
-  font-size: 23px;
-  margin-bottom: 12px;
+.browse-top-strip {
+  flex-wrap: wrap;
+  justify-content: flex-start;
+  gap: 6px 18px;
 }
 
-.browse-modes {
+.browse-top-strip .browse-modes {
   display: flex;
   flex-wrap: wrap;
   flex: 0 0 auto;
   gap: 6px;
-  padding: 7px 18px;
-  background: var(--mc-surface);
-  border-bottom: 1px solid var(--mc-border);
+  padding-block: 5px;
 }
 
 .browse-modes label {
@@ -47,6 +46,49 @@
   accent-color: var(--mc-action-text);
 }
 
+.browse-filter-slot {
+  min-width: 0;
+  background: var(--mc-surface);
+  border-bottom: 1px solid var(--mc-border);
+}
+
+.browse-filter-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 7px 12px;
+  padding: 7px 18px;
+}
+
+.browse-filter-bar .search-field {
+  flex: 1 1 200px;
+  width: auto;
+  min-width: min(100%, 200px);
+  max-width: 400px;
+  margin: 0;
+  padding: 6px 10px;
+  background: var(--mc-input-bg);
+  border: 1px solid var(--mc-border-strong);
+  border-radius: 8px;
+  font-size: 13px;
+}
+
+.browse-filter-bar .filters {
+  flex-wrap: wrap;
+  margin: 0;
+}
+
+.browse-filter-bar .filters select,
+.browse-filter-bar .browse-settings select {
+  min-width: 0;
+  max-width: 100%;
+  padding: 5px 7px;
+  background: var(--mc-input-bg);
+  border: 1px solid var(--mc-border-strong);
+  border-radius: 8px;
+  font-size: 13px;
+}
+
 .module-browser .mc-card {
   padding: 12px;
   margin-bottom: 12px;
@@ -54,20 +96,27 @@
 }
 
 .browse-modules {
+  order: 1;
+  flex: 1 0 100%;
   display: flex;
   flex-wrap: wrap;
   gap: 5px;
-  margin-top: 10px;
 }
 
-.page-content .browse-modules button {
+.browse-modules button {
   padding: 4px 7px;
+  border: 1px solid var(--mc-border);
   border-radius: 7px;
+  background: var(--mc-surface);
   font-size: 12px;
   overflow-wrap: anywhere;
 }
 
-.page-content .browse-modules button[aria-pressed='true'] {
+.browse-modules button:hover {
+  border-color: var(--mc-accent);
+}
+
+.browse-modules button[aria-pressed='true'] {
   border-color: var(--mc-action-bg);
   background: var(--mc-action-bg);
   color: var(--mc-action-text);
@@ -75,25 +124,25 @@
 
 .browse-settings {
   display: flex;
+  flex: 1 1 auto;
   flex-wrap: wrap;
   gap: 8px;
-  margin-top: 10px;
 }
 
 .browse-settings label {
-  display: grid;
-  flex: 1 1 115px;
+  display: flex;
+  align-items: center;
   min-width: 0;
-  gap: 4px;
+  gap: 6px;
+  white-space: nowrap;
   color: var(--mc-muted);
   font-size: 12px;
 }
 
-.page-content .browse-settings select {
-  width: 100%;
+.browse-settings select {
+  width: auto;
   min-width: 0;
-  padding: 5px;
-  font-size: 13px;
+  max-width: 240px;
 }
 
 .browse-question-group + .browse-question-group {
@@ -137,25 +186,6 @@
 }
 
 @container (max-width: 270px) {
-  .browse-modules {
-    gap: 4px;
-  }
-
-  .page-content .browse-modules button {
-    padding: 3px 5px;
-  }
-
-  .module-browser .filters {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
-  .module-browser .filters select {
-    min-width: 0;
-    padding: 5px;
-    font-size: 13px;
-  }
-
   .module-browser .section-head {
     margin-bottom: 8px;
   }

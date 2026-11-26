@@ -563,6 +563,8 @@ class DesktopWorkspace:
                 else:
                     self._replace_source(latest, source)
                 latest['originalPage'] = original_page
+                if latest.get('inputKind') == 'image':
+                    latest['recognitionAgent'] = selected_provider()
                 self._write(latest)
                 return self._public(latest)
 
@@ -670,8 +672,9 @@ class DesktopWorkspace:
             if document.get('_sourceDirectory'):
                 resources.append(Path(document['_sourceDirectory']))
             result = prepare_question_project(root, document['source'], document['title'], self.runtime,
-                                              resources, self._defaults(document))
-            if not document.get('papilotProject'):
+                                              resources, self._defaults(document),
+                                              synced_hash=document.get('_papilotImportedHash', ''))
+            if not document.get('papilotProject') or document.get('_papilotImportedHash') != result['baseline']:
                 document['papilotProject'] = True
                 document['_papilotImportedHash'] = result['baseline']
                 self._write(document, touch=False)

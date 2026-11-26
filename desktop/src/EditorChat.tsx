@@ -66,7 +66,6 @@ export function EditorChat({ messages, proposals, source, attachments, selection
     <header className="wb-chat-header"><span className="wb-agent-dot" aria-hidden="true">✦</span><strong>题目助手</strong>{busy && <span className="wb-chat-progress" role="status">{status || '正在处理…'}</span>}</header>
     <div className="wb-chat-scroll" ref={list}>
       <div className="wb-chat-history">
-        {empty && <div className="wb-chat-welcome"><span aria-hidden="true">✦</span><h2>接下来要修改什么？</h2></div>}
         {visibleMessages.map(message => {
           const proposal = proposals.find(item => item.id === message.proposalId)
           return <article className={`wb-message wb-message-${message.role}`} key={message.id}>

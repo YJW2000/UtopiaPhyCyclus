@@ -10,6 +10,7 @@ import shutil
 from tempfile import TemporaryDirectory
 from typing import Iterable
 
+from services.file_service import atomic_write_bytes
 from services.tex_compile_service import build_preview_document
 from services.tex_import_service import read_tex
 from utils.image_assets import IMAGE_SUFFIXES, _uncomment, graphics_references, resolve_image
@@ -38,6 +39,7 @@ _NO_SUFFIX_COMMANDS = _LIST_COMMANDS | {'include', 'documentclass', 'LoadClass',
 _TEXT_SUFFIXES = {'.tex', '.cls', '.sty', '.bib', '.bbl', '.def', '.cfg', '.tikz'}
 _RESOURCE_SUFFIXES = _TEXT_SUFFIXES | set(IMAGE_SUFFIXES) | {'.eps', '.svg', '.csv', '.dat', '.txt'}
 _PRIVATE_NAMES = {'.git', '.env', 'node_modules'}
+_CONFLICT = 'LaTeX 草稿和 PDF 校订中的源码均已修改。两个版本均已保留，请核对后再同步。'
 
 
 def _digest(payload: str | bytes) -> str:
@@ -183,13 +185,77 @@ def _write_files(folder: Path, files: dict[str, str | bytes]) -> None:
         output.write_bytes(data.encode('utf-8') if isinstance(data, str) else data)
 
 
+def _payload(path: Path, root: Path) -> bytes | None:
+    if path.resolve() != root / path.relative_to(root):
+        raise ValueError('PDF 校订的项目文件位置无效。')
+    try:
+        return path.read_bytes()
+    except FileNotFoundError:
+        return None
+
+
+def _refresh_project(root: Path, folder: Path, previous: dict, files: dict[str, str | bytes],
+                     source: str, record: dict, synced_hash: str) -> None:
+    planned = []
+    for relative, content in files.items():
+        file = folder / relative
+        payload = content.encode('utf-8') if isinstance(content, str) else content
+        old = _payload(file, root)
+        if old == payload:
+            continue
+        if old is not None and relative not in previous['files']:
+            raise ValueError(_CONFLICT)
+        planned.append((file, old, payload))
+    for name, content in ((_ORIGINAL, source), (_MANIFEST, json.dumps(record, ensure_ascii=False))):
+        file = root / name
+        planned.append((file, _payload(file, root), content.encode('utf-8')))
+
+    if _digest(read_question_project(root)) != synced_hash:
+        raise ValueError(_CONFLICT)
+
+    def verify(file, expected):
+        if _payload(file, root) != expected:
+            raise ValueError(_CONFLICT)
+
+    applied = []
+    try:
+        for file, old, payload in planned:
+            file.parent.mkdir(parents=True, exist_ok=True)
+            atomic_write_bytes(str(file), payload, before_replace=lambda: verify(file, old))
+            applied.append((file, old, payload))
+    except BaseException:
+        for file, old, payload in reversed(applied):
+            if _payload(file, root) != payload:
+                continue  # A concurrent editor owns the newer contents.
+            if old is None:
+                file.unlink(missing_ok=True)
+            else:
+                atomic_write_bytes(str(file), old, before_replace=lambda: verify(file, payload))
+        raise
+
+
 def prepare_question_project(root: Path, source: str, title: str, project_dir: Path,
-                             resource_dirs: Iterable[Path], defaults: dict) -> dict[str, str]:
-    """Copy a draft and its literal dependencies. A prepared paper is always reopened in place."""
+                             resource_dirs: Iterable[Path], defaults: dict, *,
+                             synced_hash: str | None = None) -> dict[str, str]:
+    """Copy a draft and refresh a synced project without replacing its folder."""
+    baseline = _digest(source)
+    previous = None
     if root.exists() or root.is_symlink():
-        folder, record = _project(root)
+        folder, previous = _project(root)
         _safe_file(folder, _ENTRY)
-        return {'folder': str(folder), 'baseline': record['baseline']}
+        if synced_hash is None:
+            return {'folder': str(folder), 'baseline': previous['baseline']}
+        synced_hash = synced_hash or previous['baseline']
+        if baseline == synced_hash:
+            return {'folder': str(folder), 'baseline': baseline}
+        project_hash = _digest(read_question_project(root))
+        if project_hash == baseline:
+            return {'folder': str(folder), 'baseline': baseline}
+        if project_hash != synced_hash:
+            raise ValueError(_CONFLICT)
+        dependency_snapshots = root / 'imports'
+        if dependency_snapshots.is_dir() and dependency_snapshots.resolve() == dependency_snapshots:
+            resource_dirs = (*resource_dirs, dependency_snapshots)
     if not source.strip():
         raise ValueError('请先录入或识别题目 LaTeX。')
     root.parent.mkdir(parents=True, exist_ok=True)
@@ -221,12 +287,14 @@ def prepare_question_project(root: Path, source: str, title: str, project_dir: P
         assets.files[_QUESTION] = assets.rewrite(_normalized_tex(body), primary).rstrip('\n') + '\n'
     assets.files[_ENTRY] = main
 
-    name = _filename(title)
+    name = folder.name if previous is not None else _filename(title)
     if name.casefold() in (_MANIFEST, _ORIGINAL, 'imports'):
         name += ' 题目'
-    baseline = _digest(source)
     record = {'version': 1, 'folder': name, 'baseline': baseline, 'standalone': standalone,
               'engineAdded': engine_added, 'files': {key: _digest(value) for key, value in assets.files.items()}}
+    if previous is not None:
+        _refresh_project(root, folder, previous, assets.files, source, record, synced_hash)
+        return {'folder': str(folder), 'baseline': baseline}
     with TemporaryDirectory(prefix='.papilot-question-', dir=root.parent) as temporary:
         staged = Path(temporary) / 'project'
         staged.mkdir()

@@ -1,7 +1,7 @@
 import json
 import datetime
 from .chart_assets import echarts_script
-from .theme_palettes import retint_warm_markup
+from .theme_palettes import chart_palette, retint_warm_markup
 from .component_theme import theme_activity_chart
 
 
@@ -1102,8 +1102,6 @@ def generate_activity_curve_html(hourly_activity_by_day, skin='claude_warm', mod
 def get_chart_theme_colors(skin="claude_warm", mode="system"):
     s = (skin or "").strip().lower()
     if s in ("claude_warm", "claude_design", "claude", "sand"):
-        light_palette = ["#CC785C", "#D97706", "#B56345", "#E0AA46", "#8D5B4C", "#C26A27", "#78350F", "#4A7C59", "#B45309"]
-        dark_palette = ["#D97757", "#E59275", "#F59E0B", "#F29E7E", "#FBBF24", "#CC785C", "#F09A78", "#92400E", "#52B788"]
         light_card_bg = "#FFFDF9"
         dark_card_bg = "#26231E"
         light_border = "rgba(214, 202, 185, 0.75)"
@@ -1113,8 +1111,6 @@ def get_chart_theme_colors(skin="claude_warm", mode="system"):
         light_muted = "#756E63"
         dark_muted = "#A89F91"
     elif s in ("liquid_glass", "ghani_glass", "glass", "amber_gold", "black_gold"):
-        light_palette = ["#D97706", "#F59E0B", "#B45309", "#FBBF24", "#92400E", "#D97706", "#F59E0B", "#10B981"]
-        dark_palette = ["#F59E0B", "#FBBF24", "#D97706", "#FDE68A", "#B45309", "#F59E0B", "#FBBF24", "#34D399"]
         light_card_bg = "rgba(255, 255, 255, 0.86)"
         dark_card_bg = "rgba(32, 26, 20, 0.86)"
         light_border = "rgba(217, 119, 6, 0.25)"
@@ -1124,8 +1120,6 @@ def get_chart_theme_colors(skin="claude_warm", mode="system"):
         light_muted = "#78716C"
         dark_muted = "#C4B5A5"
     elif s == 'crystal_glass':
-        light_palette=['#0891B2','#06B6D4','#14B8A6','#0EA5E9','#6366F1','#10B981','#22D3EE','#0D9488']
-        dark_palette=['#22D3EE','#67E8F9','#2DD4BF','#38BDF8','#A5B4FC','#34D399','#06B6D4','#5EEAD4']
         light_card_bg='rgba(255,255,255,.84)'
         dark_card_bg='rgba(16,29,44,.85)'
         light_border='rgba(6,182,212,.3)'
@@ -1135,8 +1129,6 @@ def get_chart_theme_colors(skin="claude_warm", mode="system"):
         light_muted='#475569'
         dark_muted='#94A3B8'
     elif s in ("sage", "green"):
-        light_palette = ["#2d7a54", "#3b8a65", "#52b788", "#10b981", "#059669", "#15803d", "#047857", "#22c55e", "#16a34a"]
-        dark_palette = ["#4ade80", "#52b788", "#86efac", "#34d399", "#6ee7b7", "#4ade80", "#10b981", "#22c55e", "#a7f3d0"]
         light_card_bg = "#ffffff"
         dark_card_bg = "#14221b"
         light_border = "#d8e2da"
@@ -1146,8 +1138,6 @@ def get_chart_theme_colors(skin="claude_warm", mode="system"):
         light_muted = "#526e5e"
         dark_muted = "#8aa897"
     else:  # fintech / default
-        light_palette = ["#14161B", "#2D3139", "#475569", "#64748B", "#3B82F6", "#6366F1", "#0EA5E9", "#10B981"]
-        dark_palette = ["#6366F1", "#818CF8", "#A5B4FC", "#38BDF8", "#818CF8", "#7DD3FC", "#6366F1", "#34D399"]
         light_card_bg = "#FFFFFF"
         dark_card_bg = "#1E293B"
         light_border = "rgba(15, 23, 42, 0.08)"
@@ -1157,8 +1147,8 @@ def get_chart_theme_colors(skin="claude_warm", mode="system"):
         light_muted = "#64748B"
         dark_muted = "#94A3B8"
     return {
-        "light_palette": light_palette,
-        "dark_palette": dark_palette,
+        "light_palette": chart_palette(s, 'light'),
+        "dark_palette": chart_palette(s, 'dark'),
         "light_card_bg": light_card_bg,
         "dark_card_bg": dark_card_bg,
         "light_border": light_border,

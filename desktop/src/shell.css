@@ -219,33 +219,43 @@ summary:focus-visible {
   color: var(--mc-muted);
   margin: 0;
 }
-.document-with-project {
+.document-editor {
   flex-direction: column;
 }
-.editor-mount > .document-view-controls {
+.editor-mount > .document-actions {
   flex: 0 0 auto;
   display: flex;
+  align-items: center;
   flex-wrap: wrap;
-  gap: 4px;
-  padding: 6px 10px;
+  gap: 3px 5px;
+  padding: 4px 9px;
   border-bottom: 1px solid var(--mc-border);
   background: var(--mc-surface);
 }
-.document-view-controls button {
-  padding: 4px 10px;
-  border: 1px solid transparent;
-  border-radius: 8px;
-  background: transparent;
+.document-actions strong {
+  flex: 1 1 10ch;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   color: var(--mc-muted);
-  font: inherit;
-}
-.document-view-controls button[aria-pressed='true'] {
-  border-color: var(--mc-border);
-  background: var(--mc-accent-soft);
-  color: var(--mc-text);
+  font-size: 13px;
   font-weight: 600;
 }
-.document-view-controls button:disabled {
+.document-actions button {
+  padding: 4px 7px;
+  border: 1px solid var(--mc-border);
+  border-radius: 7px;
+  background: transparent;
+  color: var(--mc-text);
+  font-size: 12px;
+  white-space: nowrap;
+}
+.document-actions button:enabled:hover {
+  border-color: var(--mc-accent);
+  background: var(--mc-accent-soft);
+}
+.document-actions button:disabled {
   opacity: 0.5;
 }
 .document-project-loading {

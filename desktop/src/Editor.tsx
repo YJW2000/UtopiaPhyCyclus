@@ -20,8 +20,12 @@ type View = 'preview' | 'source' | 'original' | 'compare'
 type Sheet = 'library' | 'recognize'
 type Utility = 'find' | 'bookmarks' | 'notes'
 
+export type ProjectDocumentAction = 'source' | 'original' | 'changes' | 'metadata' | 'save'
+
 export interface EditorHandle {
   saveDraft(): Promise<EditorDocument>
+  syncProject(): Promise<void>
+  openProjectAction(action: ProjectDocumentAction): void
 }
 
 interface Props {
@@ -35,8 +39,9 @@ interface Props {
   active?: boolean
   requestProject?: boolean
   openProjectManuscript?: boolean
-  onOpenPapilot?: (automatic: boolean) => void
+  onOpenPapilot?: () => void
   onProjectOpenFailed?: (message: string) => void
+  onOpenPdfRevision?: () => void
   reviewProposalId?: string
   onChange: (document: EditorDocument) => void
   onQuestionSaved?: (document: EditorDocument) => void
@@ -103,9 +108,9 @@ function initialLayout(document: EditorDocument, layoutKey: string, docked: bool
   const imageSource = document.inputKind === 'image' && Boolean(document.source.trim())
   const exam = Boolean(document.exam)
   const layout: Layout = parseStored<Layout>(layoutKey) ?? {
-    mode: exam || imageSource ? 'review' : 'split',
-    view: exam || imageSource ? 'source' : document.pdfPath && !document.source ? 'original' : 'preview',
-    pair: exam || (imageSource && document.previewPath) ? 'preview' : undefined, sync: false, chatWidth: 385, documentWidth: 50,
+    mode: exam ? 'review' : 'split',
+    view: exam || (imageSource && !document.previewPath) ? 'source' : document.pdfPath && !document.source ? 'original' : 'preview',
+    pair: exam ? 'preview' : undefined, sync: false, chatWidth: 385, documentWidth: 50,
     pdf: { preview: position(), original: position(document.originalPage), before: position(), after: position() }, sourceScroll: 0, compareText: false,
   }
   return docked ? dockLayout(layout, document) : layout
@@ -119,7 +124,7 @@ export { Editor }
 
 function Workbench({
   ref, document, examBasket = [], initialCompileError, docked = false, onExpand, onEditFileInfo,
-  active = true, requestProject, openProjectManuscript, onOpenPapilot, onProjectOpenFailed,
+  active = true, requestProject, openProjectManuscript, onOpenPapilot, onProjectOpenFailed, onOpenPdfRevision,
   reviewProposalId, onChange, onQuestionSaved, onClose,
 }: Props) {
   const draftKey = `utopia-workbench-draft-${document.id}`
@@ -155,8 +160,8 @@ function Workbench({
   const [historyAfter, setHistoryAfter] = useState(() => parseStored<string>(historyKey))
   const [showHistory, setShowHistory] = useState(false)
   const [agent, setAgent] = useState(() => {
-    const saved = parseStored<ProviderId | 'api'>(agentKey)
-    return saved === 'api' ? undefined : saved
+    const saved = parseStored<ProviderId | 'default' | 'api'>(agentKey)
+    return saved === 'api' || saved === 'default' ? undefined : saved ?? document.recognitionAgent
   })
   const [locateMode, setLocateMode] = useState(false)
   const [locatingSource, setLocatingSource] = useState(false)
@@ -296,7 +301,7 @@ function Workbench({
     return request
   }
 
-  useImperativeHandle(ref, () => ({ saveDraft: persist }))
+  useImperativeHandle(ref, () => ({ saveDraft: persist, syncProject, openProjectAction }))
 
   useEffect(() => {
     if (!changed) return
@@ -916,36 +921,42 @@ function Workbench({
     catch { /* The save status already shows the error. */ }
   }
 
-  async function transferPapilot(open: boolean, automatic = false) {
+  async function openProject() {
     if (papilotBusy) return
     setPapilotBusy(true)
-    setNotice('')
     try {
       const saved = await persist()
       if (lifecycle.current?.signal.aborted) return
-      const next = open
-        ? await window.utopia.papilotOpenQuestion(saved.id, saved.revision, openProjectManuscript)
-        : await editorCall<EditorDocument>('workspace.papilot_import', { id: saved.id, revision: saved.revision })
+      const next = await window.utopia.papilotOpenQuestion(saved.id, saved.revision, openProjectManuscript)
       if (lifecycle.current?.signal.aborted) return
-      if (open) {
-        accept(next)
-        onOpenPapilot?.(automatic)
-      } else {
-        const sourceChanged = next.source !== saved.source
-        accept(next, sourceChanged)
-        setNotice(sourceChanged ? '已将项目工作台的改动导入题库草稿。' : '项目工作台没有新的源码改动。')
-        if (sourceChanged) void compileCurrent(next.source)
-      }
-    } catch (error) {
-      const message = errorMessage(error)
-      if (automatic) onProjectOpenFailed?.(message)
-      else setNotice(message)
-    }
+      accept(next)
+      onOpenPapilot?.()
+    } catch (error) { onProjectOpenFailed?.(errorMessage(error)) }
     finally { setPapilotBusy(false) }
   }
 
+  async function syncProject() {
+    const saved = await persist()
+    const next = await editorCall<EditorDocument>('workspace.papilot_import', { id: saved.id, revision: saved.revision })
+    if (lifecycle.current?.signal.aborted || next.source === saved.source) return
+    accept(next, true)
+    setNotice('已同步 PDF 校订后的源码。')
+    void compileCurrent(next.source)
+  }
+
+  function openProjectAction(action: ProjectDocumentAction) {
+    if (action === 'source') changeView('source')
+    if (action === 'original') changePair('original')
+    if (action === 'changes') changeView('compare')
+    if (action === 'metadata') void editFileInfo()
+    if (action === 'save') {
+      if (latestRecord.current.questionPath) void saveQuestion()
+      else openSheet('library')
+    }
+  }
+
   useEffect(() => {
-    if (requestProject && !papilotBusy) void transferPapilot(true, true)
+    if (requestProject && !papilotBusy) void openProject()
   }, [requestProject, papilotBusy])
 
   const pdfReady = Boolean(pdfView?.pageCount) && layout.mode !== 'chat'
@@ -954,6 +965,10 @@ function Workbench({
     onClick: () => setUtility(value => value === id ? undefined : id),
   })
   const toolbarActions: WorkbenchAction[] = [buildUtilityAction('notes', '查看批注和标记', 'note')]
+  if (onOpenPdfRevision && (record.papilotProject || preview.path && preview.source === draft.source)) toolbarActions.unshift({
+    id: 'pdf-revision', label: record.papilotProject ? '返回 PDF 校订' : 'PDF 校订', icon: 'file', text: true,
+    disabled: Boolean(pending) || proposalBusy || compiling, onClick: onOpenPdfRevision,
+  })
   if (record.exam) toolbarActions.unshift({
     id: 'exam-add', label: '添加题目', icon: 'plus', text: true, disabled: compiling || Boolean(pending) || proposalBusy,
     onClick: () => setSelectExamQuestions(true),
@@ -983,8 +998,6 @@ function Workbench({
   const titleLabel = record.exam ? '试卷名称' : '题目标题'
   const fileActions: WorkbenchAction[] = [
     { id: 'rename', label: `编辑${titleLabel}`, onClick: () => setRenaming(true) },
-    ...(onOpenPapilot ? [{ id: 'papilot', label: '在项目工作台打开', disabled: papilotBusy || !draft.source.trim(), onClick: () => void transferPapilot(true) }] : []),
-    ...(record.papilotProject ? [{ id: 'papilot-import', label: '从项目工作台导入改动', disabled: papilotBusy, onClick: () => void transferPapilot(false) }] : []),
     ...(onEditFileInfo ? [{ id: 'file-info', label: '修改文件信息', onClick: () => void editFileInfo() }] : []),
     { id: 'save', label: savingQuestion ? '正在保存…' : record.questionPath ? '保存原题' : '另存入库', icon: 'save',
       disabled: librarySaveDisabled || Boolean(record.questionPath && pending), onClick: () => { if (record.questionPath) void saveQuestion(); else openSheet('library') } },
@@ -1077,7 +1090,7 @@ function Workbench({
         width: `clamp(min(${chatMinWidth}px, ${chatMaxFraction * 100}%), ${layout.chatWidth}px, min(${chatMaxWidth}px, ${chatMaxFraction * 100}%))`,
       } : undefined}>
         <EditorChat messages={taskMessages} proposals={taskProposals} source={draft.source} attachments={attachments} selection={selected} prompt={prompt} status={chatStatus}
-          agent={agent} onAgent={id => { setAgent(id); storeValue(agentKey, id) }}
+          agent={agent} onAgent={id => { setAgent(id); storeValue(agentKey, id ?? 'default') }}
           pending={pending} busy={Boolean(pending)} hasPdfSelection={preciseCaptures.length > 0} onPrompt={setPrompt} onAttach={files => void attachFiles(files)}
           onRemove={id => setAttachments(previous => previous.filter(item => item.id !== id))} onClearSelection={() => selectSource(null)} onSend={scope => void requestAgent('workspace.chat', scope)}
           onStop={() => void stopChat()} onApply={item => void updateProposal('apply', item)} onDismiss={item => void updateProposal('dismiss', item)} onCompare={compareProposal} />

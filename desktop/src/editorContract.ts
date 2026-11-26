@@ -1,3 +1,5 @@
+import type { ProviderId } from './settingsContract'
+
 export type PdfPanel = 'original' | 'preview' | 'before' | 'after'
 
 export interface EditorAttachment {
@@ -51,6 +53,7 @@ export interface EditorDocument {
   previewCurrent?: boolean
   chapter?: string
   inputKind?: 'image'
+  recognitionAgent?: ProviderId
   exam?: { paths: string[]; answers: boolean }
   originalPage?: number
   pdfPageCount?: number

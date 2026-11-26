@@ -18,7 +18,7 @@ from services.tex_import_service import _mask_comments, parse_tex_questions, rea
 from utils import question_index
 from utils.core_config import PAPER_TYPES, SUBJECTS
 from utils.image_assets import copy_graphics
-from utils.theme_palettes import SKINS, normalize_skin, theme_tokens
+from utils.theme_palettes import SKINS, chart_palette, normalize_skin, theme_tokens
 
 
 _FIELDS = ['题目ID', '相对文件路径', '年份', '试卷名称', '原卷题号', '知识板块', '题型', '标签', '题干', '最后修改时间']
@@ -108,6 +108,7 @@ def create_library_handlers(library: Path, state_dir: Path):
         mode = saved.get('mode') or old.get('mode') or env.get('APP_THEME_MODE')
         mode = 'dark' if mode == 'dark' else 'light'
         return {'skin': skin, 'mode': mode, 'tokens': theme_tokens(skin, mode),
+                'chartPalette': chart_palette(skin, mode),
                 'skins': {k: {'name': v['name'], 'accent': v['accent']} for k, v in SKINS.items()},
                 'provider': selected_provider(state), 'library': str(library)}
 

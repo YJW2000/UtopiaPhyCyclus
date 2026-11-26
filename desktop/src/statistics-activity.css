@@ -1,0 +1,129 @@
+.statistics-heatmap,
+.statistics-activity-curve {
+  min-width: 0;
+}
+
+.statistics-activity-summary {
+  margin: 0 0 12px;
+  color: var(--mc-muted);
+  font-size: 13px;
+}
+
+.statistics-heatmap-scroll {
+  overflow-x: auto;
+  padding-block: 7px 12px;
+  scrollbar-color: var(--mc-border-strong) transparent;
+}
+
+.statistics-heatmap-grid {
+  display: grid;
+  grid-template-columns: 18px;
+  grid-template-rows: 24px repeat(7, auto);
+  grid-auto-columns: minmax(8px, 1fr);
+  min-width: 625px;
+  gap: 3px;
+  align-items: center;
+}
+
+.statistics-heatmap-month,
+.statistics-heatmap-weekday {
+  color: var(--mc-muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.statistics-heatmap-month {
+  grid-row: 1;
+}
+
+.statistics-heatmap-weekday {
+  position: sticky;
+  z-index: 1;
+  left: 0;
+  grid-column: 1;
+  align-self: stretch;
+  display: flex;
+  align-items: center;
+  background: var(--mc-surface);
+}
+
+.statistics-heatmap-cell {
+  aspect-ratio: 1;
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--mc-muted) 22%, var(--mc-surface));
+}
+
+.statistics-heatmap-cell[data-level='1'] {
+  background: color-mix(in srgb, var(--mc-action-bg) 23%, var(--mc-surface));
+}
+
+.statistics-heatmap-cell[data-level='2'] {
+  background: color-mix(in srgb, var(--mc-action-bg) 48%, var(--mc-surface));
+}
+
+.statistics-heatmap-cell[data-level='3'] {
+  background: color-mix(in srgb, var(--mc-action-bg) 72%, var(--mc-surface));
+}
+
+.statistics-heatmap-cell[data-level='4'] {
+  background: var(--mc-action-bg);
+}
+
+.statistics-heatmap-grid .statistics-heatmap-cell:hover {
+  outline: 1px solid var(--mc-text);
+  outline-offset: 1px;
+}
+
+.statistics-heatmap-legend {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 4px;
+  margin-top: 8px;
+  color: var(--mc-muted);
+  font-size: 12px;
+}
+
+.statistics-heatmap-legend .statistics-heatmap-cell {
+  width: 12px;
+}
+
+.statistics-activity-curve {
+  background-image: radial-gradient(ellipse at top right, var(--mc-accent-soft), transparent 70%);
+}
+
+.statistics-activity-days {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px;
+  width: fit-content;
+  max-width: 100%;
+  margin-bottom: 8px;
+  border: 1px solid var(--mc-border);
+  border-radius: 16px;
+  padding: 3px;
+  background: var(--mc-surface-soft);
+}
+
+.page-content .statistics-activity-days button {
+  margin: 0;
+  border: 0;
+  border-radius: 999px;
+  padding: 3px 8px;
+  background: transparent;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.page-content .statistics-activity-days button:hover {
+  background: var(--mc-accent-soft);
+}
+
+.page-content .statistics-activity-days button[aria-pressed='true'] {
+  background: var(--mc-action-bg);
+  color: var(--mc-action-text);
+}
+
+.statistics-activity-curve .statistics-hourly-curve {
+  height: 232px;
+}

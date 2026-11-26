@@ -1,6 +1,9 @@
 import { useEffect, useMemo, useState } from 'react'
+import { createPortal } from 'react-dom'
 import type { BatchResultRow, useSolutionBatch } from './useSolutionBatch'
 import './browse-modules.css'
+import { StatisticsDistributions } from './StatisticsDistributions'
+import { StatisticsActivity } from './StatisticsActivity'
 import './statistics.css'
 
 export interface Question {
@@ -162,86 +165,18 @@ interface LibraryStatistics {
 }
 
 const numberFormat = new Intl.NumberFormat('zh-CN')
-const dateFormat = new Intl.DateTimeFormat('sv-SE')
+type ChartPreferences = { tokens: Record<string, string>; chartPalette: string[] }
 
-function StatisticsDistribution({ title, counts }: { title: string; counts: Counts }) {
-  const rows = Object.entries(counts).sort(([, first], [, second]) => second - first)
-  const maximum = Math.max(1, rows[0]?.[1] ?? 0)
-  return (
-    <section className="mc-card">
-      <h2>{title}</h2>
-      {rows.length ? <ul className="statistics-distribution">
-        {rows.map(([label, count]) => (
-          <li key={label}>
-            <span>{label}</span>
-            <span className="statistics-track" aria-hidden="true">
-              <span style={{ width: `${100 * count / maximum}%` }} />
-            </span>
-            <strong>{numberFormat.format(count)}</strong>
-          </li>
-        ))}
-      </ul> : <p>暂无数据</p>}
-    </section>
-  )
-}
-
-function StatisticsActivity({ daily, hourly }: { daily: Counts; hourly: Record<string, Counts> }) {
-  const days = useMemo(() => {
-    const date = new Date()
-    date.setDate(date.getDate() - 364)
-    return Array.from({ length: 365 }, (_, index) => {
-      const day = { date: dateFormat.format(date), weekday: date.getDay(), index }
-      date.setDate(date.getDate() + 1)
-      return day
-    })
-  }, [])
-  const today = days[days.length - 1].date
-  const [selectedDay, setSelectedDay] = useState(today)
-  const dateOptions = [...new Set([...days.slice(-7).map(day => day.date), ...Object.keys(daily)])].sort().reverse()
-  const dayCounts = days.map(day => daily[day.date] ?? 0)
-  const dailyTotal = dayCounts.reduce((total, count) => total + count, 0)
-  const dailyMaximum = Math.max(1, ...dayCounts)
-  const hours = Array.from({ length: 24 }, (_, hour) => String(hour).padStart(2, '0'))
-  const hourCounts = hours.map(hour => hourly[selectedDay]?.[hour] ?? 0)
-  const hourMaximum = Math.max(1, ...hourCounts)
-
-  return (
-    <section className="mc-card statistics-activity">
-      <h2>录入与修改活动</h2>
-      <p>最近 365 天 · {numberFormat.format(dailyTotal)} 次活动</p>
-      <div className="statistics-calendar" role="img" aria-label={`从 ${days[0].date} 到 ${today} 的每日活动热力图`}>
-        {days.map(({ date, weekday, index }) => {
-          const count = dayCounts[index]
-          return <span key={date} title={`${date} · ${numberFormat.format(count)} 次`} style={{
-            gridRow: weekday + 1,
-            gridColumn: Math.floor((days[0].weekday + index) / 7) + 1,
-            background: count ? `color-mix(in srgb, var(--mc-action-bg) ${35 + 65 * count / dailyMaximum}%, var(--mc-surface))` : undefined,
-          }} />
-        })}
-      </div>
-      <div className="statistics-chart-labels" aria-hidden="true"><span>{days[0].date}</span><span>{today}</span></div>
-      <label className="statistics-hour-select">
-        分时活动
-        <select value={selectedDay} onChange={event => setSelectedDay(event.target.value)}>
-          {dateOptions.map(date => <option key={date}>{date}</option>)}
-        </select>
-      </label>
-      <p>{numberFormat.format(daily[selectedDay] ?? 0)} 次活动</p>
-      <ul className="statistics-hourly" aria-label={`${selectedDay} 的每小时活动`}>
-        {hours.map((hour, index) => {
-          const count = hourCounts[index]
-          return <li key={hour} title={`${hour}:00 · ${numberFormat.format(count)} 次`}>
-            <span aria-hidden="true" style={{ height: `${100 * count / hourMaximum}%` }} />
-            <span className="statistics-sr-only">{hour}:00 · {numberFormat.format(count)} 次</span>
-          </li>
-        })}
-      </ul>
-      <div className="statistics-chart-labels" aria-hidden="true"><span>00:00</span><span>12:00</span><span>23:00</span></div>
-    </section>
-  )
-}
-
-export function Statistics() {
+export function Statistics({ prefs }: { prefs: ChartPreferences | null }) {
+  const theme = useMemo(() => {
+    const css = getComputedStyle(document.documentElement)
+    const color = (name: string) => prefs?.tokens[name] || css.getPropertyValue(name).trim()
+    const accent = color('--mc-accent')
+    return {
+      surface: color('--mc-surface'), text: color('--mc-text'), muted: color('--mc-muted'),
+      border: color('--mc-border'), accent, palette: prefs?.chartPalette ?? [accent, '#E0AA46', '#4A7C59', '#8D5B4C'],
+    }
+  }, [prefs])
   const [stats, setStats] = useState<LibraryStatistics>()
   const [failed, setFailed] = useState(false)
   const [attempt, setAttempt] = useState(0)
@@ -279,11 +214,10 @@ export function Statistics() {
               <dd>{value}</dd>
             </div>)}
           </dl>
-          <StatisticsActivity daily={stats.daily_activity} hourly={stats.hourly_activity_by_day} />
-          <div className="statistics-distributions">
-            <StatisticsDistribution title="知识板块分布" counts={stats.subject_counts} />
-            <StatisticsDistribution title="题型分布" counts={stats.type_counts} />
-            <StatisticsDistribution title="难度分布" counts={stats.difficulty_dist} />
+          <div className="statistics-charts">
+            <StatisticsActivity daily={stats.daily_activity} hourly={stats.hourly_activity_by_day} theme={theme} />
+            <StatisticsDistributions subjects={stats.subject_counts} types={stats.type_counts}
+              difficulty={stats.difficulty_dist} theme={theme} />
           </div>
         </> : failed ? <section className="mc-card">
           <p role="alert">无法加载数据统计。</p>
@@ -302,6 +236,7 @@ export function Browse({
   setQuery,
   search,
   browseMode,
+  filtersHost,
   onRows,
   revision,
   previewPath,
@@ -313,6 +248,7 @@ export function Browse({
   setQuery: (q: string) => void
   search: boolean
   browseMode: BrowseMode
+  filtersHost?: HTMLElement | null
   onRows: (rows: Question[]) => void
   revision: number
   previewPath?: string
@@ -403,10 +339,8 @@ export function Browse({
   const pageSelection = resultRows.filter(row => selectedPaths?.has(row.path)).length
   const allSelected = resultRows.length > 0 && pageSelection === resultRows.length
   const selection = batch && selectedPaths && { paths: selectedPaths, disabled: selectionDisabled, select: batch.select }
-  return (
-    <div className={search ? undefined : 'module-browser'}>
-      <h1>{search ? '🔎 题目查找' : '🔍 全局浏览'}</h1>
-      <section className="mc-card">
+  const filters = (
+      <section className={search ? 'mc-card' : 'browse-filter-bar'} aria-label={search ? undefined : '全局浏览筛选'}>
         <input
           className="search-field"
           aria-label="搜索题库"
@@ -504,6 +438,12 @@ export function Browse({
           )}
         </div>
       </section>
+  )
+
+  return (
+    <div className={search ? undefined : 'module-browser'}>
+      {search && <h1>🔎 题目查找</h1>}
+      {search ? filters : filtersHost && createPortal(filters, filtersHost)}
       <section className="mc-card">
         <div className="section-head">
           <h2>{search ? '检索结果' : paperBrowse ? selectedPaper?.paper || '题目' : moduleBrowse && subject ? subject : '题目'}</h2>
