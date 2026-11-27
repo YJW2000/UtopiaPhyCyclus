@@ -4,7 +4,7 @@ UtopiaPhyCyclus（乌托邦高中物理题库助手）面向高中物理教师�
 
 本项目基于 **JinLingxi（槿灵兮）** 的 [MathCyclus 数学题库助手](https://github.com/JinLingxi/MathCyclus---Lingxi-Question-Bank-Assistant) 改造，物理版由 [YJW2000](https://github.com/YJW2000) 维护。原作 MIT 许可及署名见 [LICENSE](LICENSE) 和 [NOTICE.md](NOTICE.md)。
 
-- **Windows x64 桌面预览版** [下载 v1.2.0-desktop.12 安装器](https://github.com/YJW2000/UtopiaPhyCyclus/releases/download/v1.2.0-desktop.12/UtopiaPhyCyclus-Desktop-Preview-1.2.0-desktop.12-windows-x64.exe) · [发行说明与校验值](https://github.com/YJW2000/UtopiaPhyCyclus/releases/tag/v1.2.0-desktop.12)
+- **Windows x64 桌面预览版** [下载 v1.2.0-desktop.16 安装器](https://github.com/YJW2000/UtopiaPhyCyclus/releases/download/v1.2.0-desktop.16/UtopiaPhyCyclus-Desktop-Preview-1.2.0-desktop.16-windows-x64.exe) · [发行说明与校验值](https://github.com/YJW2000/UtopiaPhyCyclus/releases/tag/v1.2.0-desktop.16)
 - **Windows x64 经典便携版** [下载 v1.2.0 ZIP](https://github.com/YJW2000/UtopiaPhyCyclus/releases/download/v1.2.0/UtopiaPhyCyclus-1.2.0-windows-x64.zip)，完整解压后双击 `UtopiaPhyCyclus.exe`。
 
 桌面版安装后，在「设置 → 本地题库」中选择原来包含 `chapters` 的目录即可继续使用已有题库。「架构介绍」提供截图教程和「规范指南」，「TeX 录入」可打开演示题。更多说明见[安装与重新构建](docs/发行与安装.md)和[更新记录](CHANGELOG.md)。

@@ -505,22 +505,40 @@ class DesktopWorkspace:
             return read_file_info(self.library, params['path'])
 
     def save_file_info(self, params):
-        from services.desktop_file_info import read_file_info, save_file_info
+        from services.desktop_file_info import (
+            read_file_info, rebase_question_assets, save_file_info, update_question_header, update_question_tags,
+        )
 
-        with self.lock:
+        with self.lock, self.bank_lock:
             document = self._read(params.get('id'))
             self._check_revision(document, params)
             path = self._linked_bank_file(document, params.get('path'))
             before = read_file_info(self.library, params['path'])
+            if document.get('_questionHash') and document['_questionHash'] != before['sourceHash']:
+                raise ValueError('原题文件已有新版本。请从题库重新打开原题，再核对工作稿中的修改。')
             keys = ('year', 'paperType', 'paper', 'number', 'subject')
+            source = document['source']
+            was_clean = _sha(source) == document.get('_questionDraftHash')
             # Validate the editable draft before changing its bank file.
-            replace_parsed_problem_header(document['source'], (before[key] for key in keys))
+            update_question_header(source, tuple(before[key] for key in keys))
             saved = save_file_info(self.library, params['path'], params.get('fields'), params.get('expectedHash'))
             target, chapter = self._question(saved['path'])
-            updated = replace_parsed_problem_header(document['source'], (saved[key] for key in keys))
+            updated = update_question_header(source, tuple(saved[key] for key in keys))
+            if saved['tags'] != before['tags']:
+                updated = update_question_tags(updated, saved['tags'])
+            original_dir = Path(document.get('_sourceDirectory', path.parent))
+            updated = rebase_question_assets(updated, self.library, original_dir, target.parent,
+                                             draft_dir=self._directory(document['id']))
             self._replace_source(document, updated)
             document['_origin'] = os.path.normcase(str(target))
+            document['_sourceDirectory'] = str(target.parent)
             document['chapter'] = chapter
+            document['questionPath'] = saved['path']
+            document['_questionHash'] = saved['sourceHash']
+            if was_clean:
+                document['_questionDraftHash'] = _sha(updated)
+            else:
+                document.pop('_questionDraftHash', None)
             if document['title'] == path.stem:
                 document['title'] = target.stem
             self._write(document)

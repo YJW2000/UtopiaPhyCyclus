@@ -9,7 +9,7 @@ import re
 from tempfile import mkstemp
 
 from services.file_service import atomic_write_bytes, backup_existing_file
-from services.tex_import_service import decode_tex, repair_problem_headers, replace_parsed_problem_header
+from services.tex_import_service import _mask_comments, decode_tex, repair_problem_headers, replace_parsed_problem_header
 from utils import question_index as index
 from utils.core_config import PAPER_TYPES
 from utils.image_assets import _uncomment, graphics_references, resolve_image
@@ -103,7 +103,28 @@ def _updated_fields(fields, previous):
     return updated
 
 
-def _with_tags(source, tags):
+def _restore_missing_problem_header(source, fields):
+    """Restore the opening of a bank fragment with a single orphaned closing."""
+    masked = _mask_comments(source)
+    markers = list(re.finditer(r'\\(begin|end)\{problem\}', masked))
+    if len(markers) != 1 or markers[0][1] != 'end' or not all(fields):
+        return source
+    if re.search(r'\\(?:documentclass|usepackage)\b|\\(?:begin|end)\s*\{document\}|(?m:^---.+\.tex---\s*$)', masked):
+        return source
+    stem = re.search(r'(?m)^[^\S\n]*\S', masked[:markers[0].start()])
+    if stem is None:
+        return source
+    header = r'\begin{problem}' + ''.join('{' + value + '}' for value in fields)
+    newline = '\r\n' if '\r\n' in source else '\n'
+    return source[:stem.start()] + header + newline + source[stem.start():]
+
+
+def update_question_header(source, fields):
+    restored = _restore_missing_problem_header(source, fields)
+    return replace_parsed_problem_header(repair_problem_headers(restored), fields)
+
+
+def update_question_tags(source, tags):
     tag_line = f'% 标签: {tags}'
     block = _META.search(source)
     if block is None:
@@ -126,9 +147,18 @@ def _resolve_input(name, library, parent):
     return None
 
 
-def _rebase_assets(source, library, old_parent, new_parent):
+def rebase_question_assets(source, library, old_parent, new_parent, *, draft_dir=None):
+    if old_parent == new_parent:
+        return source
     edits = []
     for ref in graphics_references(source):
+        if draft_dir is not None:
+            try:
+                resolve_image(ref['path'], draft_dir, draft_dir, source)
+            except (OSError, ValueError):
+                pass
+            else:
+                continue
         try:
             original = resolve_image(ref['path'], library, old_parent, source)
         except (OSError, ValueError):
@@ -144,6 +174,8 @@ def _rebase_assets(source, library, old_parent, new_parent):
             edits.append((ref['path_start'], ref['path_end'], replacement))
     for ref in _INPUT.finditer(_uncomment(source)):
         name = ref['path'].strip().strip('"')
+        if draft_dir is not None and _resolve_input(name, draft_dir, draft_dir) is not None:
+            continue
         original = _resolve_input(name, library, old_parent)
         if original is not None and original != _resolve_input(name, library, new_parent):
             replacement = original.relative_to(library).as_posix() if original.is_relative_to(library) else original.as_posix()
@@ -202,26 +234,29 @@ def save_file_info(library: Path, path: str, fields: dict, expected_hash: str) -
             raise ValueError('原题文件已有新版本，请重新打开文件信息后重试。')
         updated_fields = _updated_fields(fields, previous)
         header_changed = any(updated_fields[field] != previous[field] for field in _FIELDS)
-        if not header_changed and updated_fields['tags'] == previous['tags']:
-            return previous
+        values = tuple(updated_fields[field] for field in _FIELDS)
 
         new_path = old_path
         if header_changed:
-            values = tuple(updated_fields[field] for field in _FIELDS)
             chapter = updated_fields['subject'].split('，', 1)[0]
             new_path = chapters / chapter / updated_fields['year'] / generate_filename(*values)
             if not new_path.is_relative_to(chapters) or new_path.resolve() != new_path:
                 raise ValueError('目标目录不在当前题库内。')
-            source = replace_parsed_problem_header(repair_problem_headers(source), values)
+            source = update_question_header(source, values)
+        else:
+            restored = _restore_missing_problem_header(source, values)
+            if restored == source and updated_fields['tags'] == previous['tags']:
+                return previous
+            source = restored
         if updated_fields['tags'] != previous['tags']:
-            source = _with_tags(source, updated_fields['tags'])
+            source = update_question_tags(source, updated_fields['tags'])
         moved = new_path != old_path
         new_relative = new_path.relative_to(chapters).as_posix()
         if moved:
             existing = _get_row(conn, new_relative) if index._key(new_relative) != index._key(relative) else {}
             if new_path.exists() or existing:
                 raise FileExistsError('目标题目文件或索引已存在，请调整文件信息。')
-            source = _rebase_assets(source, library, old_path.parent, new_path.parent)
+            source = rebase_question_assets(source, library, old_path.parent, new_path.parent)
         payload = _encode_source(source, previous_bytes)
 
         def recheck_source():
