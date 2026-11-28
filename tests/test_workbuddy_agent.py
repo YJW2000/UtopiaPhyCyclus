@@ -12,6 +12,20 @@ from services import local_agent_workbuddy as workbuddy
 from services import local_agent_acp
 
 
+def test_vision_acp_detects_a_stalled_startup(tmp_path):
+    worker = str(Path(local_agent_acp.__file__))
+    payload = {
+        'provider': 'agy',
+        'command': [sys.executable, '-c', 'import sys; sys.stdin.read()'],
+        'prompt': [],
+        'startupTimeout': 0.2,
+    }
+    reply = subprocess.run([sys.executable, '-B', '-X', 'utf8', worker], cwd=tmp_path,
+                           input=json.dumps(payload), text=True, encoding='utf-8', capture_output=True, timeout=10)
+    assert reply.returncode == 1
+    assert 'ACP startup timed out' in reply.stderr
+
+
 def test_workbuddy_does_not_use_ordinary_path_launchers(tmp_path, monkeypatch):
     monkeypatch.setenv('LOCALAPPDATA', str(tmp_path))
     for name in ('UTOPIA_WORKBUDDY_BIN', 'PAPILOT_WORKBUDDY_BIN'):
@@ -56,6 +70,7 @@ import json
 import os
 from pathlib import Path
 import sys
+import time
 
 assert '--agent' not in sys.argv and '--tools=' in sys.argv, sys.argv
 assert '--strict-mcp-config' in sys.argv and '--no-session-persistence' in sys.argv
@@ -82,12 +97,15 @@ send(id=10, method='session/request_permission', params={'options': [{'optionId'
 assert json.loads(sys.stdin.readline())['result']['outcome']['optionId'] == 'no'
 send(method='session/update', params={'update': {'sessionUpdate': 'agent_message_chunk', 'content': {'type': 'text', 'text': '{"reply":"ok"}'}}})
 send(id=turn['id'], result={'stopReason': 'end_turn'})
+# The real launcher owns a persistent server which stays alive after EOF.
+sys.stdin.read()
+time.sleep(15)
 ''', encoding='utf-8')
     launcher = tmp_path / 'WorkBuddy Launcher.cmd'
     launcher.write_text('@echo off\n"%UTOPIA_TEST_PYTHON%" -B -X utf8 "%UTOPIA_TEST_STUB%" %*\n', encoding='ascii')
     workspace = tmp_path / 'task'
     workspace.mkdir()
-    env = {name: os.environ[name] for name in ('SystemRoot', 'PATH', 'COMSPEC', 'TEMP', 'TMP') if name in os.environ}
+    env = dict(os.environ)
     env.update(UTOPIA_TEST_PYTHON=sys.executable, UTOPIA_TEST_STUB=str(fake))
     command = workbuddy.workbuddy_acp_command(str(launcher), workspace, env)
     prompt = [{'type': 'text', 'text': 'fixture'}, {'type': 'image', 'mimeType': 'image/png', 'data': 'YWJj'}]
@@ -96,3 +114,5 @@ send(id=turn['id'], result={'stopReason': 'end_turn'})
                            text=True, encoding='utf-8', capture_output=True, timeout=15)
     assert reply.returncode == 0, reply.stderr
     assert json.loads(reply.stdout) == {'reply': 'ok'}
+    workbuddy.cleanup_workbuddy_directory(workspace)
+    assert not workspace.exists()

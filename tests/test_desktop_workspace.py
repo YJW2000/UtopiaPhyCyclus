@@ -342,13 +342,24 @@ def test_open_original_reconstruct_and_keep_real_crop(workspace, tmp_path, monke
     assert crop.read_bytes().startswith(b'\x89PNG\r\n\x1a\n')
 
 
-def test_image_draft_persists_and_recognizes_editable_source(workspace, monkeypatch):
+@pytest.mark.parametrize(('provider', 'model', 'budget'), [
+    ('workbuddy', 'hy4flash-free', 60),
+    ('claude', None, 180),
+    ('agy', 'gemini-pro-orchestrator-neon', 180),
+])
+def test_image_draft_persists_and_recognizes_editable_source(workspace, monkeypatch, provider, model, budget):
+    from services.desktop_model import selected_model, selected_provider
+
     calls = []
 
-    def agent(prompt, schema, images):
+    def agent(prompt, schema, images, *, timeout):
         calls.append(images)
         assert len(images) == 1 and images[0].startswith(b'\x89PNG\r\n\x1a\n')
         assert 'physics-image-to-latex' in prompt and '磁场向里用 \\times、向外用 \\bullet' in prompt
+        assert len(prompt) < 1500
+        assert timeout == budget and selected_provider() == provider and selected_model() == model
+        with Image.open(BytesIO(images[0])) as submitted:
+            assert submitted.size == (320, 240)
         return dict(status='ok', fragments=[dict(question_id='q1', number='1', kind='stem', latex='图片题 [[FIG:f1]]')],
                     figures=[dict(id='f1', rect=[0.25, 0.25, 0.75, 0.75])])
 
@@ -377,12 +388,12 @@ def test_image_draft_persists_and_recognizes_editable_source(workspace, monkeypa
     assert workspace.resume({})['inputKind'] == 'image'
     assert workspace.list({})[0]['inputKind'] == 'image'
 
-    queued = workspace.reconstruct({'id': ident, 'firstPage': 1, 'lastPage': 1, 'agent': 'claude'})
+    queued = workspace.reconstruct({'id': ident, 'firstPage': 1, 'lastPage': 1, 'agent': provider, 'model': model})
     task = wait_task(workspace.jobs.get, queued)
     assert task['status'] == 'succeeded', task.get('error')
     recognized = task['result']
     assert recognized['inputKind'] == 'image' and len(calls) == 1
-    assert workspace.open({'id': ident})['recognitionAgent'] == 'claude'
+    assert recognized['recognitionAgent'] == provider and recognized.get('recognitionModel') == model
     ref = graphics_references(recognized['source'])[0]['path']
     assert recognized['source'].index('图片题') < recognized['source'].index(ref)
     with Image.open(directory / ref) as crop:

@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+import shutil
+from time import sleep
 
 from services.codebuddy_agent import restricted_acp_args
 from services.desktop_tool_paths import managed_papilot_agent
@@ -38,3 +40,19 @@ def workbuddy_acp_command(executable, directory, env):
     # requests and give the process neither project files nor usable tools.
     env['CODEBUDDY_CODE_DISABLE_BACKGROUND_TASKS'] = '1'
     return [executable, '--acp', *restricted_acp_args(directory, env)]
+
+
+def cleanup_workbuddy_directory(directory):
+    # Windows may release a descendant's current-directory handle shortly
+    # after taskkill returns. Retry only that transient sharing violation.
+    for delay in (0, 0.05, 0.1, 0.2, 0.4):
+        if delay:
+            sleep(delay)
+        try:
+            shutil.rmtree(directory)
+            return
+        except FileNotFoundError:
+            return
+        except OSError as error:
+            if getattr(error, 'winerror', None) != 32:
+                return

@@ -29,7 +29,7 @@ def check_cancelled():
         raise TaskCancelled()
 
 
-def _kill_tree(process):
+def kill_process_tree(process):
     if os.name == 'nt':
         try:
             subprocess.run(['taskkill.exe', '/PID', str(process.pid), '/T', '/F'],
@@ -75,5 +75,5 @@ def run(command, *, input=None, capture_output=False, timeout=None, kill_tree_on
                     if deadline is not None and time.monotonic() >= deadline:
                         raise subprocess.TimeoutExpired(command, timeout, partial.stdout, partial.stderr) from None
         except (TaskCancelled, subprocess.TimeoutExpired):
-            _kill_tree(process)
+            kill_process_tree(process)
             raise

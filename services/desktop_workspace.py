@@ -1,6 +1,7 @@
 """Persistent desktop workbench for drafts, PDF previews and reviewed revisions."""
 from __future__ import annotations
 
+from contextlib import nullcontext
 from datetime import datetime, timezone
 import hashlib
 import json
@@ -9,7 +10,7 @@ from pathlib import Path, PureWindowsPath
 import re
 import shutil
 import sqlite3
-from tempfile import NamedTemporaryFile
+from tempfile import NamedTemporaryFile, TemporaryDirectory
 from threading import RLock
 from uuid import uuid4
 
@@ -561,40 +562,54 @@ class DesktopWorkspace:
         first = params.get('firstPage', 1)
         last = params.get('lastPage')
         page_count = document['pdfPageCount']
-        source = import_pdf(original, resource_dir=self._directory(document['id']),
-                            defaults=self._defaults(document), first_page=first, last_page=last, pages=pages,
-                            prompt_library=self.library,
-                            pdf_lock=self.pdf_lock, on_progress=lambda page, total: job.progress(
-                                '正在识别图片' if document.get('inputKind') == 'image' else f'正在识别原卷第 {page} 页',
-                                page=page, total=total, pageCount=page_count))
-        check_cancelled()
-        original_page = min(pages) if pages else first
-        if document['source'].strip() and source != document['source']:
-            changes = changed_ranges(document['source'], source)
-            proposal = self._proposal(document, changes, 'document', None, job.progress)
-        else:
+        image_input = document.get('inputKind') == 'image'
+        provider, model = selected_provider(), selected_model()
+        fast_model = provider == 'workbuddy' and model in {'hy4flash', 'hy4flash-free'}
+        directory = self._directory(document['id'])
+        # A first recognition can publish its crops and source together.
+        # Reconstructing a populated draft needs the assets for proposal compilation.
+        staging = (TemporaryDirectory(prefix='.image-recognition-', dir=directory)
+                   if image_input and not document['source'].strip() else nullcontext(directory))
+
+        with staging as stage:
+            source = import_pdf(
+                original, resource_dir=stage, defaults=self._defaults(document),
+                first_page=first, last_page=last, pages=pages, prompt_library=self.library,
+                pdf_lock=self.pdf_lock, image_input=image_input, image_timeout=60 if fast_model else 180,
+                on_progress=lambda page, total: job.progress(
+                    '正在准备识别图片' if image_input else f'正在识别原卷第 {page} 页',
+                    page=page, total=total, pageCount=page_count),
+                on_stage=job.progress,
+            )
+            check_cancelled()
+            original_page = min(pages) if pages else first
             proposal = None
+            if document['source'].strip() and source != document['source']:
+                changes = changed_ranges(document['source'], source)
+                proposal = self._proposal(document, changes, 'document', None, job.progress)
 
-        def commit():
-            with self.lock:
-                latest = self._read(document['id'])
-                self._require_same_source(document, latest)
-                if proposal:
-                    latest['proposals'].append(proposal)
-                else:
-                    self._replace_source(latest, source)
-                latest['originalPage'] = original_page
-                if latest.get('inputKind') == 'image':
-                    latest['recognitionAgent'] = selected_provider()
-                    model = selected_model()
-                    if model:
-                        latest['recognitionModel'] = model
+            def commit():
+                with self.lock:
+                    latest = self._read(document['id'])
+                    self._require_same_source(document, latest)
+                    if Path(stage) != directory:
+                        for assets in Path(stage).iterdir():
+                            assets.rename(directory / assets.name)
+                    if proposal:
+                        latest['proposals'].append(proposal)
                     else:
-                        latest.pop('recognitionModel', None)
-                self._write(latest)
-                return self._public(latest)
+                        self._replace_source(latest, source)
+                    latest['originalPage'] = original_page
+                    if image_input:
+                        latest['recognitionAgent'] = provider
+                        if model:
+                            latest['recognitionModel'] = model
+                        else:
+                            latest.pop('recognitionModel', None)
+                    self._write(latest)
+                    return self._public(latest)
 
-        job.publish(commit)
+            job.publish(commit)
 
     def _compile_pdf(self, document, source, engine='xelatex'):
         check_cancelled()

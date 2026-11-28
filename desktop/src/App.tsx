@@ -1,7 +1,7 @@
 import { lazy, Suspense, useCallback, useEffect, useId, useRef, useState } from 'react'
 import logo from '../../static/sidebar.webp'
-import { Browse, BrowseModeSelector, emptySummary, loadBrowseMode, Paper, questionTitle, Statistics } from './Bank'
-import type { Question, Summary } from './Bank'
+import { BasketButton, Browse, BrowseModeSelector, DeleteQuestionsDialog, emptySummary, loadBrowseMode, Paper, questionTitle, Statistics } from './Bank'
+import type { DeleteQuestionsResult, Question, Summary } from './Bank'
 import ContextChat from './ContextChat'
 import FileInfoDialog from './FileInfoDialog'
 import type { QuestionFileInfo } from './FileInfoDialog'
@@ -11,8 +11,9 @@ import PaneDivider from './PaneDivider'
 import SettingsConnections from './SettingsConnections'
 import type { EditorHandle, ProjectDocumentAction } from './Editor'
 import type { EditorDocument } from './editorContract'
-import { useSolutionBatch } from './useSolutionBatch'
+import { normalizedPath, useSolutionBatch } from './useSolutionBatch'
 import type { BatchResultRow } from './useSolutionBatch'
+import { animateBasketAddition } from './basketAnimation'
 
 const WORKBENCH_MIN = 400
 const BROWSE_MIN = 170
@@ -66,7 +67,6 @@ export default function App() {
     [editing, setEditing] = useState(false),
     [recent, setRecent] = useState<EditorDocument[]>([])
   const [imageIntakeBusy, setImageIntakeBusy] = useState(false)
-  const [initialCompileError, setInitialCompileError] = useState<string>()
   const [workbenchQuestion, setWorkbenchQuestion] = useState<Question>()
   const [workbenchOpen, setWorkbenchOpen] = useState(false)
   const [workbenchWidth, setWorkbenchWidth] = useState(() => {
@@ -83,6 +83,9 @@ export default function App() {
   const workbenchId = useId()
   const [reviewProposalId, setReviewProposalId] = useState<string>()
   const solutionBatch = useSolutionBatch()
+  const [deletingQuestions, setDeletingQuestions] = useState(false)
+  const [deleteTargets, setDeleteTargets] = useState<Question[]>()
+  const [deleteResult, setDeleteResult] = useState<DeleteQuestionsResult>()
   const [busy, setBusy] = useState(''),
     [error, setError] = useState(''),
     [collapsed, setCollapsed] = useState(
@@ -100,6 +103,7 @@ export default function App() {
   const routeGeneration = useRef(0)
   const browseAutoOpen = useRef(false)
   const editorRef = useRef<EditorHandle>(null)
+  const basketIcon = useRef<HTMLSpanElement>(null)
   const mainScroll = useRef<HTMLDivElement>(null)
   const [paste, setPaste] = useState(''),
     [recentLoading, setRecentLoading] = useState(false)
@@ -108,6 +112,7 @@ export default function App() {
     for (const [k, v] of Object.entries(p.tokens))
       document.documentElement.style.setProperty(k, v)
     void window.utopia.tintWindowControls(p.tokens['--mc-text']).catch(() => {})
+    void window.utopia.papilotTheme(p.tokens).catch(() => {})
     localStorage.setItem('desktop.theme', JSON.stringify(p.tokens))
   }
   function summaryLoad() {
@@ -163,6 +168,7 @@ export default function App() {
   }, [showingSettings])
   function navigate(next: Page) {
     routeGeneration.current++
+    setDeleteResult(undefined)
     browseAutoOpen.current = next === 'browse' && !doc?.questionPath && !workbenchQuestion
     if (next === 'browse') {
       setWorkbenchOpen(true)
@@ -188,18 +194,17 @@ export default function App() {
       if (token === routeGeneration.current) setBusy('')
     }
   }, [])
-  const showWorkspace = useCallback((result: EditorDocument, route: Page, reviewId?: string, question?: Question, compileError?: string) => {
+  const showWorkspace = useCallback((result: EditorDocument, route: Page, reviewId?: string, question?: Question) => {
     const docked = route === 'browse' || Boolean(question)
     setDoc(result)
-    setInitialCompileError(compileError)
     setReviewProposalId(reviewId)
     setWorkbenchQuestion(question)
     setWorkbenchOpen(docked)
     setOpenProjectId(undefined)
     setProjectActionBusy(false)
-    const canPreview = Boolean(result.source.trim()) && !result.exam && !reviewId && !compileError
+    const canPreview = Boolean(result.source.trim()) && !result.exam && !reviewId
     const imageReady = result.inputKind !== 'image' || Boolean(result.previewPath && result.previewCurrent !== false)
-    setDocumentView(canPreview && imageReady ? 'project' : 'draft')
+    setDocumentView(!docked && canPreview && imageReady ? 'project' : 'draft')
     setEditing(!docked)
     setPage(route)
   }, [])
@@ -250,8 +255,20 @@ export default function App() {
     if (prefs)
       localStorage.setItem('paper:' + prefs.library, JSON.stringify(list))
   }
-  function add(row: Question) {
-    if (!basket.some((r) => r.path === row.path)) changeBasket([...basket, row])
+  function addQuestions(candidates: Question[], trigger?: HTMLButtonElement) {
+    const paths = new Set(basket.map(row => normalizedPath(row.path)))
+    const added = candidates.filter(row => {
+      const path = normalizedPath(row.path)
+      if (paths.has(path)) return false
+      paths.add(path)
+      return true
+    })
+    if (!added.length) return
+    changeBasket([...basket, ...added])
+    animateBasketAddition(trigger, basketIcon.current, added.length)
+  }
+  function add(row: Question, trigger?: HTMLButtonElement) {
+    addQuestions([row], trigger)
   }
   function openPaper(newPaper = false) {
     const id = newPaper ? null : paperDraftId
@@ -279,7 +296,8 @@ export default function App() {
   }
   function open(row: Question) {
     browseAutoOpen.current = false
-    if (doc?.questionPath === row.path && workbenchQuestion?.path === row.path && !busy) {
+    const path = normalizedPath(row.path)
+    if (doc?.questionPath && workbenchQuestion && normalizedPath(doc.questionPath) === path && normalizedPath(workbenchQuestion.path) === path && !busy) {
       setWorkbenchOpen(true)
       return
     }
@@ -289,8 +307,8 @@ export default function App() {
       undefined, row))
   }
   function savedFileInfo(file: QuestionFileInfo, document: EditorDocument) {
-    const previousPath = fileInfo?.path
-    const update = (question: Question) => question.path === previousPath ? {
+    const previousPath = fileInfo && normalizedPath(fileInfo.path)
+    const update = (question: Question) => normalizedPath(question.path) === previousPath ? {
       ...question, path: file.path, year: file.year, paper: file.paper,
       number: file.number, subject: file.subject, tags: file.tags,
     } : question
@@ -309,9 +327,47 @@ export default function App() {
     setFileInfo(undefined)
     void work('正在打开题目…', () => loadWorkspace({}, 'browse', documentId, proposalId, question))
   }
+  const canDelete = Boolean(prefs) && !busy && !deletingQuestions && !projectActionBusy && !fileInfo && solutionBatch.run?.status !== 'running'
+  function requestDelete(questions: Question[]) {
+    if (!canDelete || !questions.length) return
+    setDeleteResult(undefined)
+    setDeleteTargets(questions)
+  }
+  async function deleteQuestions() {
+    if (!canDelete || !deleteTargets) return
+    setDeletingQuestions(true)
+    try {
+      const result = await call<DeleteQuestionsResult>('library.deleteQuestions', { paths: deleteTargets.map(row => row.path) })
+      const removed = new Set(result.deletedPaths.map(normalizedPath))
+      const isDeleted = (path?: string) => path !== undefined && removed.has(normalizedPath(path))
+      const remainingBasket = basket.filter(row => !isDeleted(row.path))
+      if (remainingBasket.length !== basket.length) changeBasket(remainingBasket)
+      solutionBatch.forgetQuestions(removed)
+      setRows(current => current.filter(row => !isDeleted(row.path)))
+      if (isDeleted(workbenchQuestion?.path) || isDeleted(doc?.questionPath)) {
+        browseAutoOpen.current = false
+        setDoc(null)
+        setWorkbenchQuestion(undefined)
+        setReviewProposalId(undefined)
+        setOpenProjectId(undefined)
+        setEditing(false)
+      }
+      setDeleteTargets(undefined)
+      setDeleteResult(result)
+      setCheck(undefined)
+      setBrowseRevision(revision => revision + 1)
+      void summaryLoad()
+    } finally {
+      setDeletingQuestions(false)
+    }
+  }
   const imageBusy = page === 'entry' && (imageIntakeBusy || Boolean(busy))
   const routeToken = routeGeneration.current
-  const actionProps = { open, add, basket }
+  function remove(row: Question) {
+    const path = normalizedPath(row.path)
+    changeBasket(basket.filter(item => normalizedPath(item.path) !== path))
+  }
+  const actionProps = { open, add, remove, basket, actionsDisabled: !prefs || deletingQuestions }
   const browseWorkbench = page === 'browse' && !editing
   const questionPath = workbenchQuestion?.path ?? doc?.questionPath
   const docking = Boolean(page === 'browse' ? questionPath : page === 'search' && workbenchQuestion)
@@ -319,10 +375,13 @@ export default function App() {
   const showEmptyWorkbench = browseWorkbench && !docking
   const showDockedEditor = rightVisible && docking
   const documentVisible = editing || showDockedEditor
+  const previewQuestion = (page === 'browse' || page === 'search') && questionPath
+    ? workbenchQuestion ?? [...rows, ...basket, ...summary.recent].find(row => normalizedPath(row.path) === normalizedPath(questionPath))
+    : undefined
   const canOpenProject = Boolean(doc?.source.trim())
   const showProject = documentVisible && documentView === 'project' && canOpenProject
   const projectReady = Boolean(doc && openProjectId === doc.id)
-  const requestProject = showProject && !projectReady && !busy
+  const requestProject = showProject && !projectReady && !busy && !deleteTargets
   const projectFailed = useCallback((message: string) => {
     setOpenProjectId(undefined)
     setDocumentView('draft')
@@ -371,16 +430,20 @@ export default function App() {
               <button
                 key={id}
                 data-page={id}
-                title={name}
+                title={id === 'exam' ? `组卷排版 · 试题篮 ${basket.length} 题` : name}
+                aria-label={name}
+                disabled={deletingQuestions}
                 aria-current={page === id ? 'page' : undefined}
                 onClick={() => navigate(id)}
               >
-                <span>{icon}</span>
+                <span ref={id === 'exam' ? basketIcon : undefined}>{icon}</span>
                 <span>{name}</span>
+                {id === 'exam' && basket.length > 0 && <small className="basket-count" aria-hidden="true">{basket.length}</small>}
               </button>
             )
           )}
         </nav>
+        <span className="basket-announcement" role="status" aria-atomic="true">试题篮共 {basket.length} 题</span>
         <button
           className="collapse-nav"
           aria-label={collapsed ? '展开导航' : '收起导航'}
@@ -429,6 +492,11 @@ export default function App() {
             {busy}
           </div>
         )}
+        {deleteResult && <div className="busy-strip delete-questions-result" role="status">
+          <div>已删除 {deleteResult.deletedPaths.length} 道题。
+            {deleteResult.warnings.map((warning, index) => <p key={index}>{warning}</p>)}</div>
+          <button type="button" aria-label="关闭删除提示" onClick={() => setDeleteResult(undefined)}>×</button>
+        </div>}
         <div className={'workspace-body' + (rightVisible ? ' workspace-with-dock' : '')}>
           {!editing && page === 'stats' && <Statistics prefs={prefs} />}
           {!editing && page !== 'stats' && <>
@@ -444,7 +512,10 @@ export default function App() {
                     onRows={page === 'browse' ? showBrowseRows : setRows}
                     revision={browseRevision}
                     previewPath={docking ? questionPath : undefined}
-                    batch={page === 'browse' ? { ...solutionBatch, openResult: openBatchResult } : undefined}
+                    batch={page === 'browse' ? {
+                      ...solutionBatch, openResult: openBatchResult, requestDelete, canDelete,
+                      deleting: deletingQuestions,
+                    } : undefined}
                   />
                 )}
                 {page === 'exam' && (
@@ -472,11 +543,11 @@ export default function App() {
                         disabled={Boolean(busy)}
                         onBusyChange={setImageIntakeBusy}
                         onSettings={() => navigate('settings')}
-                        onOpen={(document, compileError) => {
+                        onOpen={document => {
                           if (routeToken !== routeGeneration.current) return
                           performance.clearMarks('document-open')
                           performance.mark('document-open')
-                          showWorkspace(document, 'entry', undefined, undefined, compileError)
+                          showWorkspace(document, 'entry')
                         }} />
                     ) : (
                       <section className="mc-card intake">
@@ -680,20 +751,13 @@ export default function App() {
                   number: r.number,
                 })),
               }}
-              apply={(a) => {
+              apply={(a, trigger) => {
                 if (a.action === 'search') {
                   setQuery(a.query || '')
                   navigate('search')
                 } else if (a.action === 'add') {
                   const ids = new Set(a.ids)
-                  const saved = new Set(basket.map((r) => r.path))
-                  changeBasket([
-                    ...basket,
-                    ...[...rows, ...summary.recent].filter(
-                      (r) =>
-                        ids.has(r.id) && !saved.has(r.path) && saved.add(r.path)
-                    ),
-                  ])
+                  addQuestions([...rows, ...summary.recent].filter(row => ids.has(row.id)), trigger)
                 }
               }}
             />}
@@ -715,29 +779,37 @@ export default function App() {
           <div
             id={showEmptyWorkbench ? undefined : workbenchId}
             className={'editor-mount document-editor' + (showDockedEditor ? ' browse-workbench' : '')}
+            inert={deletingQuestions}
             role={showDockedEditor ? 'region' : undefined}
             aria-label={showDockedEditor ? '题目工作台' : undefined}
             style={{ display: documentVisible ? 'flex' : 'none', width: showDockedEditor ? dockSize : undefined }}
           >
-            {showProject && <div className="document-actions" role="group" aria-label="题目操作">
-              <strong title={doc.title}>{workbenchQuestion ? questionTitle(workbenchQuestion) : doc.title}</strong>
-              <button type="button" disabled={projectActionBusy} onClick={() => void openDocumentAction('source')}>LaTeX 源码</button>
-              {doc.pdfPath && <button type="button" disabled={projectActionBusy} onClick={() => void openDocumentAction('original')}>
-                {doc.inputKind === 'image' ? '原图对照' : '原卷对照'}
-              </button>}
-              {Boolean(doc.proposals?.length) && <button type="button" disabled={!projectReady || projectActionBusy} onClick={() => void openDocumentAction('changes')}>审阅改动</button>}
-              {questionPath && <button type="button" disabled={!projectReady || projectActionBusy} onClick={() => void openDocumentAction('metadata')}>文件信息</button>}
-              {!doc.exam && <button type="button" disabled={!projectReady || projectActionBusy || doc.proposals?.some(item => item.status === 'pending')} onClick={() => void openDocumentAction('save')}>
-                {doc.questionPath ? '保存原题' : '另存入库'}
-              </button>}
-              {showDockedEditor && <button type="button" onClick={() => setEditing(true)}>展开</button>}
-              <button type="button" onClick={() => {
-                if (!editing) setWorkbenchOpen(false)
-                setEditing(false)
-                void summaryLoad()
-              }}>{editing ? '返回' : '关闭'}</button>
+            {(showProject || previewQuestion) && <div className="document-actions" role="group" aria-label="题目操作">
+              <strong title={doc.title}>{previewQuestion ? questionTitle(previewQuestion) : doc.title}</strong>
+              {previewQuestion && <>
+                <BasketButton row={previewQuestion} {...actionProps} actionsDisabled={actionProps.actionsDisabled || Boolean(busy)} />
+                <button type="button" className="delete-questions-button" aria-haspopup="dialog"
+                  disabled={!canDelete} onClick={() => requestDelete([previewQuestion])}>删除该题</button>
+              </>}
+              {showProject && <>
+                <button type="button" disabled={projectActionBusy} onClick={() => void openDocumentAction('source')}>LaTeX 源码</button>
+                {doc.pdfPath && <button type="button" disabled={projectActionBusy} onClick={() => void openDocumentAction('original')}>
+                  {doc.inputKind === 'image' ? '原图对照' : '原卷对照'}
+                </button>}
+                {Boolean(doc.proposals?.length) && <button type="button" disabled={!projectReady || projectActionBusy} onClick={() => void openDocumentAction('changes')}>审阅改动</button>}
+                {questionPath && <button type="button" disabled={!projectReady || projectActionBusy} onClick={() => void openDocumentAction('metadata')}>文件信息</button>}
+                {!doc.exam && <button type="button" disabled={!projectReady || projectActionBusy || doc.proposals?.some(item => item.status === 'pending')} onClick={() => void openDocumentAction('save')}>
+                  {doc.questionPath ? '保存原题' : '另存入库'}
+                </button>}
+                {showDockedEditor && <button type="button" onClick={() => setEditing(true)}>展开</button>}
+                <button type="button" onClick={() => {
+                  if (!editing) setWorkbenchOpen(false)
+                  setEditing(false)
+                  void summaryLoad()
+                }}>{editing ? '返回' : '关闭'}</button>
+              </>}
             </div>}
-            {showProject && (projectReady ? (
+            {showProject && !deleteTargets && (projectReady ? (
               <Suspense fallback={<p className="document-project-loading" role="status">正在载入 PDF 校订…</p>}>
                 <PapilotWorkspace onError={projectFailed} />
               </Suspense>
@@ -749,7 +821,6 @@ export default function App() {
                   ref={editorRef}
                   document={doc}
                   examBasket={basket}
-                  initialCompileError={initialCompileError}
                   docked={docking && !editing}
                   onExpand={rightVisible ? () => setEditing(true) : undefined}
                   onEditFileInfo={questionPath && (workbenchQuestion || page === 'browse') ? (document) => setFileInfo({ path: questionPath, document }) : undefined}
@@ -798,6 +869,8 @@ export default function App() {
             onSaved={({ file, document }) => savedFileInfo(file, document)}
           />
         )}
+        {deleteTargets && <DeleteQuestionsDialog questions={deleteTargets} deleting={deletingQuestions}
+          cancel={() => setDeleteTargets(undefined)} confirm={deleteQuestions} />}
       </main>
     </div>
   )

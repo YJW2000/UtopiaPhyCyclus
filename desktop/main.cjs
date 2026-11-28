@@ -32,6 +32,7 @@ const METHODS = new Set([
   'system.check_latex',
   'workspace.fileInfo', 'workspace.saveFileInfo',
   'library.check', 'library.maintenanceStatus', 'context.chat', 'ui.load', 'ui.save', 'ui.providers',
+  'library.deleteQuestions',
   'workspace.list', 'workspace.open', 'workspace.resume', 'workspace.create',
   'workspace.save', 'workspace.import_pdf', 'workspace.reconstruct', 'workspace.compile', 'workspace.locate', 'workspace.chat',
   'workspace.append_questions',
@@ -58,6 +59,7 @@ let closing;
 let mayExit = false;
 let reopenAfterQuit = false;
 const maintenance = new Map();
+const activeBankDeletions = new Set();
 const readers = new Set();
 const writers = new Set();
 const assetTokens = new Map();
@@ -234,6 +236,7 @@ function libraryRoot(directory) {
 
 async function setLibrary(root) {
   if (library && samePath(library, root)) return;
+  await Promise.allSettled(activeBankDeletions);
   const profile = app.getPath('userData');
   const identity = createHash('sha256').update(process.platform === 'win32' ? root.toLowerCase() : root).digest('hex').slice(0, 24);
   const nextState = path.join(profile, 'workspaces', identity);
@@ -474,7 +477,7 @@ function registerIpc() {
   handle('call', async (method, params = {}) => {
     const activeLibrary = library;
     const normalized = await normalizeCall(method, params);
-    if (['library.summary', 'library.statistics', 'library.search', 'library.assemble', 'library.check', 'library.maintenanceStatus'].includes(method)) {
+    if (['library.summary', 'library.statistics', 'library.search', 'library.assemble', 'library.check', 'library.maintenanceStatus', 'library.deleteQuestions'].includes(method)) {
       await maintenance.get(state);
     }
     if (library !== activeLibrary) throw new Error('题库连接已切换。');
@@ -489,9 +492,22 @@ function registerIpc() {
       }));
       return { startup: reports[0], shutdown: reports[1] };
     }
+    if (method === 'library.deleteQuestions' && (selection || closing)) {
+      throw new Error('题库正在切换或关闭，请稍后重试。');
+    }
     if (!rpc) rpc = createRpc();
+    if (method === 'library.deleteQuestions') {
+      const deletion = rpc.send(method, normalized);
+      activeBankDeletions.add(deletion);
+      try {
+        return await deletion;
+      } finally {
+        activeBankDeletions.delete(deletion);
+      }
+    }
     return rpc.send(method, normalized);
   });
+  handle('papilot-theme', papilot.setTheme);
   handle('papilot-show', papilot.show);
   handle('papilot-bounds', papilot.resize);
   handle('papilot-hide', papilot.hide);
@@ -626,6 +642,7 @@ if (app.requestSingleInstanceLock()) {
     closing = (async () => {
       // will-quit fires after the windows close, for both the title bar and app.quit().
       if (selection) await selection.catch(() => {});
+      await Promise.allSettled(activeBankDeletions);
       rpc?.stop('桌面应用正在关闭。');
       if (library) scheduleMaintenance(library, state, 'shutdown');
       await Promise.all([...maintenance.values(), papilot.close().catch(error => console.error(error))]);

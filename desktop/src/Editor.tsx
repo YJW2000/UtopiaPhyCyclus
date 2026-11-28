@@ -8,7 +8,7 @@ import type { Question } from './Bank'
 import PaneDivider from './PaneDivider'
 import { WorkbenchBookmarks, WorkbenchFind, WorkbenchIcon, WorkbenchRail, WorkbenchToolbar } from './WorkbenchToolbar'
 import type { WorkbenchAction } from './WorkbenchToolbar'
-import { editorCall, errorMessage, pollEditorTask } from './editorContract'
+import { editorCall, errorMessage, pollEditorTask, reconstructEditorDocument } from './editorContract'
 import type { EditorAttachment, EditorCompileResult, EditorDocument, EditorMessage, EditorProposal, EditorSelection, PdfPanel } from './editorContract'
 import type { ModelChoice, ProviderId } from './settingsContract'
 import './editor.css'
@@ -32,7 +32,6 @@ interface Props {
   ref?: Ref<EditorHandle>
   document: EditorDocument
   examBasket?: Question[]
-  initialCompileError?: string
   docked?: boolean
   onExpand?: () => void
   onEditFileInfo?: (document: EditorDocument) => void
@@ -100,17 +99,18 @@ function storeValue(key: string, value?: unknown) {
 }
 
 function dockLayout(layout: Layout, document: EditorDocument): Layout {
-  return { ...layout, mode: 'review', view: document.pdfPath && !document.source ? 'original' : 'preview', pair: undefined }
+  return { ...layout, mode: 'split', view: document.pdfPath && !document.source ? 'original' : 'preview', pair: undefined }
 }
 
 function initialLayout(document: EditorDocument, layoutKey: string, docked: boolean): Layout {
   const position = (page = 1): PdfPosition => ({ page, offset: 0, zoom: 1 })
-  const imageSource = document.inputKind === 'image' && Boolean(document.source.trim())
+  const imageAwaitingPreview = document.inputKind === 'image' && Boolean(document.source.trim()) &&
+    (!document.previewPath || document.previewCurrent === false)
   const exam = Boolean(document.exam)
   const layout: Layout = parseStored<Layout>(layoutKey) ?? {
     mode: exam ? 'review' : 'split',
-    view: exam || (imageSource && !document.previewPath) ? 'source' : document.pdfPath && !document.source ? 'original' : 'preview',
-    pair: exam ? 'preview' : undefined, sync: false, chatWidth: 385, documentWidth: 50,
+    view: exam || imageAwaitingPreview ? 'source' : document.pdfPath && !document.source ? 'original' : 'preview',
+    pair: exam || imageAwaitingPreview ? 'preview' : undefined, sync: false, chatWidth: 385, documentWidth: 50,
     pdf: { preview: position(), original: position(document.originalPage), before: position(), after: position() }, sourceScroll: 0, compareText: false,
   }
   return docked ? dockLayout(layout, document) : layout
@@ -123,7 +123,7 @@ export default function Editor(props: Props) {
 export { Editor }
 
 function Workbench({
-  ref, document, examBasket = [], initialCompileError, docked = false, onExpand, onEditFileInfo,
+  ref, document, examBasket = [], docked = false, onExpand, onEditFileInfo,
   active = true, requestProject, openProjectManuscript, onOpenPapilot, onProjectOpenFailed, onOpenPdfRevision,
   reviewProposalId, onChange, onQuestionSaved, onClose,
 }: Props) {
@@ -146,8 +146,8 @@ function Workbench({
   const [exporting, setExporting] = useState(false)
   const [savingQuestion, setSavingQuestion] = useState(false)
   const [saveState, setSaveState] = useState('')
-  const [notice, setNotice] = useState(initialCompileError ? 'LaTeX 编译失败' : '')
-  const [compileLog, setCompileLog] = useState(initialCompileError ?? '')
+  const [notice, setNotice] = useState('')
+  const [compileLog, setCompileLog] = useState('')
   const [showLog, setShowLog] = useState(false)
   const [navigation, setNavigation] = useState<Partial<Record<PdfPanel, PdfNavigation>>>({})
   const [focusedPdf, setFocusedPdf] = useState<PdfPanel>()
@@ -194,7 +194,7 @@ function Workbench({
   const compareRun = useRef<AbortController>(null)
   const compileRun = useRef(false)
   const queuedCompileSource = useRef<string>(undefined)
-  const recognitionRun = useRef(false)
+  const recognitionRun = useRef<AbortController>(null)
   const wasDocked = useRef(docked)
   const navigationStamp = useRef(0)
   const imageInput = record.inputKind === 'image'
@@ -240,6 +240,7 @@ function Workbench({
     return () => {
       controller.abort()
       compareRun.current?.abort()
+      recognitionRun.current?.abort()
       const lastRun = chatRun.current
       lastRun?.controller.abort()
       if (lastRun?.id) void editorCall('task.cancel', { id: lastRun.id }).catch(() => {})
@@ -322,7 +323,11 @@ function Workbench({
   }, [document.id, prompt, attachments])
 
   useEffect(() => {
-    if (active && !initialCompileError && (!preview.path || ((docked || document.exam) && preview.source !== latestDraft.current.source)) && latestDraft.current.source.trim()) {
+    if (!active) {
+      recognitionRun.current?.abort()
+      return
+    }
+    if ((!preview.path || ((docked || document.exam || imageInput) && preview.source !== latestDraft.current.source)) && latestDraft.current.source.trim()) {
       void compileCurrent()
     }
   }, [document.id, active])
@@ -803,14 +808,17 @@ function Workbench({
 
   async function recognize(firstPage: number, lastPage: number) {
     if (recognitionRun.current) return
-    recognitionRun.current = true
+    const controller = new AbortController()
+    recognitionRun.current = controller
     setReconstructing(true)
     setSheet(undefined)
     setRecognitionProgress('')
     setNotice('')
     try {
       await persist()
-      const next = await runTask<EditorDocument>('workspace.reconstruct', { firstPage, lastPage, ...requestedModel }, undefined, setRecognitionProgress)
+      const next = await reconstructEditorDocument(
+        { id: document.id, firstPage, lastPage, ...requestedModel }, controller.signal, setRecognitionProgress,
+      )
       const sourceChanged = next.source !== latestRecord.current.source
       const userEdited = latestDraft.current.source !== latestRecord.current.source
       accept(next, sourceChanged && !userEdited)
@@ -824,9 +832,9 @@ function Workbench({
         if (newest) compareProposal(newest)
       }
     } catch (error) {
-      setNotice(errorMessage(error))
+      setNotice(controller.signal.aborted ? '识别已停止。' : errorMessage(error))
     } finally {
-      recognitionRun.current = false
+      recognitionRun.current = null
       setReconstructing(false)
     }
   }
@@ -1041,7 +1049,13 @@ function Workbench({
     {(locateMode || locatingSource) && <div className="wb-notice" role="status">{locatingSource ? '正在定位对应的 LaTeX 源码…' : '在 PDF 上框选内容，查看对应的 LaTeX 源码。'}
       {locateMode && <button type="button" className="wb-icon" aria-label="取消定位源码" onClick={() => choosePdfTool('select')}>×</button>}
     </div>}
-    {reconstructing && <div className="wb-notice" role="status">{recognitionProgress || (imageInput ? '正在识别图片…' : '正在识别所选页面，可继续查看原卷。')}</div>}
+    {reconstructing && <div className="wb-notice" role="status">
+      {recognitionProgress || (imageInput ? '正在识别图片…' : '正在识别所选页面，可继续查看原卷。')}
+      <button type="button" className="wb-btn" disabled={recognitionRun.current?.signal.aborted} onClick={() => {
+        recognitionRun.current?.abort()
+        setRecognitionProgress('正在停止识别…')
+      }}>停止识别</button>
+    </div>}
     <div className="wb-body">
       <WorkbenchRail actions={pdfActions}
         history={[

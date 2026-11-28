@@ -33,6 +33,7 @@ declare global {
       installEnvironmentTool(id: EnvironmentToolId): Promise<EnvironmentInstallResult>;
       openEnvironmentHelp(id: EnvironmentToolId): Promise<void>;
       tintWindowControls(color: string): Promise<void>;
+      papilotTheme(tokens: Record<string, string>): Promise<void>;
       papilotShow(bounds: PapilotBounds): Promise<void>;
       papilotBounds(bounds: PapilotBounds): Promise<void>;
       papilotHide(): Promise<void>;

@@ -185,6 +185,91 @@
   overflow-wrap: anywhere;
 }
 
+.app-shell {
+  --delete-text: color-mix(in srgb, #b5352a 48%, var(--mc-text));
+}
+
+.page-content .question-list button.basket-action[data-in-basket='true'],
+.document-actions button.basket-action[data-in-basket='true'] {
+  background: var(--mc-accent-soft);
+  border-color: var(--mc-accent);
+}
+
+.app-shell button.delete-questions-button,
+.app-shell button.delete-questions-button:hover {
+  color: var(--delete-text);
+}
+
+.app-shell button.delete-questions-button:hover:not(:disabled) {
+  border-color: var(--delete-text);
+}
+
+.delete-questions {
+  width: min(420px, 90vw);
+  padding: 18px;
+  border: 1px solid var(--mc-border-strong);
+  border-radius: 14px;
+  background: var(--mc-surface);
+  color: var(--mc-text);
+  box-shadow: var(--mc-shadow);
+}
+
+.delete-questions::backdrop {
+  background: #31282060;
+}
+
+.delete-questions h3 {
+  margin: 0 0 10px;
+  font-size: 17px;
+}
+
+.delete-questions p,
+.delete-questions-result p {
+  margin: 0 0 6px;
+  font-size: 13px;
+}
+
+.delete-questions ul {
+  max-height: 100px;
+  overflow: auto;
+  scrollbar-width: thin;
+  overflow-wrap: anywhere;
+  padding-inline-start: 1.3em;
+  margin: 0 0 8px;
+  font-size: 13px;
+}
+
+.delete-questions-error {
+  color: var(--delete-text);
+}
+
+.delete-questions-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+  margin-top: 16px;
+}
+
+.delete-questions-actions button,
+.delete-questions-result button {
+  padding: 5px 10px;
+  border: 1px solid var(--mc-border);
+  border-radius: 7px;
+  background: var(--mc-surface);
+  color: var(--mc-text);
+}
+
+.delete-questions-actions .confirm-delete-questions {
+  background: #a42f25;
+  border-color: transparent;
+  color: #fff;
+}
+
+.delete-questions-actions .confirm-delete-questions:hover:not(:disabled) {
+  background: #8d271e;
+}
+
 @container (max-width: 270px) {
   .module-browser .section-head {
     margin-bottom: 8px;

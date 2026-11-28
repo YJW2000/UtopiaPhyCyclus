@@ -225,6 +225,8 @@ def _acp(provider, executable, directory, prompt, schema, images, env, timeout, 
     payload = {'provider': provider, 'command': command, 'prompt': _message_blocks(task, images)}
     if model:
         payload['model'] = model
+    if images and provider in {'workbuddy', 'agy'}:
+        payload['startupTimeout'] = min(20, timeout)
     worker = str(Path(__file__).with_name('local_agent_acp.py'))
     result = _invoke([sys.executable, '-B', '-X', 'utf8', worker], directory,
                      json.dumps(payload, ensure_ascii=False).encode(), env, timeout)
@@ -287,8 +289,11 @@ def run_agent_json(provider, prompt, schema, images, *, timeout=180, model=None)
     if not executable:
         raise RuntimeError(f'未找到 {agent.label} 的可用启动器。请在设置中检查安装。{_setup_help(agent, executable)}')
 
+    workbuddy_windows = provider == 'workbuddy' and os.name == 'nt'
     try:
-        with TemporaryDirectory(prefix=f'utopia-{provider}-') as temp:
+        # A transient Windows handle during best-effort WorkBuddy cleanup
+        # must not discard a valid response or mask the real request error.
+        with TemporaryDirectory(prefix=f'utopia-{provider}-', ignore_cleanup_errors=workbuddy_windows) as temp:
             directory = Path(temp)
             env = _agent_environment(tool_path)
             if provider == 'claude':
@@ -297,7 +302,12 @@ def run_agent_json(provider, prompt, schema, images, *, timeout=180, model=None)
                 from services.local_agent_pi import pi_request
                 value = pi_request(executable, directory, prompt, schema, images, env, timeout, **selection)
             else:
-                value = _acp(provider, executable, directory, prompt, schema, images, env, timeout, **selection)
+                try:
+                    value = _acp(provider, executable, directory, prompt, schema, images, env, timeout, **selection)
+                finally:
+                    if workbuddy_windows:
+                        from services.local_agent_workbuddy import cleanup_workbuddy_directory
+                        cleanup_workbuddy_directory(directory)
         return _decode_output(value, schema)
     except subprocess.TimeoutExpired:
         raise RuntimeError(f'{agent.label} 在 {timeout} 秒内未完成，请稍后重试。') from None
@@ -305,10 +315,14 @@ def run_agent_json(provider, prompt, schema, images, *, timeout=180, model=None)
         raise RuntimeError(f'{agent.label} 启动失败。{_setup_help(agent, executable)}') from None
     except AgentResponseError as error:
         detail = error.args[0].decode('utf-8', 'replace').lower()
-        if any(term in detail for term in ('unauthorized', '401', 'authentication', 'not logged', 'login required', 'not authenticated', 'sign in', 'api key')):
+        if 'acp startup timed out' in detail:
+            message = f'{agent.label} 连接或初始化超时。{_setup_help(agent, executable)}'
+        elif any(term in detail for term in ('unauthorized', '401', 'authentication', 'not logged', 'login required', 'not authenticated', 'sign in', 'api key')):
             message = f'{agent.label} 登录或模型配置不可用。{_setup_help(agent, executable)}'
         elif any(term in detail for term in ('usage limit', 'rate limit', 'quota', '429')):
             message = f'{agent.label} 的调用额度暂时受限，请稍后重试。'
+        elif 'acp launcher could not start' in detail or 'agent exited during acp initialize' in detail:
+            message = f'{agent.label} 的 ACP 启动器未能建立连接。{_setup_help(agent, executable)}'
         elif model and 'could not select requested model' in detail:
             message = f'{agent.label} 无法切换到模型 {model}。请检查模型 ID、账户权限及 CLI 版本。'
         elif images and any(term in detail for term in ('vision', 'multimodal', 'image support', 'image input')):

@@ -4,6 +4,7 @@ Pass the stock Electron executable after building the renderer to verify native
 IPC against deterministic ClipboardItems. With --packaged, pass the built app
 executable to verify renderer paste, Agent selection, compilation and editing.
 Both modes use an isolated Codex CLI fixture and leave the Windows clipboard untouched.
+Add --cancel to check Antigravity model selection, stopping the active OCR subprocess, and retry latency.
 """
 import argparse
 import asyncio
@@ -20,6 +21,7 @@ import socket
 import subprocess
 import sys
 from tempfile import TemporaryDirectory
+from time import perf_counter
 from urllib.parse import quote
 from urllib.request import urlopen
 
@@ -33,6 +35,7 @@ from desktop_maintenance_probe import park_test_window, wait_for
 
 PASTE = '粘贴图片'
 RETRY = '重试识别'
+STOP = '停止识别'
 IMAGE = '.intake img[alt="原图"]'
 INTAKE_ERROR = '.image-intake-error[role=alert]'
 SOURCE = 'textarea[aria-label="编辑 LaTeX 源码"]'
@@ -40,6 +43,7 @@ GROUP_CHAT = 'textarea[aria-label="发送给题库助手"]'
 EDITOR_CHAT = '#wb-chat-prompt'
 OCR_SEED = '截图回归测试：一辆小车受到水平恒力。'
 EXPLICIT_MODEL = 'fixture-vision-v2'
+ORCHESTRATOR = 'Orchestrator (Carbon)'
 WORKSPACE = "document.querySelector('.editor-mount')?.style.display === 'flex'"
 
 
@@ -87,6 +91,7 @@ class CodexFixture {
         }
         var first = Path.Combine(fixture, "first.png");
         if (!File.Exists(first)) {
+            File.WriteAllText(Path.Combine(fixture, "first.pid"), System.Diagnostics.Process.GetCurrentProcess().Id.ToString());
             File.Copy(args[image + 1], first);
             if (!File.Exists(Path.Combine(fixture, "direct"))) {
                 var deadline = DateTime.UtcNow.AddSeconds(40);
@@ -209,6 +214,25 @@ class IntakePage(Page):
 
 def sequence():
     return ctypes.windll.user32.GetClipboardSequenceNumber()
+
+
+def wait_for_process_exit(pid):
+    kernel = ctypes.WinDLL('kernel32', use_last_error=True)
+    kernel.OpenProcess.argtypes = (wintypes.DWORD, wintypes.BOOL, wintypes.DWORD)
+    kernel.OpenProcess.restype = wintypes.HANDLE
+    kernel.WaitForSingleObject.argtypes = (wintypes.HANDLE, wintypes.DWORD)
+    kernel.WaitForSingleObject.restype = wintypes.DWORD
+    kernel.CloseHandle.argtypes = (wintypes.HANDLE,)
+    handle = kernel.OpenProcess(0x00100000, False, pid)  # SYNCHRONIZE
+    if not handle:
+        error = ctypes.get_last_error()
+        if error == 87:  # ERROR_INVALID_PARAMETER: the process has already exited
+            return
+        raise ctypes.WinError(error)
+    try:
+        assert kernel.WaitForSingleObject(handle, 6000) == 0, f'OCR subprocess {pid} continued after cancellation'
+    finally:
+        kernel.CloseHandle(handle)
 
 
 def make_fixture(destination):
@@ -336,6 +360,8 @@ async def run(args, root):
         sock.bind(('127.0.0.1', 0))
         port = sock.getsockname()[1]
     env = dict(os.environ, UTOPIA_DESKTOP_PROFILE=str(profile), UTOPIA_CODEX_BIN=str(codex))
+    if args.cancel:
+        env['UTOPIA_AGY_BIN'] = str(codex)
     env.pop('UTOPIA_DESKTOP_VITE_URL', None)
     executable = args.exe.resolve()
     command = [str(executable)]
@@ -384,6 +410,18 @@ async def run(args, root):
             await page.paint()
             intake = await page.js("document.querySelector('.intake').innerText")
             assert all(label in intake for label in ('Ctrl+V', PASTE, '选择图片', '自动')), intake
+            if args.cancel:
+                picker = 'button[aria-label="选择图片识别模型"]'
+                await page.js(f'document.querySelector({json.dumps(picker)}).click()')
+                await page.until("""Boolean(document.querySelector(
+                    '.model-picker-popover [role=group] button[title="gemini-pro-orchestrator"]'
+                ))""")
+                await page.click(ORCHESTRATOR)
+                choice = await page.js("JSON.parse(localStorage.getItem('utopia-image-intake-model'))")
+                assert choice['agent'] == 'agy' and choice['model'] == 'gemini-pro-orchestrator', choice
+                await page.js(f'document.querySelector({json.dumps(picker)}).click()')
+                await page.click('自动选择模型')
+                print('PASS the image model picker offers Antigravity Orchestrator and stores its exact model ID', flush=True)
             if args.model:
                 await page.js("document.querySelector('button[aria-label=选择图片识别模型]').click()")
                 await page.until("Boolean(document.querySelector('.model-picker-popover [role=group][aria-label=Codex]'))")
@@ -440,20 +478,37 @@ async def run(args, root):
             print('PASS choosing a file starts recognition without a second submission', flush=True)
 
             recognition_name = '识别编译截图.png'
+            started = perf_counter()
             await page.preview_image(lambda: png_event(recognition_name), screenshot, recognition_name, expect_failure=False)
             intake_error = f'document.querySelector({json.dumps(INTAKE_ERROR)})'
+            if args.cancel:
+                await page.until(f"""[...document.querySelectorAll('.intake button')].some(
+                    button => button.checkVisibility() && !button.disabled && button.textContent.trim() === {json.dumps(STOP)}
+                )""", seconds=2)
+                feedback = perf_counter() - started
+                assert feedback < 2, f'Image intake took {feedback:.2f}s to show the stop control'
+                print(f'PASS the image and stop control appeared in {feedback:.2f}s', flush=True)
             async with asyncio.timeout(30):
                 while not first_image.exists():
                     await asyncio.sleep(.05)
             if not args.direct:
-                await page.until("document.querySelector('.intake [role=status]')?.textContent.includes('正在识别图片')")
                 assert not await page.js(WORKSPACE), 'Workbench opened before image recognition completed.'
-                release.touch()
-                await page.until(f"{intake_error}?.textContent.includes('本地 Codex 调用失败')")
+                if args.cancel:
+                    pid = int(codex.with_name('first.pid').read_text(encoding='ascii'))
+                    stop_started = perf_counter()
+                    await page.click(STOP)
+                    await page.until("document.querySelector('.intake [role=status]')?.textContent.includes('识别已停止')", seconds=2)
+                    stopped_at = perf_counter() - stop_started
+                    await asyncio.to_thread(wait_for_process_exit, pid)
+                    print(f'PASS stop restored intake in {stopped_at:.2f}s and terminated the active OCR subprocess', flush=True)
+                else:
+                    release.touch()
+                    await page.until(f"{intake_error}?.textContent.includes('本地 Codex 调用失败')")
                 assert await page.js(f'document.querySelector({json.dumps(IMAGE)})?.checkVisibility()')
-                assert not await page.js(WORKSPACE), 'Failed recognition opened the workbench.'
+                assert not await page.js(WORKSPACE), 'Incomplete recognition opened the workbench.'
                 failed = await page.raw_document()
                 assert failed['source'] == '' and len(await page.get_docs()) == previous_draft_count + 1, failed
+                started = perf_counter()
                 await page.click(RETRY)
 
             await page.until(f'{WORKSPACE} || Boolean({intake_error})', seconds=150)
@@ -462,11 +517,26 @@ async def run(args, root):
             assert recognized['title'] == recognition_name
             if not args.direct:
                 assert recognized['id'] == failed['id']
-            if not recognized['previewCurrent']:
-                editor = await page.js("document.querySelector('.editor-mount')?.innerText.slice(-4000)")
-                raise AssertionError(f'Image reconstruction did not produce a current PDF: {editor}')
-            assert Path(recognized['previewPath']).is_file()
             assert OCR_SEED in recognized['source'] and len(await page.get_docs()) == previous_draft_count + 1
+            if args.cancel:
+                await page.until(f'document.querySelector({json.dumps(SOURCE)})?.checkVisibility()', seconds=8)
+                assert OCR_SEED in await page.js(f'document.querySelector({json.dumps(SOURCE)}).value')
+                editable_at = perf_counter() - started
+                assert editable_at < 8, f'Editable LaTeX took {editable_at:.2f}s with a local OCR fixture'
+                print(f'PASS retry reopened editable LaTeX in {editable_at:.2f}s using the deterministic OCR fixture', flush=True)
+            await page.until(f"""(async () => {{
+                const current = await window.utopia.call('workspace.open', {{id: {json.dumps(recognized['id'])}}});
+                return current.previewCurrent || [...document.querySelectorAll('.wb-notice button')]
+                  .some(button => button.textContent.trim() === '编译日志');
+            }})()""", seconds=60)
+            recognized = await page.raw_document()
+            if not recognized['previewCurrent']:
+                await page.click('编译日志')
+                log = await page.js("document.querySelector('.wb-log')?.textContent.slice(-4000)")
+                raise AssertionError(f'Image reconstruction did not produce a current PDF: {log}')
+            assert Path(recognized['previewPath']).is_file()
+            if args.cancel:
+                print(f'PASS PDF became current {perf_counter() - started:.2f}s after retry', flush=True)
             check_original_pdf(recognized, screenshot)
             crop = re.search(r'\\includegraphics\[[^\n]*?\]\{([^}]+)\}', recognized['source'])
             assert crop, recognized['source']
@@ -482,6 +552,12 @@ async def run(args, root):
             if args.model:
                 assert recognized['recognitionModel'] == EXPLICIT_MODEL
                 print('PASS the selected model reached the Codex CLI and was saved on the draft', flush=True)
+            revision_button = """[...document.querySelectorAll('button')].some(
+                button => button.checkVisibility() && !button.disabled && button.textContent.trim() === 'PDF 校订'
+            )"""
+            await page.until(f"Boolean(document.querySelector('.papilot-workspace')) || {revision_button}", seconds=45)
+            if await page.js(revision_button):
+                await page.click('PDF 校订')
             await page.until("document.querySelector('.papilot-workspace')?.getAttribute('aria-busy') === 'false'", seconds=135)
             embedded_url = await wait_for(process, lambda: desktop_target(port, embedded=True), seconds=45)
             async with websockets.connect(embedded_url, ping_interval=None) as project_socket:
@@ -498,8 +574,11 @@ async def run(args, root):
                 build_key = await project.js(f'{ready}.then(s => s.build.key)')
                 await asyncio.to_thread(check_manuscript_pdf, await project.js('location.origin'), active['id'], build_key, saved_crop)
                 await point_note(project, active['id'])
-            print('PASS first paste automatically opens the recognized document' if args.direct else
-                  'PASS recognition failure retains the screenshot and retries the same draft', flush=True)
+            if args.direct:
+                print('PASS first paste automatically opens the recognized document', flush=True)
+            else:
+                outcome = 'cancellation' if args.cancel else 'failure'
+                print(f'PASS recognition {outcome} retains the screenshot and retries the same draft', flush=True)
             print('PASS image recognition preserves source crops, compiles LaTeX, and opens the PDF in the embedded revision view', flush=True)
             print('PASS the revision PDF contains the original cropped pixels and saves an inline note', flush=True)
 
@@ -554,7 +633,9 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--exe', type=Path, required=True, help='Stock Electron executable or built desktop application.')
     parser.add_argument('--resources', type=Path, help='Use staged or installed runtime resources for a stock Electron test.')
-    parser.add_argument('--direct', action='store_true', help='Verify a successful first paste without retrying OCR.')
+    variants = parser.add_mutually_exclusive_group()
+    variants.add_argument('--direct', action='store_true', help='Verify a successful first paste without retrying OCR.')
+    variants.add_argument('--cancel', action='store_true', help='Stop an active OCR process and retry the same draft.')
     parser.add_argument('--model', action='store_true', help='Verify the chosen model reaches the OCR subprocess.')
     parser.add_argument('--packaged', action='store_true', help='Run an unpacked or installed build directly and exercise renderer paste.')
     parser.add_argument('--screenshot', type=Path, help='Write a screenshot of the clean image intake page after the probe passes.')

@@ -74,7 +74,7 @@ interface ChatProps {
   name: string
   storageKey: string
   context: object
-  apply: (a: Action) => void
+  apply: (a: Action, trigger: HTMLButtonElement) => void
 }
 
 export default function ContextChat(props: ChatProps) {
@@ -182,8 +182,8 @@ function ChatContents({ name, storageKey, context, apply }: ChatProps) {
             <p>{t.text}</p>
             {t.action && t.action !== 'none' && (
               <button
-                onClick={() =>
-                  apply({ action: t.action!, ids: t.ids, query: t.query })
+                onClick={event =>
+                  apply({ action: t.action!, ids: t.ids, query: t.query }, event.currentTarget)
                 }
               >
                 {t.action === 'add' ? '选入建议题目' : '按建议搜索'}

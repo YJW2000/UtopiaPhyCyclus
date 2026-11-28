@@ -144,7 +144,9 @@ test('uses managed Papilot launchers after PATH and keeps WorkBuddy on its own l
   assert.equal(tools.qoder.path, qoder);
   assert.equal(tools.codebuddy.path, codebuddy);
   assert.equal(tools.workbuddy.path, workbuddy);
-  assert.equal((await environment.runtimeEnvironment()).PAPILOT_WORKBUDDY_BIN, workbuddy);
+  const runtime = await environment.runtimeEnvironment();
+  assert.equal(runtime.PAPILOT_WORKBUDDY_BIN, workbuddy);
+  assert.equal(runtime.PATH.split(path.delimiter).at(-1), path.dirname(agy));
   assert.ok(launched.some(launch => launch.versionTarget === workbuddy && launch.args.at(-1).includes('--help')));
   assert.ok(!launched.some(launch => launch.versionTarget === gui));
 

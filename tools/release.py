@@ -81,7 +81,9 @@ def private_hashes():
     files = list((ROOT / 'chapters').rglob('*'))
     files += [ROOT / '.env', ROOT / 'utils' / '题库索引表.csv']
     files += list((ROOT / 'utils').glob('*.sqlite3'))
-    return {digest(p.read_bytes()) for p in files if p.is_file() and p.stat().st_size > 32}
+    public_readme = ROOT / 'chapters' / 'README.md'
+    return {digest(p.read_bytes()) for p in files
+            if p.is_file() and p != public_readme and p.stat().st_size > 32}
 
 
 @lru_cache(maxsize=1)

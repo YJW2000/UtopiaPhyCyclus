@@ -3,6 +3,7 @@ import sqlite3
 import pytest
 
 from services import desktop_workspace, operation_log
+from services.desktop_library import create_library_handlers
 from utils import csv_ops, question_index
 from utils.image_assets import graphics_references, resolve_image
 
@@ -133,3 +134,15 @@ def test_legacy_workbench_recovers_original_link(question_bank):
     workspace._write(legacy)
     assert workspace.open({'id': current['id']})['questionPath'] == params['questionPath']
     assert workspace.create(params)['id'] == current['id']
+
+
+def test_deleted_original_cannot_be_recreated_by_saving_a_draft(question_bank):
+    workspace, library, path, _, params, index = question_bank
+    draft = _filled_draft(workspace, params)
+    handlers = create_library_handlers(library, workspace.state, bank_lock=workspace.bank_lock)
+    handlers['library.deleteQuestions']({'paths': [params['questionPath']]})
+    with pytest.raises(ValueError, match='题目文件不存在或已移动'):
+        workspace.save_question({'id': draft['id'], 'revision': draft['revision']})
+    assert not path.exists()
+    assert question_index.get_row(params['questionPath'], csv_path=index) is None
+    assert workspace.open({'id': draft['id']})['source'] == draft['source']

@@ -111,6 +111,34 @@ export async function pollEditorTask<T, P extends EditorTaskProgress = EditorTas
   return { id, status: 'cancelled' }
 }
 
+export async function reconstructEditorDocument(
+  params: Record<string, unknown>,
+  signal: AbortSignal,
+  onProgress: (message: string) => void,
+): Promise<EditorDocument> {
+  signal.throwIfAborted()
+  const { taskId } = await editorCall<{ taskId: string }>('workspace.reconstruct', params)
+  let cancellation: Promise<unknown> | undefined
+  function cancel() {
+    cancellation ??= editorCall('task.cancel', { id: taskId }).catch(() => {})
+  }
+  if (signal.aborted) cancel()
+  else signal.addEventListener('abort', cancel, { once: true })
+  try {
+    const task = await pollEditorTask<EditorDocument>(taskId, signal, message => {
+      if (!signal.aborted) onProgress(message)
+    })
+    if (task.status !== 'succeeded' || !task.result) {
+      throw new Error([task.error || task.message || '识别已停止。', task.log].filter(Boolean).join('\n\n'))
+    }
+    signal.throwIfAborted()
+    return task.result
+  } finally {
+    signal.removeEventListener('abort', cancel)
+    await cancellation
+  }
+}
+
 export function errorMessage(error: unknown): string {
   return (error instanceof Error ? error.message : String(error)).replace(/^Error invoking remote method '[^']+': Error: /, '')
 }

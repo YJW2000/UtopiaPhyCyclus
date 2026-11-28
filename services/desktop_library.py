@@ -11,6 +11,7 @@ from threading import Lock
 import uuid
 
 from services.desktop_model import read_settings, selected_provider
+from services.desktop_question_delete import delete_questions
 from services.desktop_tool_paths import fresh_tool_path
 from services.file_service import atomic_write_text
 from services.local_agent import LOCAL_AGENTS, agent_status, run_agent_json
@@ -90,11 +91,12 @@ def _summary_row(row, names=_NAMES):
     return result
 
 
-def create_library_handlers(library: Path, state_dir: Path):
+def create_library_handlers(library: Path, state_dir: Path, *, bank_lock=None):
     library, state = Path(library).resolve(), Path(state_dir).resolve()
     csv = str(library / 'utils' / '题库索引表.csv')
     chapters = library / 'chapters'
     lock = Lock()
+    bank_lock = bank_lock or Lock()
 
     def appearance():
         from dotenv import dotenv_values
@@ -213,6 +215,10 @@ def create_library_handlers(library: Path, state_dir: Path):
             raise ValueError('题目已移动或文件路径无效。')
         return path
 
+    def delete(p):
+        with bank_lock:
+            return delete_questions(library, csv, p.get('paths'))
+
     def assemble(p):
         files = exam_question_files(chapters, p.get('paths', []))
         if not files:
@@ -290,6 +296,7 @@ def create_library_handlers(library: Path, state_dir: Path):
                 'synctex': bool(shutil.which('synctex', path=tool_path))}
 
     return {'library.summary':summary, 'library.statistics':statistics, 'library.search':search,
+            'library.deleteQuestions':delete,
             'library.assemble':assemble, 'library.demo':demo,
             'library.imageInput':image_input,'library.check':check, 'context.chat':chat,
             'ui.load':lambda _: appearance(), 'ui.save':preferences,'ui.providers':provider_status}

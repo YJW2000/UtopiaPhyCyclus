@@ -1,7 +1,7 @@
 """Rebuildable SQLite index. The original .tex files remain the source documents.
 
 CSV is imported once, without rewriting it. Routine mutations are transactions
-affecting one question, its FTS entries and its activity events. No connections
+affecting questions, their FTS entries and their activity events. No connections
 are shared between Streamlit sessions or kept open across reruns.
 """
 from __future__ import annotations
@@ -308,12 +308,17 @@ def update_solution_fields(relative_path, answer, solution, *, csv_path=None):
         _bump(conn)
 
 
+def _delete_rows(conn, relative_paths):
+    result = conn.executemany('DELETE FROM questions WHERE path_key=?',
+                              ((_key(path),) for path in relative_paths))
+    if result.rowcount:
+        _bump(conn)
+    return result.rowcount
+
+
 def delete_row(relative_path, *, csv_path=None):
     with connection(csv_path) as conn, conn:
-        result = conn.execute('DELETE FROM questions WHERE path_key=?', (_key(relative_path),))
-        if result.rowcount:
-            _bump(conn)
-        return result.rowcount
+        return _delete_rows(conn, [relative_path])
 
 
 def replace_rows(rows, *, csv_path=None):

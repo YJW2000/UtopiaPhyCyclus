@@ -58,7 +58,7 @@ def main(argv=None):
     from services.tex_environment_check import check_latex_environment
 
     workspace = DesktopWorkspace(library, state)
-    handlers = {**create_library_handlers(library, state), **workspace.handlers}
+    handlers = {**create_library_handlers(library, state, bank_lock=workspace.bank_lock), **workspace.handlers}
     handlers.update({'workspace.fileInfo': workspace.file_info, 'workspace.saveFileInfo': workspace.save_file_info})
 
     def check_latex(_params):

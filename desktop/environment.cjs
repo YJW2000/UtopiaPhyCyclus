@@ -167,7 +167,10 @@ function createEnvironment({ resources, env = process.env, platform = process.pl
     }
     // Agent npm shims can require a newer Node than the inherited system copy.
     const runtime = windows && await isFile(bundledNode) ? [path.dirname(bundledNode)] : [];
-    const directories = uniquePaths([...runtime, ...pathValues, ...defaults], windows);
+    // Papilot discovers AGY through PATH, including the managed install used by our probe.
+    const managedAgy = managed.get('agy');
+    const fallback = managedAgy && await isFile(managedAgy) ? [path.dirname(managedAgy)] : [];
+    const directories = uniquePaths([...runtime, ...pathValues, ...defaults, ...fallback], windows);
     const extended = { ...env, PATH: directories.join(path.delimiter) };
     const configured = new Map();
     for (const [id, keys] of launchers) {

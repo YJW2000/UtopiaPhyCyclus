@@ -84,7 +84,7 @@
 .wb-note-list p { margin: 0; padding: 4px; line-height: 1.45; color: var(--mc-muted, #756e63); }
 .wb-workbench .wb-note-list > .wb-btn { justify-content: flex-start; white-space: normal; overflow-wrap: anywhere; text-align: left; }
 .wb-divider { position: relative; z-index: 1; flex: 0 0 5px; margin: 0; background: var(--mc-border, #ded3c5); cursor: col-resize; touch-action: none; }
-.wb-divider::after { content: ''; position: absolute; top: 50%; left: 1px; width: 3px; height: 28px; margin-top: -14px; border-radius: 3px; background: color-mix(in srgb, var(--mc-muted, #756e63) 40%, var(--mc-bg, #f7f4ed)); }
+.wb-divider::after { content: ''; position: absolute; top: 50%; left: 1px; width: 3px; height: 28px; margin-top: -14px; border-radius: 3px; background: color-mix(in srgb, var(--mc-muted, #756e63) 40%, var(--mc-bg-base, #f7f4ed)); }
 .wb-divider:hover, .wb-divider:focus-visible { background: var(--mc-accent, #b66448); }
 .wb-document-panes { flex: 1; display: flex; min-height: 0; min-width: 0; overflow: hidden; }
 .wb-document-panel { flex: 0 1 50%; display: flex; flex-direction: column; min-width: 0; min-height: 0; }
@@ -112,9 +112,9 @@
 .wb-page-controls, .wb-pdf-actions { display: flex; align-items: center; gap: 2px; color: var(--mc-muted, #756e63); }
 .wb-pdf-actions { gap: 3px; }
 .wb-pdf-actions .wb-icon, .wb-page-controls .wb-icon { width: 22px; font-size: 17px; }
-.wb-page-controls input { width: 38px; box-sizing: border-box; padding: 2px 3px; text-align: center; background: var(--mc-input, #fffdf9); border: 1px solid var(--mc-border, #ded3c5); border-radius: 5px; }
+.wb-page-controls input { width: 38px; box-sizing: border-box; padding: 2px 3px; text-align: center; background: var(--mc-input-bg, #fffdf9); border: 1px solid var(--mc-border, #ded3c5); border-radius: 5px; }
 .wb-zoom { padding: 4px 3px !important; font-size: 11px !important; }
-.wb-pdf-scroll, .wb-diff { flex: 1; min-width: 0; min-height: 0; overflow: auto; background: color-mix(in srgb, var(--mc-bg, #f7f4ed) 92%, var(--mc-text, #26231e)); }
+.wb-pdf-scroll, .wb-diff { flex: 1; min-width: 0; min-height: 0; overflow: auto; background: color-mix(in srgb, var(--mc-bg-base, #f7f4ed) 92%, var(--mc-text, #26231e)); }
 .wb-pdf-scroll { scrollbar-gutter: stable; overflow-anchor: none; overscroll-behavior: contain; }
 .wb-pdf-stack { position: relative; width: max(100%, calc(var(--wb-paper-width) + 20px)); }
 .wb-paper-slot { position: absolute; display: grid; place-items: center; width: 100%; padding-top: 12px; }
@@ -126,15 +126,15 @@
 .wb-empty { flex: 1; display: flex; min-height: 220px; height: 100%; box-sizing: border-box; align-items: center; justify-content: center; flex-direction: column; text-align: center; gap: 10px; color: var(--mc-muted, #756e63); padding: 18px; }
 .wb-empty > p { margin: 0; font-size: 13px; line-height: 1.5; }
 
-.wb-source { background: var(--mc-input, #fffdf9); }
+.wb-source { background: var(--mc-input-bg, #fffdf9); }
 .wb-source-editor { flex: 1; display: flex; min-height: 0; min-width: 0; font-family: Consolas, 'Cascadia Mono', monospace; font-size: 13px; line-height: 1.65; }
-.wb-line-rail { flex: 0 0 auto; padding: 13px 9px 24px; min-width: 20px; max-width: 70px; text-align: right; overflow: hidden; color: var(--mc-muted, #756e63); background: color-mix(in srgb, var(--mc-bg, #f7f4ed) 83%, var(--mc-input, #fffdf9)); border-right: 1px solid var(--mc-border, #ded3c5); }
+.wb-line-rail { flex: 0 0 auto; padding: 13px 9px 24px; min-width: 20px; max-width: 70px; text-align: right; overflow: hidden; color: var(--mc-muted, #756e63); background: color-mix(in srgb, var(--mc-bg-base, #f7f4ed) 83%, var(--mc-input-bg, #fffdf9)); border-right: 1px solid var(--mc-border, #ded3c5); }
 .wb-workbench .wb-source-editor textarea { flex: 1; min-width: 0; min-height: 0; resize: none; box-sizing: border-box; padding: 13px 12px 24px; border: 0; border-radius: 0; background: transparent; outline-offset: -2px; font: inherit; tab-size: 2; }
 .wb-comparison-tools { justify-content: flex-start; }
 .wb-comparison-tools .wb-sync { margin-left: auto; }
 .wb-comparison-resolve { display: flex; flex-wrap: wrap; gap: 4px; margin-inline-start: auto; }
-.wb-workbench .wb-comparison-tools select, .wb-workbench .wb-pdf-actions select { padding: 4px; font-size: 11px; border: 1px solid var(--mc-border, #ded3c5); border-radius: 5px; background: var(--mc-input, #fffdf9); }
-.wb-diff { background: var(--mc-input, #fffdf9); }
+.wb-workbench .wb-comparison-tools select, .wb-workbench .wb-pdf-actions select { padding: 4px; font-size: 11px; border: 1px solid var(--mc-border, #ded3c5); border-radius: 5px; background: var(--mc-input-bg, #fffdf9); }
+.wb-diff { background: var(--mc-input-bg, #fffdf9); }
 .wb-diff pre { min-height: 100%; box-sizing: border-box; width: max-content; min-width: 100%; margin: 0; padding: 14px; font: 13px/1.65 Consolas, 'Cascadia Mono', monospace; tab-size: 2; }
 .wb-diff-before pre { background: color-mix(in srgb, #d56767 12%, transparent); }
 .wb-diff-after pre { background: color-mix(in srgb, #4f9d65 13%, transparent); }
@@ -156,7 +156,7 @@
 .wb-proposal-title > span { color: var(--mc-muted, #756e63); font-size: 11px; }
 .wb-proposal-actions, .wb-attachments { display: flex; flex-wrap: wrap; gap: 5px; }
 .wb-chat-result { font-size: 12px; color: var(--mc-muted, #756e63); margin: 0; overflow-wrap: anywhere; }
-.wb-chat-composer { align-self: center; display: flex; flex-direction: column; flex: 0 0 auto; width: calc(100% - 24px); max-width: 800px; min-width: 0; margin: 0 12px 12px; padding: 8px 9px 6px; box-sizing: border-box; border-radius: 13px; background: var(--mc-input, #fffdf9); border: 1px solid var(--mc-border, #ded3c5); }
+.wb-chat-composer { align-self: center; display: flex; flex-direction: column; flex: 0 0 auto; width: calc(100% - 24px); max-width: 800px; min-width: 0; margin: auto 12px 12px; padding: 8px 9px 6px; box-sizing: border-box; border-radius: 13px; background: var(--mc-input-bg, #fffdf9); border: 1px solid var(--mc-border, #ded3c5); }
 .wb-chat-composer:focus-within { border-color: var(--mc-accent, #b66448); }
 .wb-workbench .wb-chat-composer textarea { display: block; min-height: 42px; max-height: 25vh; width: 100%; padding: 3px 2px; box-sizing: border-box; resize: vertical; border: none; background: transparent; font-size: 13px; line-height: 1.45; }
 .wb-workbench .wb-chat-composer textarea:focus-visible { outline: none; }
@@ -186,7 +186,7 @@
 .wb-form, .wb-form label { display: flex; flex-direction: column; gap: 7px; }
 .wb-form { gap: 12px; }
 .wb-form label { flex: 1; min-width: 0; gap: 4px; font-size: 12px; }
-.wb-form :is(input, select) { box-sizing: border-box; width: 100%; padding: 7px 8px; border: 1px solid var(--mc-border, #ded3c5); border-radius: 6px; background: var(--mc-input, #fffdf9); }
+.wb-form :is(input, select) { box-sizing: border-box; width: 100%; padding: 7px 8px; border: 1px solid var(--mc-border, #ded3c5); border-radius: 6px; background: var(--mc-input-bg, #fffdf9); }
 .wb-page-range, .wb-form-actions { display: flex; gap: 7px; }
 .wb-form-actions { justify-content: flex-end; }
 .wb-form-error { max-width: 68vw; margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--mc-accent, #a64732); font-size: 12px; }

@@ -1,0 +1,55 @@
+.basket-flight {
+  position: fixed;
+  z-index: 1000;
+  pointer-events: none;
+  user-select: none;
+  padding: 2px 9px;
+  border-radius: 999px;
+  background: var(--mc-action-bg);
+  color: var(--mc-action-text);
+  font: 600 13px/1.5 var(--mc-font-family);
+  box-shadow: var(--mc-shadow);
+}
+
+.app-nav nav button[data-page='exam'] {
+  position: relative;
+  column-gap: 8px;
+}
+
+.basket-count {
+  margin-inline-start: auto;
+  padding: 0 5px;
+  min-width: 18px;
+  border-radius: 999px;
+  background: var(--mc-accent-soft);
+  color: var(--mc-text);
+  font-size: 11px;
+  line-height: 18px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+[data-page='exam'][aria-current='page'] .basket-count {
+  background: var(--mc-surface);
+}
+
+.compact .basket-count {
+  position: absolute;
+  inset-block-start: 0;
+  inset-inline-end: 0;
+  background: var(--mc-surface);
+  line-height: 15px;
+}
+
+.basket-announcement {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .basket-flight { display: none; }
+}

@@ -67,6 +67,29 @@ async def click_label(page, label):
     await page.js(f'({button}).click()')
 
 
+async def verify_browse_basket(page):
+    detail = '.browse-workbench .document-actions .basket-action'
+    row = '.question-link[aria-current=true] + .basket-action'
+    count = find('[data-page=exam] .basket-count')
+    try:
+        for preference in ('no-preference', 'reduce'):
+            await page.command('Emulation.setEmulatedMedia', {'features': [
+                {'name': 'prefers-reduced-motion', 'value': preference},
+            ]})
+            button = find(detail)
+            await page.until(f'{button}?.checkVisibility() && !{button}.disabled')
+            flight = await page.js(f'''(() => {{
+                {button}.click();
+                return document.querySelector('.basket-flight')?.textContent ?? '';
+            }})()''')
+            assert flight == ('+1' if preference == 'no-preference' else '')
+            await page.until(f'{count}?.textContent === "1" && {find(row)}?.textContent === "移出试题篮"')
+            await click(page, row)
+            await page.until(f'!{count} && {button}?.textContent === "加入试题篮" && !document.querySelector(".basket-flight")')
+    finally:
+        await page.command('Emulation.setEmulatedMedia', {'features': []})
+
+
 async def point_note(page, project):
     await click(page, '.pdf-rail [aria-label="便签"], .pdf-rail [aria-label="Sticky note"], .pdf-rail [aria-keyshortcuts="P"]')
     position = await page.js('''(() => {
@@ -121,6 +144,24 @@ async def set_magic_default(shell, screenshot):
     if screenshot:
         await shell.js(f'{find(".magic-pen-settings")}.scrollIntoView({{block:"start"}})')
         await shell.screen(screenshot.with_stem(screenshot.stem + '-settings'))
+
+
+async def verify_workbench_colors(shell, project):
+    tokens = await shell.js("window.utopia.call('ui.load').then(p => p.tokens)")
+    surface = tokens['--mc-surface']
+    expected = {'.manuscript-pages': [tokens['--mc-bg-base']], '.manuscript-side': [surface],
+                '.new-task-panel': [surface, tokens['--mc-surface-soft']], '.composer': [surface]}
+    await project.until(f'''document.documentElement.dataset.theme === {json.dumps(tokens['color-scheme'])}
+        && Object.entries({json.dumps(expected)}).every(([selector, colors]) => {{
+            let element = document.querySelector(selector);
+            while (element && getComputedStyle(element).backgroundColor === 'rgba(0, 0, 0, 0)')
+                element = element.parentElement;
+            const style = document.createElement('span').style;
+            return element && colors.some(color => {{
+                style.backgroundColor = color;
+                return getComputedStyle(element).backgroundColor === style.backgroundColor;
+            }});
+        }})''', seconds=45)
 
 
 async def verify_marking_tools(page, project, screenshot=None):
@@ -260,6 +301,7 @@ async def probe(executable, development, root, screenshot=None):
                 contents = await asyncio.to_thread(compiled_pdf_text, origin, project_id, build_key)
                 assert ORIGINAL in contents and '\ufffd' not in contents, contents
                 print('Embedded LaTeX PDF compiled with readable Chinese.', flush=True)
+                await verify_workbench_colors(shell, project)
                 await shell.command('Page.bringToFront')
                 await project.command('Page.bringToFront')
                 await project.command('Emulation.setFocusEmulationEnabled', {'enabled': True})
@@ -308,6 +350,10 @@ async def probe(executable, development, root, screenshot=None):
                 selected = find('.question-link[aria-current=true]')
                 await shell.until(f'{selected}?.checkVisibility()', seconds=60)
                 dock = find(f'.browse-workbench {SLOT}')
+                await shell.until(f'{find(".browse-workbench .wb-chat-composer")}?.checkVisibility()', seconds=60)
+                assert not await shell.js(f'Boolean({dock}?.checkVisibility())')
+                await verify_browse_basket(shell)
+                await click(shell, 'button[aria-label="PDF 校订"]')
                 await shell.until(f'{dock}?.checkVisibility() && {dock}.getAttribute("aria-busy") === "false"', seconds=60)
                 assert await shell.js('Boolean(document.querySelector("[data-page=browse][aria-current=page]"))')
                 await project.until(f'document.title.includes({json.dumps(question_path.stem)})', seconds=45)
@@ -318,7 +364,7 @@ async def probe(executable, development, root, screenshot=None):
                 exported_source = (browse_folder.parent / 'original.tex').read_text(encoding='utf-8')
                 assert exported_source == question_path.read_text(encoding='utf-8')
                 assert source_files(bank) == originals
-                print('Browse automatically opened the selected bank question in its right-hand workbench.', flush=True)
+                print('Browse opened its built-in PDF preview and switched to the embedded workbench on request.', flush=True)
         await wait_for(process, lambda: native_close(process.pid, title='乌托邦高中物理题库助手'))
         return {'embedded': True, 'documentScoped': True, 'lazyStartup': True, 'resizes': True, 'browseProject': True,
                 'texCompiled': True, 'annotations': True,

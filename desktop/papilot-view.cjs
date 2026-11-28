@@ -2,20 +2,38 @@ const { WebContentsView, Notification, dialog, ipcMain, shell } = require('elect
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
 
+const DEFAULT_THEME = {
+  'color-scheme': 'light',
+  '--mc-bg-base': '#f7f4ec',
+  '--mc-surface': '#fffdf9',
+  '--mc-text': '#26231e',
+};
+
 const WINDOW_CSS = `
   .desktop-window-drag { display: none !important; }
   [data-desktop] .main, [data-desktop] .toolbar { --desktop-window-space: 0px !important; }
   .manuscript-side .new-task-panel:not(.has-notes) .new-task-start {
-    margin-block: 0;
-    padding-block: 4px 16px;
+    flex-grow: 1;
+    margin: 0;
+    padding: 4px 0 0;
   }
-  .manuscript-side .new-task-panel:not(.has-notes) .new-task-welcome {
+  .manuscript-side .new-task-start > .composer { margin-block-start: auto; }
+  .manuscript-side .new-task-welcome {
     flex-direction: row;
     justify-content: flex-start;
     margin-bottom: 4px;
   }
   .manuscript-side .new-task-welcome svg { width: 20px; height: 20px; }
-  .manuscript-side .new-task-panel:not(.has-notes) .skill-menu { top: calc(100% + 6px); bottom: auto; }
+  :is(.rail-tool[aria-pressed=true], .rail-tool.pdf-crop-toggle.active,
+      .note-send:not(.quiet), .add-source, .add-note, .primary, .send-button,
+      .note-tag[data-kind=point], .view-count, .task-commit-actions .task-commit-primary) {
+    &, &:hover:not(:disabled) { color: var(--utopia-action-text, #fff); }
+  }
+  :is(.action-menu > :is(button, a), .menu-item-row > button):is(:hover:not(:disabled), :focus-visible) {
+    --menu-text: var(--utopia-action-text, #fff);
+    --menu-text-2: var(--menu-text);
+    --menu-text-3: var(--menu-text);
+  }
 `;
 
 function originOf(url) {
@@ -46,9 +64,23 @@ function createPapilotView({ runtime, resources, getWindow }) {
   let pendingTemplate;
   let pendingTask;
   let readyForFolder = false;
+  let theme = DEFAULT_THEME;
   const notifications = new Set();
 
   const desktopHelper = name => import(pathToFileURL(path.join(resources, 'papilot', 'desktop', `${name}.js`)).href);
+
+  function updateTheme(target) {
+    if (!target || target.webContents.isDestroyed()) return;
+    target.setBackgroundColor(theme['--mc-bg-base']);
+    if (origin && originOf(target.webContents.getURL()) === origin) target.webContents.send('papilot:theme', theme);
+  }
+
+  function setTheme(tokens) {
+    if (!['light', 'dark'].includes(tokens?.['color-scheme']) ||
+        typeof tokens['--mc-bg-base'] !== 'string' || !/^#[0-9a-f]{6}$/i.test(tokens['--mc-bg-base'])) return;
+    theme = tokens;
+    updateTheme(view);
+  }
 
   function checkedBounds(bounds) {
     if (!bounds || ['x', 'y', 'width', 'height'].some(key => !Number.isFinite(bounds[key]))) {
@@ -112,7 +144,7 @@ function createPapilotView({ runtime, resources, getWindow }) {
       backgroundThrottling: false,
       sandbox: true, nodeIntegration: false, contextIsolation: true, navigateOnDragDrop: false,
     } });
-    child.setBackgroundColor('#faf8f3');
+    child.setBackgroundColor(theme['--mc-bg-base']);
     const contents = child.webContents;
     contents.session.setPermissionCheckHandler(() => false);
     contents.session.setPermissionRequestHandler((_contents, _permission, done) => done(false));
@@ -145,7 +177,8 @@ function createPapilotView({ runtime, resources, getWindow }) {
       if (details.isMainFrame && !details.isSameDocument) readyForFolder = false;
     });
     contents.on('dom-ready', () => {
-      if (originOf(contents.getURL()) === origin) void contents.insertCSS(WINDOW_CSS).catch(() => {});
+      if (originOf(contents.getURL()) !== origin) return;
+      void contents.insertCSS(WINDOW_CSS).catch(() => {}).then(() => updateTheme(child));
     });
     contents.on('before-input-event', (event, input) => {
       if (input.type !== 'keyDown' || input.isAutoRepeat || !input.control || input.shift || input.alt) return;
@@ -332,7 +365,7 @@ function createPapilotView({ runtime, resources, getWindow }) {
     return runtime.stop();
   }
 
-  return { register, show, resize: bounds => { latestBounds = checkedBounds(bounds); resize(); }, hide, openLink, models: runtime.models, quickNotes, requestFolder, close };
+  return { register, setTheme, show, resize: bounds => { latestBounds = checkedBounds(bounds); resize(); }, hide, openLink, models: runtime.models, quickNotes, requestFolder, close };
 }
 
 module.exports = { createPapilotView };

@@ -87,7 +87,7 @@ def parse_filename(filename):
         
     return (year, paper_base, wl_rank, q_num)
 
-def update_chapter_contents(library_root=None):
+def update_chapter_contents(library_root=None, *, topics=None, report=print):
     r"""
     更新章节索引文件 (content_*.tex)
     
@@ -96,19 +96,21 @@ def update_chapter_contents(library_root=None):
         该文件包含该板块下所有题目的 \input 指令，并按年份分节。
         生成的 content_*.tex 文件可直接在 main.tex 中被调用。
     """
-    print("-" * 30)
-    print("开始更新章节索引 (content_*.tex)...")
+    report("-" * 30)
+    report("开始更新章节索引 (content_*.tex)...")
     
     library_root = library_root or root_dir
     chapters_dir = os.path.join(library_root, 'chapters')
     if not os.path.exists(chapters_dir):
-        print("错误：找不到 chapters 目录")
-        return
+        message = "错误：找不到 chapters 目录"
+        report(message)
+        return [message]
 
     # 获取 chapters 下的所有子目录作为板块
-    topics = [d for d in os.listdir(chapters_dir) if os.path.isdir(os.path.join(chapters_dir, d))]
-    
-    print(f"检测到 {len(topics)} 个板块目录: {topics}")
+    if topics is None:
+        topics = [d for d in os.listdir(chapters_dir) if os.path.isdir(os.path.join(chapters_dir, d))]
+    report(f"检测到 {len(topics)} 个板块目录: {topics}")
+    warnings = []
 
     for topic in topics:
         topic_dir = os.path.join(chapters_dir, topic)
@@ -134,16 +136,7 @@ def update_chapter_contents(library_root=None):
                         'sort_key': parse_filename(file)
                     })
         
-        if not tex_files:
-            output_file = os.path.join(topic_dir, f'content_{topic}.tex')
-            try:
-                atomic_write_text(output_file, '', backup=os.path.exists(output_file))
-                print(f"板块 {topic}: 未找到 .tex 题目文件，已生成空索引：{output_file}")
-            except Exception as e:
-                print(f"板块 {topic}: 写入空索引失败：{e}")
-            continue
-            
-        print(f"正在处理板块：{topic} ({len(tex_files)} 题)")
+        report(f"正在处理板块：{topic} ({len(tex_files)} 题)")
         
         # 根据解析出的 sort_key 进行多级排序
         tex_files.sort(key=lambda x: x['sort_key'])
@@ -167,13 +160,17 @@ def update_chapter_contents(library_root=None):
         output_file = os.path.join(topic_dir, f'content_{topic}.tex')
         
         try:
-            atomic_write_text(output_file, '\n'.join(lines), backup=os.path.exists(output_file))
-            print(f"  -> 已生成：{output_file}")
+            backup_existing_file(output_file, project_dir=library_root)
+            atomic_write_text(output_file, '\n'.join(lines))
+            report(f"  -> 已生成：{output_file}")
         except Exception as e:
-            print(f"  -> 写入失败：{e}")
+            message = f"章节索引更新失败（{topic}）：{e}"
+            warnings.append(message)
+            report(message)
 
-    print("章节索引更新完成！")
-    print("请在 main.tex 中对应的章节下使用 \\input{chapters/板块名/content_板块名.tex} 导入题目。")
+    report("章节索引更新完成！")
+    report("请在 main.tex 中对应的章节下使用 \\input{chapters/板块名/content_板块名.tex} 导入题目。")
+    return warnings
 
 def main():
     """

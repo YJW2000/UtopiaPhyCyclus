@@ -30,7 +30,7 @@ interface BatchRun {
   stopping?: boolean
 }
 
-function normalizedPath(path: string) {
+export function normalizedPath(path: string) {
   return path.replaceAll('\\', '/')
 }
 
@@ -52,6 +52,12 @@ export function useSolutionBatch() {
       const paths = new Set(previous.map(question => question.path))
       return [...previous, ...questions.filter(question => !paths.has(question.path) && paths.add(question.path))]
     })
+  }
+
+  function forgetQuestions(paths: ReadonlySet<string>) {
+    setSelected(previous => previous.filter(question => !paths.has(normalizedPath(question.path))))
+    setResults(previous => previous.filter(row => !paths.has(normalizedPath(row.questionPath))))
+    if (results.length && results.every(row => paths.has(normalizedPath(row.questionPath)))) setRun(undefined)
   }
 
   function mergeResults(items: BatchItem[], questions: Map<string, Question>) {
@@ -143,5 +149,5 @@ export function useSolutionBatch() {
     })
   }
 
-  return { selected, select, results, run, start, stop, trackReview }
+  return { selected, select, results, run, start, stop, trackReview, forgetQuestions }
 }

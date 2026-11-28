@@ -11,6 +11,7 @@ contextBridge.exposeInMainWorld('utopia', {
   installEnvironmentTool: id => ipcRenderer.invoke('utopia:install-environment-tool', id),
   openEnvironmentHelp: id => ipcRenderer.invoke('utopia:open-environment-help', id),
   tintWindowControls: color => ipcRenderer.invoke('utopia:tint-window-controls', color),
+  papilotTheme: tokens => ipcRenderer.invoke('utopia:papilot-theme', tokens),
   papilotShow: bounds => ipcRenderer.invoke('utopia:papilot-show', bounds),
   papilotBounds: bounds => ipcRenderer.invoke('utopia:papilot-bounds', bounds),
   papilotHide: () => ipcRenderer.invoke('utopia:papilot-hide'),

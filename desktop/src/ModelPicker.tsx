@@ -4,6 +4,12 @@ import { createPortal } from 'react-dom'
 import type { LocalAgent, ModelCatalog, ModelChoice, ProviderStatus } from './settingsContract'
 import './model-picker.css'
 
+const antigravityOrchestratorModels: NonNullable<ModelCatalog['agy']> = [
+  { id: 'gemini-pro-orchestrator-neon', name: 'Orchestrator (Neon)' },
+  { id: 'gemini-pro-orchestrator', name: 'Orchestrator (Carbon)' },
+  { id: 'gemini-pro-orchestrator-argon', name: 'Orchestrator (Argon)' },
+]
+
 export default function ModelPicker({ value, onChange, disabled, images }: {
   value?: ModelChoice
   onChange: (choice: ModelChoice | undefined) => void
@@ -19,6 +25,7 @@ export default function ModelPicker({ value, onChange, disabled, images }: {
   const [status, setStatus] = useState<ProviderStatus>()
   const [catalog, setCatalog] = useState<ModelCatalog>()
   const [connectionError, setConnectionError] = useState(false)
+  const [catalogError, setCatalogError] = useState(false)
   const [query, setQuery] = useState('')
   const [customAgent, setCustomAgent] = useState<LocalAgent>()
   const [customModel, setCustomModel] = useState('')
@@ -58,7 +65,6 @@ export default function ModelPicker({ value, onChange, disabled, images }: {
     if (!active) return
     let current = true
     let refresh: number | undefined
-    const until = Date.now() + 20_000
     function outside(event: PointerEvent | FocusEvent) {
       const target = event.target as Node
       if (!trigger.current?.contains(target) && !popup.current?.contains(target)) setOpen(false)
@@ -69,10 +75,14 @@ export default function ModelPicker({ value, onChange, disabled, images }: {
       if (current) { setStatus(result); setConnectionError(false) }
     }, () => { if (current) setConnectionError(true) })
     async function readModels() {
-      const result = await window.utopia.papilotModels?.().catch(() => ({}))
-      if (!current) return
-      setCatalog(result ?? {})
-      if (result && Date.now() < until) refresh = window.setTimeout(readModels, 2000)
+      try {
+        const result = await window.utopia.papilotModels?.()
+        if (!current) return
+        setCatalog(result ?? {})
+        if (result) refresh = window.setTimeout(readModels, 2000)
+      } catch {
+        if (current) setCatalogError(true)
+      }
     }
     void readModels()
     return () => {
@@ -104,9 +114,13 @@ export default function ModelPicker({ value, onChange, disabled, images }: {
   const term = query.trim().toLocaleLowerCase()
   const buttons = status?.agents.filter(agent => agent.installed && (!images || agent.images)).map(agent => {
     const matchesAgent = `${agent.label} ${agent.id}`.toLocaleLowerCase().includes(term)
-    const models = (catalog?.[agent.id] ?? []).filter(model => !images || model.images !== false)
+    const listed = catalog?.[agent.id] ?? []
+    const fallbacks = images && agent.id === 'agy'
+      ? antigravityOrchestratorModels.filter(model => !listed.some(item => item.id === model.id))
+      : []
+    const models = [...listed, ...fallbacks].filter(model => !images || model.images !== false)
     const matches = agent.modelSelection ? models.filter(model => matchesAgent || `${model.name} ${model.id}`.toLocaleLowerCase().includes(term)) : []
-    const allowCustom = agent.modelSelection && !models.length && matchesAgent
+    const allowCustom = agent.modelSelection && !listed.some(model => !images || model.images !== false) && matchesAgent
     if (!matchesAgent && !matches.length) return null
     return <div key={agent.id} className="model-picker-group" role="group" aria-label={agent.label}>
       <strong>{agent.label}</strong>
@@ -130,7 +144,7 @@ export default function ModelPicker({ value, onChange, disabled, images }: {
     <button type="button" className={images ? 'model-picker-trigger' : 'model-picker-trigger wb-chrome-btn'} ref={trigger} aria-label={title}
       aria-expanded={active} aria-controls={active ? id : undefined} aria-haspopup="dialog"
       disabled={disabled} title={modelName && agentName ? `${modelName} · ${agentName}` : display}
-      onClick={() => { setQuery(''); setCustomAgent(undefined); setOpen(!active) }}>
+      onClick={() => { setQuery(''); setCustomAgent(undefined); setCatalogError(false); setOpen(!active) }}>
       <span>{display}</span><span aria-hidden="true">⌄</span>
     </button>
     {active && createPortal(<div id={id} className="model-picker-popover" ref={popup} role="dialog" aria-label={title} style={position} onKeyDown={keyboard}>
@@ -147,7 +161,9 @@ export default function ModelPicker({ value, onChange, disabled, images }: {
           {!term && <button type="button" aria-pressed={!value} onClick={() => choose()}>{automatic}</button>}
           {buttons}
           {connectionError ? <p role="alert">读取模型连接失败。</p> : !status ? <p role="status">正在读取模型连接…</p>
-            : !buttons?.some(Boolean) && <p>{term ? '没有匹配的模型。' : '没有可用的模型连接。'}</p>}
+            : catalogError ? <p role="status">暂时无法读取可选模型。</p>
+              : catalog === undefined ? <p role="status">正在读取可选模型…</p>
+                : !buttons?.some(Boolean) && <p>{term ? '没有匹配的模型。' : '没有可用的模型连接。'}</p>}
         </div>
       </>}
     </div>, document.body)}

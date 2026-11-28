@@ -32,7 +32,7 @@
   padding: 4px 7px;
   border: 1px solid var(--mc-border, #ded3c5);
   border-radius: 6px;
-  background: var(--mc-input, #fffdf9);
+  background: var(--mc-input-bg, #fffdf9);
 }
 .model-picker-list { min-height: 0; overflow: auto; overscroll-behavior: contain; }
 .model-picker-group { border-top: 1px solid var(--mc-border, #ded3c5); padding: 5px 0; }

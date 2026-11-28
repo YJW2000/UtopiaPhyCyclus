@@ -1,5 +1,7 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
+import { errorMessage } from './editorContract'
+import { normalizedPath } from './useSolutionBatch'
 import type { BatchResultRow, useSolutionBatch } from './useSolutionBatch'
 import './browse-modules.css'
 import { StatisticsDistributions } from './StatisticsDistributions'
@@ -56,8 +58,10 @@ export function questionTitle(row: Question) {
 }
 interface RowActions {
   open: (row: Question) => void
-  add: (row: Question) => void
+  add: (row: Question, trigger?: HTMLButtonElement) => void
+  remove: (row: Question) => void
   basket: Question[]
+  actionsDisabled?: boolean
 }
 
 interface QuestionSelection {
@@ -65,7 +69,13 @@ interface QuestionSelection {
   disabled: boolean
   select: (questions: Question[], checked: boolean) => void
 }
-type BrowseBatch = ReturnType<typeof useSolutionBatch> & { openResult: (row: BatchResultRow) => void }
+export type DeleteQuestionsResult = { deletedPaths: string[]; warnings: string[] }
+type BrowseBatch = ReturnType<typeof useSolutionBatch> & {
+  openResult: (row: BatchResultRow) => void
+  requestDelete: (questions: Question[]) => void
+  canDelete: boolean
+  deleting: boolean
+}
 const browseModes = [
   { value: 'module', label: '按知识板块浏览' },
   { value: 'paper', label: '按试卷浏览' },
@@ -102,14 +112,25 @@ function groupQuestionsByModule(rows: Question[]) {
   return Array.from(groups)
 }
 
+export function BasketButton({ row, basket, add, remove, actionsDisabled }: { row: Question } & Omit<RowActions, 'open'>) {
+  const path = normalizedPath(row.path)
+  const inBasket = basket.some(item => normalizedPath(item.path) === path)
+  return <button type="button" className="quiet basket-action" data-in-basket={inBasket}
+    disabled={actionsDisabled} onClick={event => inBasket ? remove(row) : add(row, event.currentTarget)}>
+    {inBasket ? '移出试题篮' : '加入试题篮'}
+  </button>
+}
+
 export function QuestionList({
   rows,
   previewPath,
   showPaperNumber,
   open,
   add,
+  remove,
   basket,
   selection,
+  actionsDisabled,
 }: { rows: Question[]; previewPath?: string; showPaperNumber?: boolean; selection?: QuestionSelection } & RowActions) {
   return (
     <div className="question-list">
@@ -117,12 +138,12 @@ export function QuestionList({
         <article key={row.path}>
           {selection && <input
             type="checkbox"
-            aria-label={`勾选 ${questionTitle(row)} 用于批量补充`}
+            aria-label={`勾选 ${questionTitle(row)}`}
             checked={selection.paths.has(row.path)}
             disabled={selection.disabled}
             onChange={event => selection.select([row], event.target.checked)}
           />}
-          <button className="question-link" aria-current={previewPath === row.path || undefined}
+          <button className="question-link" disabled={actionsDisabled} aria-current={previewPath !== undefined && normalizedPath(previewPath) === normalizedPath(row.path) || undefined}
             aria-label={showPaperNumber ? questionTitle(row) : undefined} onClick={() => open(row)}>
             <strong title={showPaperNumber ? questionTitle(row) : undefined}>
               {showPaperNumber && row.number ? `第 ${row.number} 题` : questionTitle(row)}
@@ -133,13 +154,7 @@ export function QuestionList({
             </small>
             {row.entered && <small>录入于 {row.entered}</small>}
           </button>
-          <button
-            className="quiet"
-            onClick={() => add(row)}
-            disabled={basket.some((r) => r.path === row.path)}
-          >
-            {basket.some((r) => r.path === row.path) ? '已选入' : '＋ 选入'}
-          </button>
+          <BasketButton {...{ row, basket, add, remove, actionsDisabled }} />
         </article>
       ))}
     </div>
@@ -335,10 +350,13 @@ export function Browse({
   const groupedRows = moduleBrowse && !subject ? groupQuestionsByModule(resultRows) : null
   const selectedPaths = batch && new Set(batch.selected.map(row => row.path))
   const running = batch?.run?.status === 'running'
-  const selectionDisabled = running || loading || !currentData
+  const deleting = batch?.deleting ?? false
+  const batchLocked = running || deleting
+  const selectionDisabled = batchLocked || loading || !currentData
   const pageSelection = resultRows.filter(row => selectedPaths?.has(row.path)).length
   const allSelected = resultRows.length > 0 && pageSelection === resultRows.length
   const selection = batch && selectedPaths && { paths: selectedPaths, disabled: selectionDisabled, select: batch.select }
+
   const filters = (
       <section className={search ? 'mc-card' : 'browse-filter-bar'} aria-label={search ? undefined : '全局浏览筛选'}>
         <input
@@ -460,10 +478,13 @@ export function Browse({
             选择本页题目
           </label>
           <span aria-live="polite">已勾选 {batch.selected.length} 题</span>
-          <button className="text-action" disabled={running || !batch.selected.length} onClick={() => batch.select(batch.selected, false)}>清空选择</button>
-          <button className="primary" disabled={running || !batch.selected.length} onClick={() => void batch.start()}>批量补充答案与解析</button>
+          <button className="text-action" disabled={batchLocked || !batch.selected.length} onClick={() => batch.select(batch.selected, false)}>清空选择</button>
+          <button className="primary" disabled={batchLocked || !batch.selected.length} onClick={() => void batch.start()}>批量补充答案与解析</button>
+          <button type="button" className="delete-questions-button" aria-haspopup="dialog"
+            disabled={!batch.canDelete || !batch.selected.length}
+            onClick={() => batch.requestDelete(batch.selected)}>删除所选题目</button>
         </div>}
-        {batch?.run && <SolutionBatchResults batch={batch} />}
+        {batch?.run && <SolutionBatchResults batch={batch} disabled={deleting} />}
         {groupedRows ? groupedRows.map(([module, groupedQuestions]) => (
           <section className="browse-question-group" key={module}>
             <h3>{module}</h3>
@@ -492,7 +513,36 @@ export function Browse({
   )
 }
 
-function SolutionBatchResults({ batch }: { batch: BrowseBatch }) {
+export function DeleteQuestionsDialog({ questions, deleting, cancel, confirm }: {
+  questions: Question[]
+  deleting: boolean
+  cancel: () => void
+  confirm: () => Promise<void>
+}) {
+  const dialogRef = useRef<HTMLDialogElement>(null)
+  const [error, setError] = useState('')
+  useLayoutEffect(() => {
+    const dialog = dialogRef.current
+    dialog?.showModal()
+    return () => { dialog?.close() }
+  }, [])
+  return <dialog className="delete-questions" ref={dialogRef} aria-labelledby="delete-question-title"
+    onCancel={event => { event.preventDefault(); if (!deleting) cancel() }}>
+    <h3 id="delete-question-title">{questions.length === 1 ? '删除这道题？' : `删除这 ${questions.length} 道题？`}</h3>
+    <ul aria-label="待删除题目">{questions.map(row => <li key={row.path}>{questionTitle(row)}</li>)}</ul>
+    <p>题目文件和相关图会移入备份，并从题库和试题篮中移除。</p>
+    {error && <p className="delete-questions-error" role="alert">{error}</p>}
+    <div className="delete-questions-actions">
+      <button type="button" autoFocus disabled={deleting} onClick={cancel}>取消</button>
+      <button type="button" className="confirm-delete-questions" disabled={deleting} onClick={() => {
+        setError('')
+        void confirm().catch(reason => setError(errorMessage(reason)))
+      }}>{deleting ? '正在删除…' : '确认删除'}</button>
+    </div>
+  </dialog>
+}
+
+function SolutionBatchResults({ batch, disabled }: { batch: BrowseBatch; disabled: boolean }) {
   const { run, results, openResult, stop } = batch
   if (!run) return null
   const processed = `已处理 ${run.completed} / ${run.total} 题`
@@ -517,7 +567,7 @@ function SolutionBatchResults({ batch }: { batch: BrowseBatch }) {
               <strong>{title}</strong>
               <span>{status}{row.status !== 'ready' && row.message && ` · ${row.message}`}</span>
             </div>
-            {row.documentId && row.proposalId && <button aria-label={`${action} ${title}`} onClick={() => openResult(row)}>{action}</button>}
+            {row.documentId && row.proposalId && <button disabled={disabled} aria-label={`${action} ${title}`} onClick={() => openResult(row)}>{action}</button>}
           </li>
         })}
       </ul>}
@@ -601,14 +651,14 @@ export function Paper({
             </button>
             <button
               disabled={busy}
-              onClick={() => setBasket(basket.filter((s) => s.path !== r.path))}
+              onClick={() => setBasket(basket.filter((s) => normalizedPath(s.path) !== normalizedPath(r.path)))}
             >
               移除
             </button>
           </div>
         ))}
         {!basket.length && (
-          <p>在「全局浏览」中点题目旁的「选入」，即可在这里调整顺序并排版。</p>
+          <p>在「全局浏览」中点「加入试题篮」，即可在这里调整题目顺序并排版。</p>
         )}
         <button
           className={hasDraft ? undefined : 'primary'}

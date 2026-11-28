@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import os
+from contextlib import suppress
 from pathlib import Path
 from queue import Empty, Queue
 import subprocess
@@ -11,8 +12,13 @@ from tempfile import TemporaryFile
 from threading import Thread
 from time import monotonic
 
+try:
+    from services.local_process import kill_process_tree
+except ModuleNotFoundError:
+    from local_process import kill_process_tree
 
-def _read_grok_lines(stdout):
+
+def _read_lines(stdout):
     lines = Queue()
 
     def read():
@@ -79,11 +85,32 @@ def _select_model(request, session, provider, model):
     raise RuntimeError(f'Could not select requested model {model}')
 
 
-def _conversation(process, prompt, provider, model=None):
+def _conversation(process, prompt, provider, model=None, startup_timeout=None):
     chunks = []
     session_id = None
-    grok_lines = _read_grok_lines(process.stdout) if provider == 'grok' else None
-    lines = iter(grok_lines.get, None) if grok_lines is not None else process.stdout
+    queued = _read_lines(process.stdout) if startup_timeout is not None or provider == 'grok' else None
+    startup_deadline = monotonic() + startup_timeout if startup_timeout is not None else None
+
+    def responses(method):
+        if queued is None:
+            for line in process.stdout:
+                yield line
+            return
+        limit = None if method == 'session/prompt' else startup_deadline
+        while True:
+            try:
+                if limit is None:
+                    line = queued.get()
+                else:
+                    remaining = limit - monotonic()
+                    if remaining <= 0:
+                        raise Empty
+                    line = queued.get(timeout=remaining)
+            except Empty:
+                raise TimeoutError('ACP startup timed out') from None
+            if line is None:
+                return
+            yield line
 
     def send(payload):
         process.stdin.write((json.dumps({'jsonrpc': '2.0', **payload}, ensure_ascii=False) + '\n').encode('utf-8'))
@@ -114,8 +141,11 @@ def _conversation(process, prompt, provider, model=None):
         return message if incoming is None else None
 
     def request(ident, method, params):
-        send({'id': ident, 'method': method, 'params': params})
-        for line in lines:
+        try:
+            send({'id': ident, 'method': method, 'params': params})
+        except BrokenPipeError as error:
+            raise RuntimeError(f'Agent exited during ACP {method}') from error
+        for line in responses(method):
             message = receive(line)
             if not message or message.get('id') != ident:
                 continue
@@ -125,7 +155,7 @@ def _conversation(process, prompt, provider, model=None):
                     raise RuntimeError(f'Authentication or session configuration error: {error}')
                 raise RuntimeError(str(error))
             return message['result']
-        raise RuntimeError('Agent exited before returning a response')
+        raise RuntimeError(f'Agent exited during ACP {method}')
 
     initialized = request(1, 'initialize', {
         'protocolVersion': 1, 'clientCapabilities': {},
@@ -171,12 +201,12 @@ def _conversation(process, prompt, provider, model=None):
         _select_model(request, session, provider, model)
     chunks.clear()
     result = request(5, 'session/prompt', {'sessionId': session_id, 'prompt': prompt})
-    if grok_lines is not None and result.get('stopReason') == 'end_turn':
+    if provider == 'grok' and result.get('stopReason') == 'end_turn':
         # Some Grok versions deliver their final ACP updates after the response.
         deadline = monotonic() + 1
         while (remaining := deadline - monotonic()) > 0:
             try:
-                line = grok_lines.get(timeout=min(remaining, 0.3))
+                line = queued.get(timeout=min(remaining, 0.3))
             except Empty:
                 break
             if line is None:
@@ -189,18 +219,29 @@ def _conversation(process, prompt, provider, model=None):
 
 def main():
     payload = json.load(sys.stdin)
+    provider = payload['provider']
     with TemporaryFile() as diagnostics:
-        process = subprocess.Popen(payload['command'], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                                   stderr=diagnostics, creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
         try:
-            reply = _conversation(process, payload['prompt'], payload['provider'], payload.get('model'))
+            process = subprocess.Popen(payload['command'], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                       stderr=diagnostics, creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
+        except OSError as error:
+            sys.stderr.write(f'ACP launcher could not start: {error}\n')
+            return 1
+        try:
+            reply = _conversation(process, payload['prompt'], provider, payload.get('model'),
+                                  payload.get('startupTimeout'))
         except (OSError, KeyError, TypeError, RuntimeError, ValueError) as error:
             sys.stderr.write(str(error) + '\n')
             diagnostics.seek(max(0, os.fstat(diagnostics.fileno()).st_size - 4000))
             sys.stderr.buffer.write(diagnostics.read(4000))
             return 1
         finally:
-            process.stdin.close()
+            # WorkBuddy's local server may outlive stdio EOF. End its whole
+            # tree while the launcher still owns it and holds the workspace.
+            if provider == 'workbuddy' and os.name == 'nt':
+                kill_process_tree(process)
+            with suppress(BrokenPipeError):
+                process.stdin.close()
             try:
                 process.wait(timeout=2)
             except subprocess.TimeoutExpired:

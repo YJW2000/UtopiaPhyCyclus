@@ -1,4 +1,10 @@
+import sqlite3
+
+import pytest
+
+from services import desktop_question_delete, operation_log
 from services.desktop_library import create_library_handlers
+from services.library_maintenance import maintain_library
 from utils import question_index
 from utils.core_config import SUBJECTS
 
@@ -76,3 +82,112 @@ def test_browse_by_entry_date_uses_edit_date_only_as_fallback(tmp_path):
     ascending = search({'browseMode': 'entry', 'entryOrder': 'asc', 'pageSize': 1, 'page': 2})
     assert ascending['total'] == 3
     assert [(row['id'], row['entered']) for row in ascending['rows']] == [('3', '2025-04-01')]
+
+
+@pytest.fixture
+def removable_questions(tmp_path, monkeypatch):
+    csv = tmp_path / 'utils' / '题库索引表.csv'
+    monkeypatch.setattr(operation_log, 'OPERATION_LOG_PATH', str(csv.with_name('operation_log.sqlite3')))
+    chapters = tmp_path / 'chapters'
+    chapter = chapters / '电场'
+    questions = [chapter / '2026' / f'2026-M-模拟卷-{number}-电场.tex' for number in (1, 2, 3)]
+    stems = ['静电屏蔽', '矢量叠加', '平行板电容器']
+    questions[0].parent.mkdir(parents=True)
+    for number, (question, stem) in enumerate(zip(questions, stems), 1):
+        question.write_text(f'\\begin{{problem}}{{2026}}{{M}}{{模拟卷}}{{{number}}}{{电场}}\n{stem}\n\\end{{problem}}\n',
+                            encoding='utf-8')
+    paths = [question.relative_to(chapters).as_posix() for question in questions]
+    figures = questions[0].with_name(questions[0].stem + ' 相关图')
+    figures.mkdir()
+    (figures / '实验.png').write_bytes(b'figure')
+    chapter_index = chapter / 'content_电场.tex'
+    chapter_index.write_text('\n'.join(r'\input{chapters/' + path.removesuffix('.tex') + '}' for path in paths),
+                             encoding='utf-8')
+    question_index.ensure_index(csv, bootstrap_from_tex=False)
+    question_index.replace_rows([
+        {'题目ID': str(number), '文件名称': question.stem, '相对文件路径': path, '题干': stem, '知识板块': '电场'}
+        for number, (question, path, stem) in enumerate(zip(questions, paths, stems), 1)
+    ], csv_path=csv)
+    handlers = create_library_handlers(tmp_path, tmp_path / 'state')
+    return csv, questions, paths, figures, chapter_index, handlers
+
+
+def test_bulk_delete_syncs_sqlite_search_and_files(removable_questions, tmp_path):
+    csv, questions, paths, figures, chapter_index, handlers = removable_questions
+    before = question_index.cache_token(csv)
+    source = questions[0].read_bytes()
+    search = handlers['library.search']
+    assert search({'mode': 'fuzzy', 'query': '静电屏蔽'})['total'] == 1
+    assert handlers['library.deleteQuestions']({'paths': [*paths[:2], paths[0]]}) == {
+        'deletedPaths': paths[:2], 'warnings': [],
+    }
+
+    assert [question.exists() for question in questions] == [False, False, True]
+    assert not figures.exists()
+    backup_dir = tmp_path / '.backups' / questions[0].parent.relative_to(tmp_path)
+    [backup] = backup_dir.glob(f'{questions[0].stem}.*.tex')
+    assert backup.read_bytes() == source
+    [figure_backup] = backup_dir.glob(figures.name + '.*')
+    assert (figure_backup / '实验.png').read_bytes() == b'figure'
+    assert question_index.cache_token(csv) == (*before[:2], before[2] + 1)
+    assert [row['path'] for row in search({})['rows']] == [paths[2]]
+    assert search({'mode': 'fuzzy', 'query': '静电屏蔽'})['total'] == 0
+    assert handlers['library.summary']({})['total'] == 1
+    assert handlers['library.check']({}) == {'integrity': 'ok', 'total': 1, 'missing': []}
+    with question_index.connection(csv) as db:
+        assert not db.execute('SELECT question_rowid FROM vocabulary WHERE question_rowid IN (1, 2)').fetchall()
+        db.execute("INSERT INTO question_fts(question_fts, rank) VALUES('integrity-check', 1)")
+    output = chapter_index.read_text(encoding='utf-8')
+    assert questions[2].stem in output and questions[0].stem not in output and questions[1].stem not in output
+    assert {entry['question_id'] for entry in operation_log.read_recent_operations()} == {'1', '2'}
+    assert maintain_library(tmp_path)['added'] == 0
+    assert handlers['library.deleteQuestions']({'paths': paths[:2]})['deletedPaths'] == paths[:2]
+
+
+def test_bulk_delete_rolls_back_files_and_index_after_second_row_fails(removable_questions):
+    csv, questions, paths, figures, chapter_index, handlers = removable_questions
+    before = question_index.cache_token(csv)
+    original = chapter_index.read_bytes()
+    with question_index.connection(csv) as db, db:
+        db.execute('''CREATE TRIGGER stop_second BEFORE DELETE ON questions WHEN OLD."题目ID" = '2'
+                      BEGIN SELECT RAISE(ABORT, 'index unavailable'); END''')
+    with pytest.raises(sqlite3.IntegrityError, match='index unavailable'):
+        handlers['library.deleteQuestions']({'paths': paths[:2]})
+    assert all(question.is_file() for question in questions)
+    assert (figures / '实验.png').read_bytes() == b'figure'
+    assert question_index.cache_token(csv) == before
+    assert len(question_index.read_rows(csv_path=csv)) == 3
+    assert chapter_index.read_bytes() == original
+
+
+def test_bulk_delete_rejects_unindexed_files_and_cleans_stale_rows(removable_questions):
+    csv, questions, paths, _, _, handlers = removable_questions
+    unindexed = questions[0].with_name('未收录.tex')
+    unindexed.write_text('未收录', encoding='utf-8')
+    unindexed_path = paths[0].replace(questions[0].name, unindexed.name)
+    delete = handlers['library.deleteQuestions']
+    with pytest.raises(ValueError, match='已不在索引中'):
+        delete({'paths': [paths[0], unindexed_path]})
+    with pytest.raises(ValueError, match='当前题库'):
+        delete({'paths': [paths[0], '../未收录.tex']})
+    assert questions[0].is_file() and unindexed.is_file()
+    orphaned_figures = questions[1].with_name(questions[1].stem + ' 相关图')
+    orphaned_figures.mkdir()
+    questions[1].unlink()
+    assert delete({'paths': [paths[1]]})['deletedPaths'] == [paths[1]]
+    assert question_index.get_row(paths[1], csv_path=csv) is None
+    assert orphaned_figures.is_dir()
+
+
+def test_chapter_index_access_error_reports_committed_delete(removable_questions, monkeypatch):
+    csv, questions, paths, _, _, handlers = removable_questions
+
+    def inaccessible(*args, **kwargs):
+        raise PermissionError('simulated chapter index access error')
+
+    monkeypatch.setattr(desktop_question_delete, 'update_chapter_contents', inaccessible)
+    result = handlers['library.deleteQuestions']({'paths': [paths[0]]})
+    assert result['deletedPaths'] == [paths[0]]
+    assert 'simulated chapter index access error' in result['warnings'][0]
+    assert not questions[0].exists()
+    assert question_index.get_row(paths[0], csv_path=csv) is None
